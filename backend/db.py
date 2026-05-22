@@ -93,7 +93,6 @@ def init_db():
         _ensure_hr_cohorts_tables(conn)
         _ensure_notifications_table(conn)
         _ensure_hr_audit_log_table(conn)
-        _ensure_hr_bulk_templates_table(conn)
         _ensure_hr_verifier_links_table(conn)
         _ensure_hr_welcome_templates_table(conn)
         _ensure_seed_privileged_user(conn)
@@ -3606,21 +3605,7 @@ def cohort_add_members(
     return results
 
 
-# ── Phase 3: bulk templates, verifier links, welcome templates ───────────────
-
-
-def _ensure_hr_bulk_templates_table(conn: sqlite3.Connection) -> None:
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS hr_bulk_templates (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            hr_trust TEXT NOT NULL,
-            created_by_user_id INTEGER NOT NULL REFERENCES users(id),
-            name TEXT NOT NULL,
-            payload_json TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-    """)
+# ── Phase 3: verifier links, welcome templates ───────────────
 
 
 def _ensure_hr_verifier_links_table(conn: sqlite3.Connection) -> None:
@@ -3652,116 +3637,6 @@ def _ensure_hr_welcome_templates_table(conn: sqlite3.Connection) -> None:
             updated_at TEXT NOT NULL
         )
     """)
-
-
-def hr_bulk_templates_list(hr_trust: str) -> list[dict]:
-    t = (hr_trust or "").strip().lower()
-    with sqlite3.connect(DB_PATH) as conn:
-        _ensure_hr_bulk_templates_table(conn)
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            """
-            SELECT id, name, payload_json, created_at, updated_at, created_by_user_id
-            FROM hr_bulk_templates
-            WHERE LOWER(TRIM(hr_trust)) = ?
-            ORDER BY datetime(updated_at) DESC
-            """,
-            (t,),
-        ).fetchall()
-    out = []
-    for r in rows:
-        try:
-            payload = json.loads(r["payload_json"] or "{}")
-        except Exception:
-            payload = {}
-        out.append(
-            {
-                "id": int(r["id"]),
-                "name": r["name"],
-                "payload": payload,
-                "created_at": r["created_at"],
-                "updated_at": r["updated_at"],
-                "created_by_user_id": int(r["created_by_user_id"]),
-            }
-        )
-    return out
-
-
-def hr_bulk_template_get(template_id: int, hr_trust: str) -> Optional[dict]:
-    t = (hr_trust or "").strip().lower()
-    with sqlite3.connect(DB_PATH) as conn:
-        _ensure_hr_bulk_templates_table(conn)
-        conn.row_factory = sqlite3.Row
-        r = conn.execute(
-            """
-            SELECT id, name, payload_json, created_at, updated_at
-            FROM hr_bulk_templates
-            WHERE id = ? AND LOWER(TRIM(hr_trust)) = ?
-            """,
-            (int(template_id), t),
-        ).fetchone()
-    if not r:
-        return None
-    try:
-        payload = json.loads(r["payload_json"] or "{}")
-    except Exception:
-        payload = {}
-    return {
-        "id": int(r["id"]),
-        "name": r["name"],
-        "payload": payload,
-        "created_at": r["created_at"],
-        "updated_at": r["updated_at"],
-    }
-
-
-def hr_bulk_template_save(
-    hr_trust: str,
-    created_by_user_id: int,
-    name: str,
-    payload: dict,
-    *,
-    template_id: Optional[int] = None,
-) -> dict:
-    now = datetime.utcnow().isoformat()
-    name = (name or "").strip() or "Untitled template"
-    payload_json = json.dumps(payload if isinstance(payload, dict) else {})
-    t = (hr_trust or "").strip()
-    with sqlite3.connect(DB_PATH) as conn:
-        _ensure_hr_bulk_templates_table(conn)
-        if template_id is not None:
-            conn.execute(
-                """
-                UPDATE hr_bulk_templates
-                SET name = ?, payload_json = ?, updated_at = ?
-                WHERE id = ? AND LOWER(TRIM(hr_trust)) = ?
-                """,
-                (name, payload_json, now, int(template_id), t.lower()),
-            )
-            tid = int(template_id)
-        else:
-            cur = conn.execute(
-                """
-                INSERT INTO hr_bulk_templates (hr_trust, created_by_user_id, name, payload_json, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (t, int(created_by_user_id), name, payload_json, now, now),
-            )
-            tid = int(cur.lastrowid)
-        conn.commit()
-    return hr_bulk_template_get(tid, hr_trust) or {"id": tid, "name": name, "payload": payload}
-
-
-def hr_bulk_template_delete(template_id: int, hr_trust: str) -> bool:
-    t = (hr_trust or "").strip().lower()
-    with sqlite3.connect(DB_PATH) as conn:
-        _ensure_hr_bulk_templates_table(conn)
-        cur = conn.execute(
-            "DELETE FROM hr_bulk_templates WHERE id = ? AND LOWER(TRIM(hr_trust)) = ?",
-            (int(template_id), t),
-        )
-        conn.commit()
-        return cur.rowcount > 0
 
 
 def hr_welcome_templates_list(hr_trust: str) -> list[dict]:

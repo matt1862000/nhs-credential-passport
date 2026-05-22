@@ -1335,6 +1335,50 @@
 
         var bulkWizardStep = 1;
         var bulkRecipientMethod = null;
+        var _bulkCohortsCache = [];
+
+        function getSelectedBulkCohortIds() {
+          var list = document.getElementById('bulkCohortList');
+          if (!list) return [];
+          return Array.prototype.slice.call(
+            list.querySelectorAll('input[type="checkbox"][data-bulk-cohort-id]:checked')
+          ).map(function (inp) { return parseInt(inp.getAttribute('data-bulk-cohort-id'), 10); })
+            .filter(function (id) { return !isNaN(id); });
+        }
+
+        function bulkCohortById(id) {
+          return _bulkCohortsCache.find(function (c) { return Number(c.id) === Number(id); }) || null;
+        }
+
+        function renderBulkCohortList(cohorts) {
+          var list = document.getElementById('bulkCohortList');
+          if (!list) return;
+          _bulkCohortsCache = cohorts || [];
+          if (!_bulkCohortsCache.length) {
+            list.innerHTML = '<p class="hr-bulk-cohort-list__empty">No cohorts yet. Create one from Cohorts first.</p>';
+            return;
+          }
+          list.innerHTML = _bulkCohortsCache.map(function (c) {
+            var n = (c.name || 'Cohort').trim();
+            var cnt = c.member_count != null ? c.member_count : 0;
+            var checked = c.is_default || String(n).toLowerCase() === 'ad-hoc' ? ' checked' : '';
+            return (
+              '<label class="hr-bulk-cohort-option">' +
+              '<input type="checkbox" data-bulk-cohort-id="' + esc(String(c.id)) + '"' + checked + '>' +
+              '<span><strong>' + esc(n) + '</strong>' +
+              '<span class="hr-bulk-cohort-option__meta">' + cnt + ' member' + (cnt === 1 ? '' : 's') + '</span></span>' +
+              '</label>'
+            );
+          }).join('');
+        }
+
+        function clearBulkCohortSelection() {
+          var list = document.getElementById('bulkCohortList');
+          if (!list) return;
+          list.querySelectorAll('input[type="checkbox"][data-bulk-cohort-id]').forEach(function (inp) {
+            inp.checked = false;
+          });
+        }
 
         function setBulkStepError(elId, msg) {
           var el = document.getElementById(elId);
@@ -1381,11 +1425,19 @@
           var el = document.getElementById('bulkRecipientsSummary');
           if (!el) return;
           if (bulkRecipientMethod === 'cohort') {
-            var sel = document.getElementById('bulkCohort');
-            var opt = sel && sel.options[sel.selectedIndex];
-            el.textContent = opt && opt.value
-              ? 'Recipients: cohort “' + (opt.textContent || '').trim() + '”.'
-              : '';
+            var ids = getSelectedBulkCohortIds();
+            if (!ids.length) {
+              el.textContent = '';
+              return;
+            }
+            var names = ids.map(function (id) {
+              var c = bulkCohortById(id);
+              return c ? (c.name || 'Cohort').trim() : ('Cohort ' + id);
+            });
+            var label = names.length === 1
+              ? 'cohort “' + names[0] + '”'
+              : ids.length + ' cohorts (“' + names.slice(0, 3).join('”, “') + (names.length > 3 ? '”, …' : '') + '”)';
+            el.textContent = 'Recipients: ' + label + '. Duplicates across cohorts are only issued once.';
           } else if (bulkRecipientMethod === 'roster') {
             var r = document.getElementById('bulkRoster');
             var name = r && r.files && r.files[0] ? r.files[0].name : '';
@@ -1402,7 +1454,7 @@
             if (step === 1) label.textContent = 'Step 1 of 4 — Who receives this?';
             else if (step === 2) {
               label.textContent = bulkRecipientMethod === 'cohort'
-                ? 'Step 2 of 4 — Choose cohort'
+                ? 'Step 2 of 4 — Choose cohorts'
                 : 'Step 2 of 4 — Upload roster';
             } else if (step === 3) label.textContent = 'Step 3 of 4 — Class evidence';
             else label.textContent = 'Step 4 of 4 — Training details';
@@ -1425,8 +1477,16 @@
         function resetBulkWizard() {
           bulkWizardStep = 1;
           bulkRecipientMethod = null;
-          var cohortSel = document.getElementById('bulkCohort');
-          if (cohortSel) cohortSel.value = '';
+          clearBulkCohortSelection();
+          var adHoc = _bulkCohortsCache.find(function (c) {
+            return c.is_default || String(c.name || '').trim().toLowerCase() === 'ad-hoc';
+          });
+          if (adHoc && adHoc.id != null) {
+            var inp = document.querySelector(
+              'input[data-bulk-cohort-id="' + String(adHoc.id) + '"]'
+            );
+            if (inp) inp.checked = true;
+          }
           var rosterEl = document.getElementById('bulkRoster');
           var evidenceEl = document.getElementById('bulkEvidence');
           if (rosterEl) rosterEl.value = '';
@@ -1443,161 +1503,13 @@
           setBulkWizardStep(1);
         }
 
-        var bulkTemplatesCache = [];
-        var bulkTemplateSavedThisSession = false;
-        var bulkTemplatePromptDismissed = false;
-
-        function collectBulkTemplatePayload() {
-          return {
-            recipient_method: bulkRecipientMethod,
-            cohort_id: (document.getElementById('bulkCohort') || {}).value || null,
-            module_code: (document.getElementById('bulkModule') || {}).value || '',
-            completion_date: (document.getElementById('bulkCompletion') || {}).value || '',
-            expiry_date: (document.getElementById('bulkExpiry') || {}).value || '',
-            issuing_trust_name: (document.getElementById('bulkIssuingName') || {}).value || '',
-            issuing_trust_ods_code: (document.getElementById('bulkOds') || {}).value || '',
-          };
-        }
-
-        function bulkTemplatePayloadKey(p) {
-          if (!p || typeof p !== 'object') return '';
-          return JSON.stringify({
-            recipient_method: p.recipient_method || '',
-            cohort_id: p.cohort_id || '',
-            module_code: p.module_code || '',
-            completion_date: p.completion_date || '',
-            expiry_date: p.expiry_date || '',
-            issuing_trust_name: p.issuing_trust_name || '',
-            issuing_trust_ods_code: p.issuing_trust_ods_code || '',
-          });
-        }
-
-        function bulkTemplatePayloadExists(payload) {
-          var key = bulkTemplatePayloadKey(payload);
-          return bulkTemplatesCache.some(function (t) {
-            return t.payload && bulkTemplatePayloadKey(t.payload) === key;
-          });
-        }
-
-        function updateBulkTemplatesPanelVisibility() {
-          var panel = document.getElementById('bulkTemplatesPanel');
-          if (panel) panel.hidden = bulkTemplatesCache.length === 0;
-        }
-
-        function hideBulkTemplateSavePrompt() {
-          var prompt = document.getElementById('bulkTemplateSavePrompt');
-          if (prompt) prompt.hidden = true;
-        }
-
-        function suggestBulkTemplateName() {
-          var modSel = document.getElementById('bulkModule');
-          var modLabel = '';
-          if (modSel && modSel.options && modSel.selectedIndex >= 0) {
-            modLabel = String(modSel.options[modSel.selectedIndex].textContent || '').trim();
-          }
-          if (!modLabel) modLabel = 'Bulk training';
-          var suffix = bulkRecipientMethod === 'cohort' ? 'cohort' : 'roster';
-          return modLabel + ' \u2013 ' + suffix;
-        }
-
-        function showBulkTemplateSavePrompt() {
-          var prompt = document.getElementById('bulkTemplateSavePrompt');
-          var nameInp = document.getElementById('bulkTemplateSaveName');
-          if (!prompt) return;
-          if (nameInp) nameInp.value = suggestBulkTemplateName();
-          prompt.hidden = false;
-        }
-
-        function maybeShowBulkTemplateSavePrompt() {
-          if (bulkTemplateSavedThisSession || bulkTemplatePromptDismissed) return;
-          var payload = collectBulkTemplatePayload();
-          if (bulkTemplatePayloadExists(payload)) return;
-          showBulkTemplateSavePrompt();
-        }
-
-        async function saveBulkTemplate(name, payload) {
-          var trimmed = String(name || '').trim();
-          if (!trimmed) return false;
-          var body = payload || collectBulkTemplatePayload();
-          await apiJson('/api/hr/bulk-templates', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: trimmed, payload: body }),
-          });
-          bulkTemplateSavedThisSession = true;
-          hideBulkTemplateSavePrompt();
-          await fillBulkTemplateSelect();
-          return true;
-        }
-
-        function applyBulkTemplatePayload(p) {
-          if (!p || typeof p !== 'object') return;
-          if (p.recipient_method === 'cohort' || p.recipient_method === 'roster') {
-            bulkRecipientMethod = p.recipient_method;
-            setBulkWizardStep(2);
-            if (p.cohort_id) {
-              var sel = document.getElementById('bulkCohort');
-              if (sel) sel.value = String(p.cohort_id);
-            }
-          }
-          if (p.module_code) {
-            var mod = document.getElementById('bulkModule');
-            if (mod) mod.value = p.module_code;
-          }
-          var comp = document.getElementById('bulkCompletion');
-          var exp = document.getElementById('bulkExpiry');
-          if (comp && p.completion_date) comp.value = p.completion_date;
-          if (exp && p.expiry_date) exp.value = p.expiry_date;
-          if (p.issuing_trust_name) {
-            var tn = document.getElementById('bulkIssuingName');
-            if (tn) tn.value = p.issuing_trust_name;
-          }
-          if (p.issuing_trust_ods_code) {
-            var ods = document.getElementById('bulkOds');
-            if (ods) ods.value = p.issuing_trust_ods_code;
-          }
-          setBulkWizardStep(4);
-          updateBulkRecipientsSummary();
-        }
-
-        async function fillBulkTemplateSelect() {
-          var sel = document.getElementById('bulkTemplateSelect');
-          if (!sel) return bulkTemplatesCache;
-          try {
-            var data = await apiJson('/api/hr/bulk-templates');
-            bulkTemplatesCache = data.templates || [];
-            sel.innerHTML = '<option value="">—</option>' + bulkTemplatesCache.map(function (t) {
-              return '<option value="' + t.id + '">' + esc(t.name) + '</option>';
-            }).join('');
-            updateBulkTemplatesPanelVisibility();
-          } catch (e) {
-            bulkTemplatesCache = [];
-            updateBulkTemplatesPanelVisibility();
-          }
-          return bulkTemplatesCache;
-        }
-
         async function fillBulkCohortSelect() {
-          var sel = document.getElementById('bulkCohort');
-          if (!sel || HR_PAGE !== 'bulk') return;
+          if (HR_PAGE !== 'bulk') return;
           try {
             var data = await apiJson('/api/hr/cohorts');
-            var cohorts = data.cohorts || [];
-            sel.innerHTML = '<option value="">Choose a cohort…</option>';
-            cohorts.forEach(function (c) {
-              var opt = document.createElement('option');
-              opt.value = String(c.id);
-              var n = (c.name || 'Cohort').trim();
-              var cnt = c.member_count != null ? c.member_count : 0;
-              opt.textContent = n + ' (' + cnt + ' member' + (cnt === 1 ? '' : 's') + ')';
-              sel.appendChild(opt);
-            });
-            var adHoc = cohorts.find(function (c) {
-              return c.is_default || String(c.name || '').trim().toLowerCase() === 'ad-hoc';
-            });
-            if (adHoc && adHoc.id != null) sel.value = String(adHoc.id);
+            renderBulkCohortList(data.cohorts || []);
           } catch (e) {
-            /* keep default option */
+            renderBulkCohortList([]);
           }
         }
 
@@ -1607,8 +1519,8 @@
               bulkRecipientMethod = btn.getAttribute('data-bulk-method');
               setBulkWizardStep(2);
               if (bulkRecipientMethod === 'cohort') {
-                var sel = document.getElementById('bulkCohort');
-                if (sel) sel.focus();
+                var list = document.getElementById('bulkCohortList');
+                if (list) list.focus();
               } else {
                 syncBulkRosterPicker();
                 var r = document.getElementById('bulkRoster');
@@ -1617,13 +1529,22 @@
             });
           });
 
+          var bulkCohortListEl = document.getElementById('bulkCohortList');
+          if (bulkCohortListEl) {
+            bulkCohortListEl.addEventListener('change', function () {
+              setBulkStepError('bulkStepCohortError', '');
+              if (bulkWizardStep === 4) updateBulkRecipientsSummary();
+            });
+          }
+
           var bulkNextCohort = document.getElementById('bulkNextCohort');
           if (bulkNextCohort) {
             bulkNextCohort.addEventListener('click', function () {
-              var sel = document.getElementById('bulkCohort');
-              if (!sel || !sel.value) {
-                setBulkStepError('bulkStepCohortError', 'Choose a cohort to continue.');
-                if (sel) sel.focus();
+              var ids = getSelectedBulkCohortIds();
+              if (!ids.length) {
+                setBulkStepError('bulkStepCohortError', 'Select at least one cohort to continue.');
+                var list = document.getElementById('bulkCohortList');
+                if (list) list.focus();
                 return;
               }
               setBulkStepError('bulkStepCohortError', '');
@@ -1676,8 +1597,8 @@
             bulkBackEvidence.addEventListener('click', function () {
               setBulkWizardStep(bulkRecipientMethod === 'cohort' ? 2 : 2);
               if (bulkRecipientMethod === 'cohort') {
-                var sel = document.getElementById('bulkCohort');
-                if (sel) sel.focus();
+                var listBack = document.getElementById('bulkCohortList');
+                if (listBack) listBack.focus();
               } else {
                 syncBulkRosterPicker();
               }
@@ -1695,65 +1616,7 @@
           void (async function () {
             await fillBulkCohortSelect();
             resetBulkWizard();
-            await fillBulkTemplateSelect();
           })();
-
-          var btnLoadTpl = document.getElementById('btnBulkLoadTemplate');
-          if (btnLoadTpl) {
-            btnLoadTpl.addEventListener('click', async function () {
-              var sel = document.getElementById('bulkTemplateSelect');
-              if (!sel || !sel.value) return;
-              try {
-                var data = await apiJson('/api/hr/bulk-templates');
-                var t = (data.templates || []).find(function (x) { return String(x.id) === sel.value; });
-                if (t && t.payload) applyBulkTemplatePayload(t.payload);
-              } catch (e) {
-                alert(e.message || 'Could not load template');
-              }
-            });
-          }
-
-          var btnSaveTpl = document.getElementById('btnBulkSaveTemplate');
-          if (btnSaveTpl) {
-            btnSaveTpl.addEventListener('click', async function () {
-              var name = window.prompt('Template name', suggestBulkTemplateName());
-              if (!name) return;
-              try {
-                await saveBulkTemplate(name);
-                alert('Template saved.');
-              } catch (e) {
-                alert(e.message || 'Could not save');
-              }
-            });
-          }
-
-          var btnPromptSave = document.getElementById('btnBulkTemplatePromptSave');
-          if (btnPromptSave) {
-            btnPromptSave.addEventListener('click', async function () {
-              var nameInp = document.getElementById('bulkTemplateSaveName');
-              var name = nameInp ? nameInp.value : '';
-              if (!String(name || '').trim()) {
-                if (nameInp) nameInp.focus();
-                return;
-              }
-              btnPromptSave.disabled = true;
-              try {
-                await saveBulkTemplate(name);
-              } catch (e) {
-                alert(e.message || 'Could not save');
-              } finally {
-                btnPromptSave.disabled = false;
-              }
-            });
-          }
-
-          var btnPromptDismiss = document.getElementById('btnBulkTemplatePromptDismiss');
-          if (btnPromptDismiss) {
-            btnPromptDismiss.addEventListener('click', function () {
-              bulkTemplatePromptDismissed = true;
-              hideBulkTemplateSavePrompt();
-            });
-          }
         }
         fillHrModuleSelect(document.getElementById('addTrainingModule'));
         initHrIssuingTrustAutocomplete();
@@ -1941,8 +1804,6 @@
             window.setTimeout(function () {
               resetBulkWizard();
               void fillHrIssuingTrustFieldsIfEmpty();
-              bulkTemplatePromptDismissed = false;
-              hideBulkTemplateSavePrompt();
               var st = document.getElementById('bulkStatus');
               if (st) {
                 st.textContent = '';
@@ -1954,7 +1815,6 @@
               var tb = document.getElementById('bulkResultsTbody');
               if (wrap) wrap.hidden = true;
               if (tb) tb.innerHTML = '';
-              hideBulkTemplateSavePrompt();
             }, 0);
           });
         }
@@ -1983,13 +1843,11 @@
             var rosterEl = document.getElementById('bulkRoster');
             var evEl = document.getElementById('bulkEvidence');
             if (!bulkFormEl.reportValidity()) return;
-            var cohortSel = document.getElementById('bulkCohort');
-            var cohortId = bulkRecipientMethod === 'cohort' && cohortSel
-              ? String(cohortSel.value || '').trim()
-              : '';
+            var selectedCohortIds = bulkRecipientMethod === 'cohort' ? getSelectedBulkCohortIds() : [];
+            var hasCohorts = selectedCohortIds.length > 0;
             var hasRoster = bulkRecipientMethod === 'roster' && rosterEl && rosterEl.files && rosterEl.files[0];
-            if (!cohortId && !hasRoster) {
-              setBulkStatusMessage('Complete the recipient steps: choose a cohort or roster file.', 'error');
+            if (!hasCohorts && !hasRoster) {
+              setBulkStatusMessage('Complete the recipient steps: select at least one cohort or upload a roster file.', 'error');
               setBulkWizardStep(bulkRecipientMethod === 'roster' ? 2 : 2);
               return;
             }
@@ -2000,17 +1858,19 @@
             }
             bulkSubmitBusy = true;
             btnBulkSubmit.disabled = true;
-            bulkTemplatePromptDismissed = false;
-            hideBulkTemplateSavePrompt();
             var bulkVizEl = document.getElementById('bulkProvisionResult');
             var bulkSt = document.getElementById('bulkStatus');
             if (bulkSt) bulkSt.hidden = true;
             if (batchViz()) batchViz().clear(bulkVizEl);
             var bulkStartMsg = 'Preparing bulk training issue…';
-            if (cohortId) {
-              var cohortOpt = cohortSel && cohortSel.options[cohortSel.selectedIndex];
-              var cohortLabel = cohortOpt ? String(cohortOpt.textContent || '').trim() : '';
-              if (cohortLabel) bulkStartMsg = 'Loading cohort “' + cohortLabel + '”…';
+            if (hasCohorts) {
+              if (selectedCohortIds.length === 1) {
+                var one = bulkCohortById(selectedCohortIds[0]);
+                var oneName = one ? (one.name || 'Cohort').trim() : ('Cohort ' + selectedCohortIds[0]);
+                bulkStartMsg = 'Loading cohort “' + oneName + '”…';
+              } else {
+                bulkStartMsg = 'Loading ' + selectedCohortIds.length + ' cohorts…';
+              }
             } else if (hasRoster) {
               bulkStartMsg = 'Uploading roster file…';
             }
@@ -2019,8 +1879,8 @@
             if (tbody) tbody.innerHTML = '';
             try {
               var fd = new FormData();
-              if (cohortId) {
-                fd.append('cohort_id', cohortId);
+              if (hasCohorts) {
+                fd.append('cohort_ids', JSON.stringify(selectedCohortIds));
               } else if (hasRoster) {
                 fd.append('roster', rosterEl.files[0]);
               }
@@ -2074,9 +1934,6 @@
                     '<tr><td>' + esc(r.roster_line) + '</td><td>' + esc(r.status) + '</td><td>' + esc(r.message || '') + '</td></tr>'
                   );
                 }).join('');
-              }
-              if (data && !data.aborted && Number(data.issued || 0) > 0) {
-                maybeShowBulkTemplateSavePrompt();
               }
             } catch (err) {
               if (batchViz()) batchViz().clear(bulkVizEl);
@@ -2146,13 +2003,6 @@
 
         async function openSearchDoctorView(doctorId, doctorName) {
           searchDoctorViewId = String(doctorId || '');
-          var vlink = document.getElementById('btnSearchVerifierLink');
-          if (vlink) {
-            vlink.hidden = false;
-            vlink.onclick = function () {
-              window.location.assign('/static/hr/verifier-links.html?doctor_user_id=' + encodeURIComponent(searchDoctorViewId));
-            };
-          }
           if (HR_PAGE === 'search') {
             try {
               window.history.replaceState({}, '', '/static/hr/search.html?doctor=' + encodeURIComponent(String(doctorId)));

@@ -122,6 +122,45 @@
       padding-top: 0.25rem;
       border-top: 1px solid var(--nhsuk-border);
     }
+    .msg-template-bar {
+      padding: 0.75rem 0.85rem;
+      background: #f0f7fb;
+      border: 1px solid var(--nhsuk-border);
+      border-radius: 4px;
+      margin-bottom: 0.5rem;
+    }
+    .msg-template-bar .nhsuk-label { margin-bottom: 0.35rem; font-size: 0.875rem; }
+    .msg-template-bar__row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      align-items: center;
+    }
+    .msg-template-bar__row .nhsuk-select { flex: 1; min-width: 10rem; max-width: 100%; margin: 0; }
+    .msg-template-preview {
+      margin: 0.5rem 0 0 0;
+      font-size: 0.8125rem;
+      color: var(--nhsuk-secondary-text);
+      line-height: 1.45;
+    }
+    .msg-compose-templates {
+      padding: 0.5rem 0.75rem 0;
+      border-top: 1px solid var(--nhsuk-border);
+      background: #f8fafb;
+    }
+    .msg-compose-templates__row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem;
+      align-items: center;
+      margin-bottom: 0.35rem;
+    }
+    .msg-compose-templates__row .nhsuk-select {
+      flex: 1;
+      min-width: 8rem;
+      font-size: 0.8125rem;
+      margin: 0;
+    }
     .msg-thread-view[hidden] { display: none !important; }
   </style>
 </head>
@@ -197,6 +236,15 @@
               </div>
               <div class="msg-bubbles" id="bubbles"><p class="msg-empty">Choose a conversation on the left, tick clinicians to message several at once, or search above.</p></div>
               <div class="msg-compose" id="composeArea" hidden>
+                <div class="msg-compose-templates" id="threadTemplateBar">
+                  <div class="msg-compose-templates__row">
+                    <select class="nhsuk-select" id="threadTemplateSelect" aria-label="Message template">
+                      <option value="">Template…</option>
+                    </select>
+                    <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnThreadApplyTemplate">Use</button>
+                    <a href="/static/hr/welcome-templates.html" class="nhsuk-hint" style="font-size:0.8125rem;">Manage</a>
+                  </div>
+                </div>
                 <div class="msg-compose-row">
                   <input type="file" id="msgFileInput" multiple hidden
                     accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp">
@@ -212,9 +260,22 @@
             <div class="msg-broadcast-panel" id="broadcastPanel" hidden>
               <div class="msg-thread-header">
                 <div class="msg-thread-header-name" id="broadcastTitle">Message selected clinicians</div>
-                <div class="msg-thread-header-meta" id="broadcastMeta">Each person receives the same text in a separate private thread.</div>
+                <div class="msg-thread-header-meta" id="broadcastMeta">Each person gets a private thread. Use <strong>{name}</strong> and <strong>{trust}</strong> in templates — filled in per clinician when sent.</div>
               </div>
               <div class="msg-broadcast-compose">
+                <div class="msg-template-bar" id="broadcastTemplateBar">
+                  <label class="nhsuk-label" for="broadcastTemplateSelect">Message template</label>
+                  <div class="msg-template-bar__row">
+                    <select class="nhsuk-select" id="broadcastTemplateSelect" aria-describedby="broadcastTemplateHint">
+                      <option value="">— Choose a template —</option>
+                    </select>
+                    <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnBroadcastApplyTemplate">Use template</button>
+                    <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnBroadcastSaveTemplate">Save as template…</button>
+                    <a href="/static/hr/welcome-templates.html" class="nhsuk-button nhsuk-button--secondary hr-btn-small" style="text-decoration:none;display:inline-flex;align-items:center;">Manage library</a>
+                  </div>
+                  <span class="nhsuk-hint nhsuk-hint--secondary" id="broadcastTemplateHint" style="margin:0.35rem 0 0 0;display:block;">Placeholders <strong>{name}</strong> and <strong>{trust}</strong> are replaced for each recipient.</span>
+                  <p class="msg-template-preview" id="broadcastTemplatePreview" hidden aria-live="polite"></p>
+                </div>
                 <label class="nhsuk-label" for="broadcastBody">Your message</label>
                 <span class="nhsuk-hint nhsuk-hint--secondary" style="margin:0;">Optional attachments (PDF or images) — use the paperclip.</span>
                 <div class="msg-compose msg-compose--broadcast">
@@ -451,6 +512,130 @@
 
       function viz() { return window.NHSBatchResultViz; }
 
+      var _messageTemplatesCache = [];
+
+      function trustLabelForMessages() {
+        var u = (typeof NHSAuth !== 'undefined' && NHSAuth.user) ? NHSAuth.user : {};
+        return String(u.current_trust_display || u.current_trust || 'your trust').trim() || 'your trust';
+      }
+
+      function displayNameFromDoc(doc) {
+        if (!doc) return 'Jane Smith';
+        var dn = String(doc.display_name || doc.doctor_name || '').trim();
+        if (dn) return dn;
+        var em = String(doc.email || doc.doctor_email || '').trim();
+        if (em) return em.split('@')[0] || 'Colleague';
+        return 'Colleague';
+      }
+
+      function renderMessageTemplate(template, doc) {
+        var name = displayNameFromDoc(doc);
+        var trust = trustLabelForMessages();
+        return String(template || '')
+          .replace(/\{name\}/g, name)
+          .replace(/\{trust\}/g, trust);
+      }
+
+      function sampleDocForBroadcastPreview() {
+        var keys = Object.keys(_selectedDoctors);
+        if (!keys.length) return null;
+        return _selectedDoctors[keys[0]];
+      }
+
+      function sampleDocForThreadPreview() {
+        if (!_activeConv) return null;
+        return {
+          display_name: _activeConv.doctor_name,
+          email: _activeConv.doctor_email,
+          gmc_number: _activeConv.doctor_gmc,
+        };
+      }
+
+      function fillMessageTemplateSelects() {
+        var opts = '<option value="">— Choose a template —</option>' +
+          _messageTemplatesCache.map(function (t) {
+            return '<option value="' + t.id + '">' + esc(t.name || 'Template') + '</option>';
+          }).join('');
+        var bSel = document.getElementById('broadcastTemplateSelect');
+        var tSel = document.getElementById('threadTemplateSelect');
+        if (bSel) {
+          var bv = bSel.value;
+          bSel.innerHTML = opts.replace('— Choose a template —', '— Choose a template —');
+          if (bv) bSel.value = bv;
+        }
+        if (tSel) {
+          var tv = tSel.value;
+          tSel.innerHTML = '<option value="">Template…</option>' +
+            _messageTemplatesCache.map(function (t) {
+              return '<option value="' + t.id + '">' + esc(t.name || 'Template') + '</option>';
+            }).join('');
+          if (tv) tSel.value = tv;
+        }
+      }
+
+      async function loadMessageTemplates() {
+        try {
+          var data = await apiJson('/api/hr/welcome-templates');
+          _messageTemplatesCache = data.templates || [];
+          fillMessageTemplateSelects();
+        } catch (e) {
+          _messageTemplatesCache = [];
+          fillMessageTemplateSelects();
+        }
+      }
+
+      function getMessageTemplateById(id) {
+        return _messageTemplatesCache.find(function (t) { return String(t.id) === String(id); }) || null;
+      }
+
+      function updateBroadcastTemplatePreview() {
+        var preview = document.getElementById('broadcastTemplatePreview');
+        var body = document.getElementById('broadcastBody');
+        if (!preview || !body) return;
+        var text = String(body.value || '').trim();
+        if (!text || (text.indexOf('{name}') < 0 && text.indexOf('{trust}') < 0)) {
+          preview.hidden = true;
+          preview.textContent = '';
+          return;
+        }
+        var sample = renderMessageTemplate(text, sampleDocForBroadcastPreview());
+        preview.hidden = false;
+        preview.innerHTML = '<strong>Preview</strong> (first selected clinician): ' + esc(sample);
+      }
+
+      function applyMessageTemplate(selectId, textareaId, sampleDoc) {
+        var sel = document.getElementById(selectId);
+        var ta = document.getElementById(textareaId);
+        if (!sel || !ta || !sel.value) return;
+        var tmpl = getMessageTemplateById(sel.value);
+        if (!tmpl || !tmpl.body) return;
+        ta.value = tmpl.body;
+        ta.focus();
+        if (textareaId === 'broadcastBody') updateBroadcastTemplatePreview();
+      }
+
+      async function saveCurrentMessageAsTemplate(sourceTextareaId) {
+        var ta = document.getElementById(sourceTextareaId);
+        var body = ta ? String(ta.value || '').trim() : '';
+        if (!body) {
+          alert('Write a message first, then save it as a template.');
+          return;
+        }
+        var name = window.prompt('Template name');
+        if (!name || !String(name).trim()) return;
+        try {
+          await apiJson('/api/hr/welcome-templates', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: String(name).trim(), body: body }),
+          });
+          await loadMessageTemplates();
+          alert('Template saved.');
+        } catch (err) {
+          alert(err.message || 'Could not save template');
+        }
+      }
+
       function clearBroadcastResult() {
         var el = document.getElementById('broadcastResult');
         if (el) el.innerHTML = '';
@@ -552,8 +737,9 @@
         var title = document.getElementById('broadcastTitle');
         var meta = document.getElementById('broadcastMeta');
         if (title) title.textContent = 'Message ' + n + ' clinician' + (n === 1 ? '' : 's');
-        if (meta) meta.textContent = 'Each person receives the same text in a separate private thread.';
+        if (meta) meta.innerHTML = 'Each person gets a private thread. Use <strong>{name}</strong> and <strong>{trust}</strong> in templates — filled in per clinician when sent.';
         clearBroadcastResult();
+        updateBroadcastTemplatePreview();
       }
 
       function confirmBroadcastSend(members) {
@@ -788,6 +974,24 @@
         clearBroadcastResult();
       });
 
+      document.getElementById('btnBroadcastApplyTemplate').addEventListener('click', function () {
+        applyMessageTemplate('broadcastTemplateSelect', 'broadcastBody', sampleDocForBroadcastPreview());
+      });
+      document.getElementById('btnBroadcastSaveTemplate').addEventListener('click', function () {
+        void saveCurrentMessageAsTemplate('broadcastBody');
+      });
+      document.getElementById('broadcastTemplateSelect').addEventListener('change', function () {
+        if (this.value) applyMessageTemplate('broadcastTemplateSelect', 'broadcastBody', sampleDocForBroadcastPreview());
+      });
+      document.getElementById('broadcastBody').addEventListener('input', updateBroadcastTemplatePreview);
+
+      document.getElementById('btnThreadApplyTemplate').addEventListener('click', function () {
+        applyMessageTemplate('threadTemplateSelect', 'msgInput', sampleDocForThreadPreview());
+      });
+      document.getElementById('threadTemplateSelect').addEventListener('change', function () {
+        if (this.value) applyMessageTemplate('threadTemplateSelect', 'msgInput', sampleDocForThreadPreview());
+      });
+
       document.getElementById('btnBroadcastSend').addEventListener('click', async function () {
         var members = Object.keys(_selectedDoctors).map(function (k) { return _selectedDoctors[k]; });
         if (!members.length) return;
@@ -841,6 +1045,7 @@
           );
         }
         renderSelectedPanel();
+        await loadMessageTemplates();
         await loadConversations(false);
         var params = new URLSearchParams(window.location.search);
         var doctorParam = params.get('doctor');

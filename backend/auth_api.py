@@ -1774,6 +1774,73 @@ def _hr_bulk_training_collect(ctx: dict) -> HrBulkTrainingResponse:
     return resp
 
 
+def _parse_bulk_cohort_ids(
+    cohort_id: Optional[str], cohort_ids: Optional[str]
+) -> list[int]:
+    """Parse one or many cohort ids from bulk-training form fields."""
+    raw_ids: list[int] = []
+    if cohort_ids and str(cohort_ids).strip():
+        try:
+            parsed = json.loads(str(cohort_ids).strip())
+        except json.JSONDecodeError:
+            parsed = [
+                x.strip() for x in str(cohort_ids).split(",") if x.strip()
+            ]
+        if isinstance(parsed, list):
+            for item in parsed:
+                try:
+                    raw_ids.append(int(item))
+                except (TypeError, ValueError):
+                    raise HTTPException(status_code=400, detail="Invalid cohort_ids")
+        else:
+            raise HTTPException(status_code=400, detail="cohort_ids must be a JSON array")
+    elif cohort_id and str(cohort_id).strip():
+        try:
+            raw_ids = [int(str(cohort_id).strip())]
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Invalid cohort_id")
+    seen: set[int] = set()
+    out: list[int] = []
+    for cid in raw_ids:
+        if cid not in seen:
+            seen.add(cid)
+            out.append(cid)
+    return out
+
+
+def _bulk_training_roster_from_cohorts(
+    cohort_ids: list[int], trust: str
+) -> tuple[list[str], str]:
+    """Merge roster lines from multiple cohorts; dedupe by normalised identifier."""
+    if not cohort_ids:
+        return [], ""
+    seen: set[str] = set()
+    lines: list[str] = []
+    labels: list[str] = []
+    for cid in cohort_ids:
+        cohort = db.cohort_get(int(cid), trust)
+        if not cohort:
+            raise HTTPException(status_code=404, detail=f"Cohort not found: {cid}")
+        labels.append(cohort.get("name") or f"Cohort {cid}")
+        for line in db.cohort_roster_lines(int(cid), trust):
+            key = str(line or "").strip().lower()
+            if key and key not in seen:
+                seen.add(key)
+                lines.append(str(line).strip())
+    if not lines:
+        raise HTTPException(
+            status_code=400,
+            detail="Selected cohort(s) have no members with email or GMC.",
+        )
+    if len(labels) == 1:
+        cohort_label = labels[0]
+    elif len(labels) <= 3:
+        cohort_label = ", ".join(labels)
+    else:
+        cohort_label = f"{len(labels)} cohorts"
+    return lines, cohort_label
+
+
 async def _hr_bulk_training_build_context(
     request: Request,
     hr: dict,
@@ -1781,6 +1848,7 @@ async def _hr_bulk_training_build_context(
     *,
     roster: Optional[UploadFile],
     cohort_id: Optional[str],
+    cohort_ids: Optional[str],
     evidence: Optional[UploadFile],
     module_code: str,
     completion_date: str,
@@ -1790,19 +1858,9 @@ async def _hr_bulk_training_build_context(
 ) -> dict:
     lines: list[str] = []
     cohort_label = ""
-    raw_cohort = (cohort_id or "").strip()
-    if raw_cohort:
-        try:
-            cid = int(raw_cohort)
-        except (TypeError, ValueError):
-            raise HTTPException(status_code=400, detail="Invalid cohort_id")
-        cohort = db.cohort_get(cid, trust)
-        if not cohort:
-            raise HTTPException(status_code=404, detail="Cohort not found")
-        cohort_label = cohort.get("name") or f"Cohort {cid}"
-        lines = db.cohort_roster_lines(cid, trust)
-        if not lines:
-            raise HTTPException(status_code=400, detail="Selected cohort has no members with email or GMC.")
+    parsed_cohort_ids = _parse_bulk_cohort_ids(cohort_id, cohort_ids)
+    if parsed_cohort_ids:
+        lines, cohort_label = _bulk_training_roster_from_cohorts(parsed_cohort_ids, trust)
     elif roster and (roster.filename or "").strip():
         raw_roster = await roster.read()
         if len(raw_roster) > MAX_HR_BULK_ROSTER_BYTES:
@@ -1869,6 +1927,7 @@ async def hr_bulk_training(
     request: Request,
     roster: Optional[UploadFile] = File(None),
     cohort_id: Optional[str] = Form(None),
+    cohort_ids: Optional[str] = Form(None),
     evidence: Optional[UploadFile] = File(None),
     module_code: str = Form(...),
     completion_date: str = Form(...),
@@ -1900,6 +1959,7 @@ async def hr_bulk_training(
         trust,
         roster=roster,
         cohort_id=cohort_id,
+        cohort_ids=cohort_ids,
         evidence=evidence,
         module_code=module_code,
         completion_date=completion_date,
@@ -2240,7 +2300,7 @@ def hr_cohort_compliance_export(request: Request, cohort_id: int):
     )
 
 
-# ── Phase 3: trust move, bulk templates, verifier links, welcome templates ───
+# ── Phase 3: trust move, verifier links, welcome templates ───
 
 
 @router.get("/me/trust-move/candidates")
@@ -2412,47 +2472,6 @@ def hr_verifier_link_revoke(request: Request, link_id: int):
     trust = _hr_trust_required(hr)
     if not db.verifier_link_revoke(int(link_id), trust):
         raise HTTPException(status_code=404, detail="Link not found")
-    return {"ok": True}
-
-
-@router.get("/hr/bulk-templates")
-def hr_bulk_templates_list_api(request: Request):
-    hr = require_premium_user(request)
-    trust = _hr_trust_required(hr)
-    return {"templates": db.hr_bulk_templates_list(trust), "trust": trust}
-
-
-@router.post("/hr/bulk-templates")
-async def hr_bulk_templates_save_api(request: Request):
-    hr = require_premium_user(request)
-    trust = _hr_trust_required(hr)
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON")
-    if not isinstance(body, dict):
-        raise HTTPException(status_code=400, detail="Expected JSON object")
-    name = (body.get("name") or "").strip()
-    payload = body.get("payload")
-    if not isinstance(payload, dict):
-        raise HTTPException(status_code=400, detail="payload object required")
-    tid = body.get("id")
-    tmpl = db.hr_bulk_template_save(
-        trust,
-        int(hr["id"]),
-        name,
-        payload,
-        template_id=int(tid) if tid else None,
-    )
-    return {"ok": True, "template": tmpl}
-
-
-@router.delete("/hr/bulk-templates/{template_id}")
-def hr_bulk_templates_delete_api(request: Request, template_id: int):
-    hr = require_premium_user(request)
-    trust = _hr_trust_required(hr)
-    if not db.hr_bulk_template_delete(int(template_id), trust):
-        raise HTTPException(status_code=404, detail="Template not found")
     return {"ok": True}
 
 
@@ -3002,9 +3021,12 @@ def hr_messages_thread(request: Request, conv_id: int):
 async def hr_messages_send(request: Request, conv_id: int):
     hr = require_premium_user(request)
     trust = _hr_trust_required(hr)
-    _get_conversation_assert_hr(conv_id, trust)
+    conv = _get_conversation_assert_hr(conv_id, trust)
     text, attachments = await _message_send_payload(request)
     _require_message_content(text, attachments)
+    doc = db.user_get_by_id(int(conv["doctor_user_id"]))
+    if doc:
+        text = _render_welcome_template(text, doc, trust)
     try:
         msg = db.message_send_body(
             int(conv_id), int(hr["id"]), text, attachments=attachments or None
@@ -3142,7 +3164,8 @@ def _hr_broadcast_to_doctors(
                 failed.append({"doctor_user_id": did, "error": "clinician not found"})
                 continue
             conv = db.conversation_get_or_create(int(did), hr_trust)
-            db.message_send_body(int(conv["id"]), int(hr_user_id), body, attachments=att)
+            personalized = _render_welcome_template(body, doc, hr_trust)
+            db.message_send_body(int(conv["id"]), int(hr_user_id), personalized, attachments=att)
             sent += 1
         except Exception as e:
             failed.append({"doctor_user_id": did, "error": str(e)})
@@ -3179,7 +3202,8 @@ def _hr_broadcast_stream(
                 failed.append({"doctor_user_id": did, "error": "clinician not found"})
                 continue
             conv = db.conversation_get_or_create(int(did), hr_trust)
-            db.message_send_body(int(conv["id"]), int(hr_user_id), body, attachments=att)
+            personalized = _render_welcome_template(body, doc, hr_trust)
+            db.message_send_body(int(conv["id"]), int(hr_user_id), personalized, attachments=att)
             sent += 1
         except Exception as e:
             failed.append({"doctor_user_id": did, "error": str(e)})

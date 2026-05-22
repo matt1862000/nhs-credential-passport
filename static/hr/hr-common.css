@@ -256,43 +256,35 @@
     #addTrainingStatus.hr-bulk-status--error { color: var(--nhsuk-error); font-weight: 600; margin: 0; }
     #addTrainingStatus.hr-bulk-status--ok { color: var(--nhsuk-success); font-weight: 600; margin: 0; }
     #addTrainingStatus.hr-bulk-status--muted { margin: 0; }
-    .hr-bulk-templates-panel {
-      margin-bottom: 1.25rem;
-      padding: 1rem 1.25rem;
-      background: #f0f7fb;
+    .hr-bulk-cohort-list {
+      max-height: 14rem;
+      overflow-y: auto;
       border: 1px solid var(--nhsuk-border);
-      border-radius: 6px;
+      border-radius: 4px;
+      background: #fff;
+      padding: 0.35rem 0;
     }
-    .hr-bulk-template-prompt {
-      margin-top: 1rem;
-      padding: 1rem 1.25rem;
-      background: #f0f7fb;
-      border: 1px solid var(--nhsuk-border);
-      border-radius: 6px;
-    }
-    .hr-bulk-template-prompt__title {
-      margin: 0 0 0.35rem 0;
-      font-size: 1rem;
-    }
-    .hr-bulk-template-prompt__hint {
-      margin: 0 0 0.85rem 0;
+    .hr-bulk-cohort-list__empty {
+      padding: 0.75rem 1rem;
       font-size: 0.875rem;
+      color: var(--nhsuk-secondary-text);
     }
-    .hr-bulk-template-prompt__row {
+    .hr-bulk-cohort-option {
       display: flex;
-      flex-wrap: wrap;
-      gap: 0.75rem;
-      align-items: flex-end;
+      align-items: flex-start;
+      gap: 0.55rem;
+      padding: 0.55rem 0.85rem;
+      cursor: pointer;
+      font-size: 0.9375rem;
+      line-height: 1.35;
     }
-    .hr-bulk-template-prompt__name {
-      margin: 0;
-      flex: 1;
-      min-width: 12rem;
-    }
-    .hr-bulk-template-prompt__actions {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 0.5rem;
+    .hr-bulk-cohort-option:hover { background: #f0f7fb; }
+    .hr-bulk-cohort-option input { margin-top: 0.2rem; flex-shrink: 0; }
+    .hr-bulk-cohort-option__meta {
+      display: block;
+      font-size: 0.8125rem;
+      color: var(--nhsuk-secondary-text);
+      margin-top: 0.1rem;
     }
     .hr-page-nav { display: inline-flex; flex-wrap: wrap; }
     .hr-page-nav a.hr-nav-link {

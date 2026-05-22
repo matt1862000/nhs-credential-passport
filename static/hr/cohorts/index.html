@@ -728,8 +728,9 @@
               body: JSON.stringify({ doctor_user_ids: _welcomeReviewState.userIds }),
             }
           );
+          var cohortId = _welcomeReviewState.cohortId;
           closeWelcomeReviewModal();
-          await openCohort(_welcomeReviewState.cohortId);
+          await openCohort(cohortId);
         } catch (err) {
           alert(err.message || 'Could not update');
         }
