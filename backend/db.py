@@ -3670,7 +3670,7 @@ def hr_welcome_templates_list(hr_trust: str) -> list[dict]:
             SELECT w.id, w.name, w.topic_id, w.body, w.created_at, w.updated_at,
                    m.topic_name
             FROM hr_welcome_templates w
-            LEFT JOIN mandatory_topics m ON m.id = w.topic_id
+            LEFT JOIN trust_mandatory_topics m ON m.id = w.topic_id
             WHERE LOWER(TRIM(w.hr_trust)) = ?
             ORDER BY w.name
             """,
