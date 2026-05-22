@@ -54,17 +54,17 @@ BASE_URL = os.environ.get("BASE_URL", "http://localhost:8000")
 
 
 class NoCacheStaticHtmlMiddleware(BaseHTTPMiddleware):
-    """Stop browsers/CDNs from holding stale copies of /static/**/*.html (branding, nav)."""
+    """Stop browsers/CDNs from holding stale copies of /static HTML and shared JS (auth, nav)."""
 
     async def dispatch(self, request, call_next):
         response = await call_next(request)
         if request.method != "GET" or not request.url.path.startswith("/static/"):
             return response
+        path = request.url.path
         ct = response.headers.get("content-type", "")
-        if "text/html" not in ct:
-            return response
-        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-        response.headers["Pragma"] = "no-cache"
+        if "text/html" in ct or path.startswith("/static/shared/") and path.endswith(".js"):
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
         return response
 
 

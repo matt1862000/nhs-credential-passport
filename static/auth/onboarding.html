@@ -84,7 +84,7 @@
 
   <script src="/static/shared/ods-trust-suggest.js"></script>
   <script src="/static/shared/trust-autocomplete.js"></script>
-  <script src="/static/shared/auth.js"></script>
+  <script src="/static/shared/auth.js?v=20260523-1"></script>
   <script src="/static/shared/nav-account.js?v=20260522-1"></script>
   <script src="/static/shared/app-menu.js?v=20260522-1"></script>
   <script>
@@ -96,28 +96,55 @@
         el.hidden = !msg;
       }
 
-      document.getElementById('formOnboarding').addEventListener('submit', async function (e) {
-        e.preventDefault();
-        showErr('');
+      function readOnboardingPayload() {
         var gmc = String(document.getElementById('gmcNumber').value || '').replace(/\D/g, '');
-        if (!/^\d{7}$/.test(gmc)) {
-          showErr('GMC number must be exactly 7 digits.');
+        if (!/^\d{7}$/.test(gmc)) return null;
+        var name = document.getElementById('displayName').value.trim();
+        var trust = document.getElementById('currentTrust').value.trim();
+        if (!name || !trust) return null;
+        return {
+          display_name: name,
+          gmc_number: gmc,
+          current_trust: trust,
+        };
+      }
+
+      async function saveOnboardingAndGoDashboard() {
+        showErr('');
+        var payload = readOnboardingPayload();
+        if (!payload) {
+          if (NHSAuth.isProfileComplete()) {
+            await NHSAuth.syncOnboardingIfProfileComplete();
+            window.location.replace('/static/dashboard/');
+            return;
+          }
+          showErr('Complete your profile: full name, 7-digit GMC number, and current trust.');
           return;
         }
+        await NHSAuth.updateProfile(payload);
+        await NHSAuth.pullWalletMerge();
+        window.location.replace('/static/dashboard/');
+      }
+
+      document.getElementById('formOnboarding').addEventListener('submit', async function (e) {
+        e.preventDefault();
         var btn = this.querySelector('button[type="submit"]');
         btn.disabled = true;
         try {
-          await NHSAuth.updateProfile({
-            display_name: document.getElementById('displayName').value.trim(),
-            gmc_number: gmc,
-            current_trust: document.getElementById('currentTrust').value.trim(),
-          });
-          await NHSAuth.pullWalletMerge();
-          window.location.replace('/static/dashboard/');
+          await saveOnboardingAndGoDashboard();
         } catch (err) {
           showErr(err.message || 'Could not save profile');
           btn.disabled = false;
         }
+      });
+
+      document.querySelectorAll('a[href="/static/dashboard/"]').forEach(function (a) {
+        a.addEventListener('click', function (e) {
+          e.preventDefault();
+          void saveOnboardingAndGoDashboard().catch(function (err) {
+            showErr(err.message || 'Could not save profile');
+          });
+        });
       });
 
       (async function () {
