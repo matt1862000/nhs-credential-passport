@@ -464,24 +464,28 @@
           btn.textContent = 'Verifying…';
         }
         var failed = 0;
-        for (var i = 0; i < entries.length; i++) {
-          try {
-            await apiJson(
-              '/api/hr/shares/' +
-                encodeURIComponent(entries[i].sid) +
-                '/items/' +
-                encodeURIComponent(entries[i].cid) +
-                '/verify',
-              { method: 'POST' }
-            );
-          } catch (err) {
-            failed++;
+        try {
+          for (var i = 0; i < entries.length; i++) {
+            try {
+              await apiJson(
+                '/api/hr/shares/' +
+                  encodeURIComponent(entries[i].sid) +
+                  '/items/' +
+                  encodeURIComponent(entries[i].cid) +
+                  '/verify',
+                { method: 'POST' }
+              );
+            } catch (err) {
+              failed++;
+            }
           }
+          await refreshPayloadAfterAction(lastItemsFixedSessionId);
+          notifyHrInboxChanged();
+          if (failed) alert('Could not verify ' + failed + ' record(s). The rest were updated.');
+        } finally {
+          if (btn) btn.textContent = 'Verify selected';
+          syncItemsBulkBarCounts();
         }
-        await refreshPayloadAfterAction(lastItemsFixedSessionId);
-        notifyHrInboxChanged();
-        if (failed) alert('Could not verify ' + failed + ' record(s). The rest were updated.');
-        if (btn) btn.textContent = 'Verify selected';
       }
 
       async function runBulkDecline(entries) {
@@ -494,28 +498,32 @@
           btn.textContent = 'Declining…';
         }
         var failed = 0;
-        for (var i = 0; i < entries.length; i++) {
-          try {
-            await apiJson(
-              '/api/hr/shares/' +
-                encodeURIComponent(entries[i].sid) +
-                '/items/' +
-                encodeURIComponent(entries[i].cid) +
-                '/decline',
-              {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ reason: reason }),
-              }
-            );
-          } catch (err) {
-            failed++;
+        try {
+          for (var i = 0; i < entries.length; i++) {
+            try {
+              await apiJson(
+                '/api/hr/shares/' +
+                  encodeURIComponent(entries[i].sid) +
+                  '/items/' +
+                  encodeURIComponent(entries[i].cid) +
+                  '/decline',
+                {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ reason: reason }),
+                }
+              );
+            } catch (err) {
+              failed++;
+            }
           }
+          await refreshPayloadAfterAction(lastItemsFixedSessionId);
+          notifyHrInboxChanged();
+          if (failed) alert('Could not decline ' + failed + ' record(s). The rest were updated.');
+        } finally {
+          if (btn) btn.textContent = 'Decline selected';
+          syncItemsBulkBarCounts();
         }
-        await refreshPayloadAfterAction(lastItemsFixedSessionId);
-        notifyHrInboxChanged();
-        if (failed) alert('Could not decline ' + failed + ' record(s). The rest were updated.');
-        if (btn) btn.textContent = 'Decline selected';
       }
 
       function wireItemsBulkHandlers() {
