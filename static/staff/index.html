@@ -268,6 +268,28 @@
     .nhsuk-card:hover { box-shadow: 0 4px 12px rgba(33, 43, 50, 0.08); }
     .nhsuk-card.revoked { opacity: 0.85; }
     .nhsuk-card__title { font-size: 1.25rem; font-weight: 700; margin: 0 0 0.25rem 0; color: var(--nhsuk-text); }
+    .staff-cert-title {
+      background: none; border: none; padding: 0; margin: 0;
+      font: inherit; font-weight: 700; color: var(--nhsuk-link);
+      cursor: pointer; text-align: left; text-decoration: underline;
+      text-underline-offset: 0.15em;
+    }
+    .staff-cert-title:hover { color: var(--nhsuk-link-hover); }
+    .staff-cert-title:focus { outline: 3px solid var(--nhsuk-focus); outline-offset: 2px; }
+    .staff-cert-modal {
+      position: fixed; inset: 0; z-index: 1000;
+      background: rgba(33, 43, 50, 0.55);
+      display: flex; align-items: center; justify-content: center;
+      padding: 1rem;
+    }
+    .staff-cert-modal__panel {
+      background: #fff; border-radius: 4px; max-width: 56rem; width: 100%;
+      max-height: 92vh; overflow: auto; padding: 1.25rem 1.5rem;
+      box-shadow: 0 8px 28px rgba(33, 43, 50, 0.2);
+    }
+    .staff-cert-modal__title { margin: 0 0 1rem 0; font-size: 1.25rem; font-weight: 700; }
+    .staff-cert-iframe { width: 100%; min-height: 70vh; border: 1px solid var(--nhsuk-border); border-radius: 4px; }
+    .staff-cert-img { max-width: 100%; height: auto; display: block; border: 1px solid var(--nhsuk-border); border-radius: 4px; }
     .nhsuk-card__meta { font-size: 0.875rem; color: var(--nhsuk-secondary-text); margin-bottom: 0.5rem; }
     .nhsuk-tag { display: inline-block; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.875rem; font-weight: 600; }
     .nhsuk-tag--valid { background: #cce5d2; color: var(--nhsuk-success); }
@@ -651,6 +673,14 @@
     </section>
   </main>
 
+  <div id="staffCertModal" class="staff-cert-modal" hidden role="dialog" aria-modal="true" aria-labelledby="staffCertModalTitle">
+    <div class="staff-cert-modal__panel">
+      <h3 id="staffCertModalTitle" class="staff-cert-modal__title">Uploaded certificate</h3>
+      <div id="staffCertModalBody"></div>
+      <button type="button" class="nhsuk-button nhsuk-button--secondary" id="staffCertModalClose" style="margin-top:1rem;">Close</button>
+    </div>
+  </div>
+
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" crossorigin="anonymous"></script>
   <script src="/static/wallet/wallet-store.js"></script>
   <script src="/static/shared/auth.js?v=20260523-1"></script>
@@ -697,6 +727,50 @@
 
     /** True only for ESR CSV imports — manual competencies may have uploaded certificate_base64 but must not show "ESR evidence". */
     function credHasEsrEvidence(c) { return !!(c && c.import_evidence_batch); }
+
+    function credHasUploadedCertificate(c) {
+      return !!resolveCredCertificate(c);
+    }
+
+    function credentialTitleHtml(c) {
+      var name = escapeHtml(c.module_name || 'Training');
+      if (!credHasUploadedCertificate(c)) {
+        return '<h3 class="nhsuk-card__title">' + name + '</h3>';
+      }
+      var cid = String(c.credential_id || '').replace(/'/g, "\\'");
+      return '<h3 class="nhsuk-card__title"><button type="button" class="staff-cert-title" onclick="viewUploadedCertificate(\'' + cid + '\')" title="View uploaded certificate">' + name + '</button></h3>';
+    }
+
+    function closeStaffCertModal() {
+      var modal = document.getElementById('staffCertModal');
+      var body = document.getElementById('staffCertModalBody');
+      if (body) body.innerHTML = '';
+      if (modal) modal.hidden = true;
+    }
+
+    window.viewUploadedCertificate = function (credentialId) {
+      var list = getStored();
+      var c = list.find(function (x) { return x.credential_id === credentialId; });
+      var ev = resolveCredCertificate(c);
+      var modal = document.getElementById('staffCertModal');
+      var title = document.getElementById('staffCertModalTitle');
+      var body = document.getElementById('staffCertModalBody');
+      if (!ev || !modal || !body) {
+        alert('No uploaded certificate for this training record.');
+        return;
+      }
+      if (title) title.textContent = (c && c.module_name) || 'Uploaded certificate';
+      var fn = String(ev.filename || 'evidence').toLowerCase();
+      var ext = (fn.split('.').pop() || '').toLowerCase();
+      var mime = ext === 'pdf' ? 'application/pdf' : (ext === 'png' ? 'image/png' : (ext === 'webp' ? 'image/webp' : 'image/jpeg'));
+      var b64 = String(ev.b64).replace(/\s/g, '');
+      if (mime === 'application/pdf') {
+        body.innerHTML = '<iframe class="staff-cert-iframe" title="Uploaded certificate" src="data:' + mime + ';base64,' + b64 + '"></iframe>';
+      } else {
+        body.innerHTML = '<img class="staff-cert-img" alt="Uploaded certificate" src="data:' + mime + ';base64,' + b64 + '" />';
+      }
+      modal.hidden = false;
+    };
 
     /** Mirrors backend credential_service completion_dedupe_key / JWT claims (offline duplicate hint). */
     function normalizeStaffIdForDedupe(raw) {
@@ -1750,7 +1824,7 @@
             <div class="nhsuk-card__row" style="display:flex; align-items:flex-start; gap:0.75rem;">
               ${checkboxBlock}
               <div style="flex:1;">
-                <h3 class="nhsuk-card__title">${c.module_name}</h3>
+                ${credentialTitleHtml(c)}
                 <div class="nhsuk-card__meta">Expires ${c.expiry_date}${c.revoked ? ' · Revoked' : ''}</div>
                 <span class="nhsuk-tag nhsuk-tag--${status}">${expiryStatusLabel(status)}</span>${verifiedTag}${pendingTag}${declinedTag}
                 <div class="nhsuk-card__actions">
@@ -1777,7 +1851,7 @@
             <div class="nhsuk-card__row" style="display:flex; align-items:flex-start; gap:0.75rem;">
               ${checkboxBlock}
               <div style="flex:1;">
-                <h3 class="nhsuk-card__title">${c.module_name}</h3>
+                ${credentialTitleHtml(c)}
                 <div class="nhsuk-card__meta">Expires ${c.expiry_date}${c.revoked ? ' · Revoked' : ''}</div>
                 <span class="nhsuk-tag nhsuk-tag--${status}">${expiryStatusLabel(status)}</span>
                 <span class="nhsuk-tag nhsuk-tag--verified" style="margin-left:0.5rem;">VERIFIED</span>
@@ -1934,7 +2008,7 @@
       const list = getStored();
       const c = list.find(x => x.credential_id === credentialId);
       const ev = resolveCredCertificate(c);
-      if (!ev) { alert('No ESR evidence for this training record'); return; }
+      if (!ev) { alert('No uploaded certificate for this training record'); return; }
       const name = ev.filename || 'evidence';
       const ext = (name.split('.').pop() || '').toLowerCase();
       const mime = ext === 'pdf' ? 'application/pdf' : (ext === 'png' ? 'image/png' : (ext === 'webp' ? 'image/webp' : 'image/jpeg'));
