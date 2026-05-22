@@ -1600,6 +1600,25 @@
       return (status || '').toUpperCase();
     }
 
+    /** True when another credential in the wallet renews this one (explicit link or newer in-date same module). */
+    function hasRenewalReplacement(list, c) {
+      if (!c || !c.credential_id) return false;
+      var cid = String(c.credential_id).trim();
+      var linked = list.some(function (other) {
+        return !other.revoked && String(other.supersedes_credential_id || '').trim() === cid;
+      });
+      if (linked) return true;
+      var module = (c.module_name || '').trim().toLowerCase();
+      if (!module) return false;
+      var myExp = String(c.expiry_date || '');
+      return list.some(function (other) {
+        if (other.credential_id === c.credential_id || other.revoked) return false;
+        if ((other.module_name || '').trim().toLowerCase() !== module) return false;
+        if (statusClass(other.expiry_date, false) !== 'valid') return false;
+        return String(other.expiry_date || '') > myExp;
+      });
+    }
+
     function getFilteredList() {
       const list = getStored();
       const statusFilter = (document.getElementById('filterStatus') || {}).value || '';
@@ -1683,8 +1702,16 @@
           : (isDeclined ? 'Send again after updating dates or evidence' : (allowResend ? 'You previously sent this to a different trust. Send again to your current trust HR.' : (alreadyPending ? 'Already sent to HR' : (alreadyVerified ? 'Decision already recorded' : ''))));
         if (verifyBtnTitle) verifyBtnAttrs += ' title="' + verifyBtnTitle.replace(/"/g, '&quot;') + '"';
         var verifyBtnOnclick = profileOk ? `onclick="shareCred('${c.credential_id}')"` : `onclick="return openProfileForVerification();"`;
-        var showVerifyHrButton = profileOk && !alreadyVerified && (isDeclined || !alreadyPending || allowResend);
-        var showRenew = !c.revoked && (status === 'expiring' || status === 'expired');
+        var replacedByRenewal = hasRenewalReplacement(list, c);
+        var showVerifyHrButton = !replacedByRenewal && profileOk && !alreadyVerified && (isDeclined || !alreadyPending || allowResend);
+        var renewButtonHtml = '';
+        if (!c.revoked && (status === 'expiring' || status === 'expired')) {
+          if (replacedByRenewal) {
+            renewButtonHtml = '<button type="button" class="nhsuk-button" disabled title="You already added a newer completion for this training">Renew</button>';
+          } else {
+            renewButtonHtml = `<button type="button" class="nhsuk-button" onclick="startRenewal('${c.credential_id}')">Renew</button>`;
+          }
+        }
         var declinedBlock = isDeclined
           ? ('<div class="staff-declined-box"><strong>HR declined this record.</strong>'
             + (v.decline_reason ? ' ' + escapeHtml(v.decline_reason) : '')
@@ -1699,7 +1726,7 @@
                 <div class="nhsuk-card__meta">Expires ${c.expiry_date}${c.revoked ? ' · Revoked' : ''}</div>
                 <span class="nhsuk-tag nhsuk-tag--${status}">${expiryStatusLabel(status)}</span>${verifiedTag}${declinedTag}
                 <div class="nhsuk-card__actions">
-                  ${showRenew ? `<button type="button" class="nhsuk-button" onclick="startRenewal('${c.credential_id}')">Renew</button>` : ''}
+                  ${renewButtonHtml}
                   ${showVerifyHrButton ? `<button type="button" class="nhsuk-button nhsuk-button--secondary"${verifyBtnAttrs} ${verifyBtnOnclick}>${verifyBtnText}</button>` : ''}
                   ${!c.import_evidence_batch ? `<button type="button" class="nhsuk-button" onclick="downloadPdf('${c.credential_id}')">Download evidence</button>` : ''}
                   ${credHasEsrEvidence(c) ? `<button type="button" class="nhsuk-button nhsuk-button--secondary" onclick="downloadCertificate('${c.credential_id}')">ESR evidence</button>` : ''}
@@ -2009,6 +2036,7 @@
     function updateVerifyAllHrControls() {
       var list = getStored().filter(function (c) { return c && c.credential_id && !c.revoked; });
       var unverified = list.filter(function (c) {
+        if (hasRenewalReplacement(list, c)) return false;
         var v = (verifiedMap && verifiedMap[String(c.credential_id).trim()]) || null;
         var st = v && v.status ? String(v.status).toUpperCase().trim() : '';
         return !(v && v.shared && (st === 'VERIFIED' || st === 'PENDING'));
