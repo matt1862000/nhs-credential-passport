@@ -1266,10 +1266,15 @@
 
     async function verifyAllWithHr() {
       if (!canRequestHrVerification()) return;
-      const list = getStored().filter(function (c) { return c && c.credential_id && !c.revoked; });
-      const ids = list.map(function (c) { return c.credential_id; });
+      var list = getStored().filter(function (c) { return c && c.credential_id && !c.revoked; });
+      var ids = list.filter(function (c) {
+        if (hasRenewalReplacement(list, c)) return false;
+        var v = (verifiedMap && verifiedMap[String(c.credential_id).trim()]) || null;
+        var st = v && v.status ? String(v.status).toUpperCase().trim() : '';
+        return !(v && v.shared && (st === 'VERIFIED' || st === 'PENDING'));
+      }).map(function (c) { return c.credential_id; });
       if (!ids.length) {
-        alert('No training records to send to HR.');
+        alert('No training records left to send to HR.');
         return;
       }
       var btnList = document.getElementById('btnVerifyAllHrList');
@@ -1289,7 +1294,8 @@
         try { data = parsed ? JSON.parse(parsed) : null; } catch (e) { data = null; }
         if (!res.ok) {
           var d = data && data.detail;
-          throw new Error(typeof d === 'string' ? d : 'Could not create verification request');
+          var msg = typeof d === 'string' ? d : (Array.isArray(d) && d[0] && d[0].msg ? d[0].msg : 'Could not create verification request');
+          throw new Error(msg);
         }
         await refreshVerifiedMap();
         renderList();
