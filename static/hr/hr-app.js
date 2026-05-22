@@ -1443,6 +1443,140 @@
           setBulkWizardStep(1);
         }
 
+        var bulkTemplatesCache = [];
+        var bulkTemplateSavedThisSession = false;
+        var bulkTemplatePromptDismissed = false;
+
+        function collectBulkTemplatePayload() {
+          return {
+            recipient_method: bulkRecipientMethod,
+            cohort_id: (document.getElementById('bulkCohort') || {}).value || null,
+            module_code: (document.getElementById('bulkModule') || {}).value || '',
+            completion_date: (document.getElementById('bulkCompletion') || {}).value || '',
+            expiry_date: (document.getElementById('bulkExpiry') || {}).value || '',
+            issuing_trust_name: (document.getElementById('bulkIssuingName') || {}).value || '',
+            issuing_trust_ods_code: (document.getElementById('bulkOds') || {}).value || '',
+          };
+        }
+
+        function bulkTemplatePayloadKey(p) {
+          if (!p || typeof p !== 'object') return '';
+          return JSON.stringify({
+            recipient_method: p.recipient_method || '',
+            cohort_id: p.cohort_id || '',
+            module_code: p.module_code || '',
+            completion_date: p.completion_date || '',
+            expiry_date: p.expiry_date || '',
+            issuing_trust_name: p.issuing_trust_name || '',
+            issuing_trust_ods_code: p.issuing_trust_ods_code || '',
+          });
+        }
+
+        function bulkTemplatePayloadExists(payload) {
+          var key = bulkTemplatePayloadKey(payload);
+          return bulkTemplatesCache.some(function (t) {
+            return t.payload && bulkTemplatePayloadKey(t.payload) === key;
+          });
+        }
+
+        function updateBulkTemplatesPanelVisibility() {
+          var panel = document.getElementById('bulkTemplatesPanel');
+          if (panel) panel.hidden = bulkTemplatesCache.length === 0;
+        }
+
+        function hideBulkTemplateSavePrompt() {
+          var prompt = document.getElementById('bulkTemplateSavePrompt');
+          if (prompt) prompt.hidden = true;
+        }
+
+        function suggestBulkTemplateName() {
+          var modSel = document.getElementById('bulkModule');
+          var modLabel = '';
+          if (modSel && modSel.options && modSel.selectedIndex >= 0) {
+            modLabel = String(modSel.options[modSel.selectedIndex].textContent || '').trim();
+          }
+          if (!modLabel) modLabel = 'Bulk training';
+          var suffix = bulkRecipientMethod === 'cohort' ? 'cohort' : 'roster';
+          return modLabel + ' \u2013 ' + suffix;
+        }
+
+        function showBulkTemplateSavePrompt() {
+          var prompt = document.getElementById('bulkTemplateSavePrompt');
+          var nameInp = document.getElementById('bulkTemplateSaveName');
+          if (!prompt) return;
+          if (nameInp) nameInp.value = suggestBulkTemplateName();
+          prompt.hidden = false;
+        }
+
+        function maybeShowBulkTemplateSavePrompt() {
+          if (bulkTemplateSavedThisSession || bulkTemplatePromptDismissed) return;
+          var payload = collectBulkTemplatePayload();
+          if (bulkTemplatePayloadExists(payload)) return;
+          showBulkTemplateSavePrompt();
+        }
+
+        async function saveBulkTemplate(name, payload) {
+          var trimmed = String(name || '').trim();
+          if (!trimmed) return false;
+          var body = payload || collectBulkTemplatePayload();
+          await apiJson('/api/hr/bulk-templates', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: trimmed, payload: body }),
+          });
+          bulkTemplateSavedThisSession = true;
+          hideBulkTemplateSavePrompt();
+          await fillBulkTemplateSelect();
+          return true;
+        }
+
+        function applyBulkTemplatePayload(p) {
+          if (!p || typeof p !== 'object') return;
+          if (p.recipient_method === 'cohort' || p.recipient_method === 'roster') {
+            bulkRecipientMethod = p.recipient_method;
+            setBulkWizardStep(2);
+            if (p.cohort_id) {
+              var sel = document.getElementById('bulkCohort');
+              if (sel) sel.value = String(p.cohort_id);
+            }
+          }
+          if (p.module_code) {
+            var mod = document.getElementById('bulkModule');
+            if (mod) mod.value = p.module_code;
+          }
+          var comp = document.getElementById('bulkCompletion');
+          var exp = document.getElementById('bulkExpiry');
+          if (comp && p.completion_date) comp.value = p.completion_date;
+          if (exp && p.expiry_date) exp.value = p.expiry_date;
+          if (p.issuing_trust_name) {
+            var tn = document.getElementById('bulkIssuingName');
+            if (tn) tn.value = p.issuing_trust_name;
+          }
+          if (p.issuing_trust_ods_code) {
+            var ods = document.getElementById('bulkOds');
+            if (ods) ods.value = p.issuing_trust_ods_code;
+          }
+          setBulkWizardStep(4);
+          updateBulkRecipientsSummary();
+        }
+
+        async function fillBulkTemplateSelect() {
+          var sel = document.getElementById('bulkTemplateSelect');
+          if (!sel) return bulkTemplatesCache;
+          try {
+            var data = await apiJson('/api/hr/bulk-templates');
+            bulkTemplatesCache = data.templates || [];
+            sel.innerHTML = '<option value="">—</option>' + bulkTemplatesCache.map(function (t) {
+              return '<option value="' + t.id + '">' + esc(t.name) + '</option>';
+            }).join('');
+            updateBulkTemplatesPanelVisibility();
+          } catch (e) {
+            bulkTemplatesCache = [];
+            updateBulkTemplatesPanelVisibility();
+          }
+          return bulkTemplatesCache;
+        }
+
         async function fillBulkCohortSelect() {
           var sel = document.getElementById('bulkCohort');
           if (!sel || HR_PAGE !== 'bulk') return;
@@ -1564,60 +1698,6 @@
             await fillBulkTemplateSelect();
           })();
 
-          function collectBulkTemplatePayload() {
-            return {
-              recipient_method: bulkRecipientMethod,
-              cohort_id: (document.getElementById('bulkCohort') || {}).value || null,
-              module_code: (document.getElementById('bulkModule') || {}).value || '',
-              completion_date: (document.getElementById('bulkCompletion') || {}).value || '',
-              expiry_date: (document.getElementById('bulkExpiry') || {}).value || '',
-              issuing_trust_name: (document.getElementById('bulkIssuingName') || {}).value || '',
-              issuing_trust_ods_code: (document.getElementById('bulkOds') || {}).value || '',
-            };
-          }
-
-          function applyBulkTemplatePayload(p) {
-            if (!p || typeof p !== 'object') return;
-            if (p.recipient_method === 'cohort' || p.recipient_method === 'roster') {
-              bulkRecipientMethod = p.recipient_method;
-              setBulkWizardStep(2);
-              if (p.cohort_id) {
-                var sel = document.getElementById('bulkCohort');
-                if (sel) sel.value = String(p.cohort_id);
-              }
-            }
-            if (p.module_code) {
-              var mod = document.getElementById('bulkModule');
-              if (mod) mod.value = p.module_code;
-            }
-            var comp = document.getElementById('bulkCompletion');
-            var exp = document.getElementById('bulkExpiry');
-            if (comp && p.completion_date) comp.value = p.completion_date;
-            if (exp && p.expiry_date) exp.value = p.expiry_date;
-            if (p.issuing_trust_name) {
-              var tn = document.getElementById('bulkIssuingName');
-              if (tn) tn.value = p.issuing_trust_name;
-            }
-            if (p.issuing_trust_ods_code) {
-              var ods = document.getElementById('bulkOds');
-              if (ods) ods.value = p.issuing_trust_ods_code;
-            }
-            setBulkWizardStep(4);
-            updateBulkRecipientsSummary();
-          }
-
-          async function fillBulkTemplateSelect() {
-            var sel = document.getElementById('bulkTemplateSelect');
-            if (!sel) return;
-            try {
-              var data = await apiJson('/api/hr/bulk-templates');
-              var tmpls = data.templates || [];
-              sel.innerHTML = '<option value="">—</option>' + tmpls.map(function (t) {
-                return '<option value="' + t.id + '">' + esc(t.name) + '</option>';
-              }).join('');
-            } catch (e) { /* ignore */ }
-          }
-
           var btnLoadTpl = document.getElementById('btnBulkLoadTemplate');
           if (btnLoadTpl) {
             btnLoadTpl.addEventListener('click', async function () {
@@ -1636,19 +1716,42 @@
           var btnSaveTpl = document.getElementById('btnBulkSaveTemplate');
           if (btnSaveTpl) {
             btnSaveTpl.addEventListener('click', async function () {
-              var name = window.prompt('Template name');
+              var name = window.prompt('Template name', suggestBulkTemplateName());
               if (!name) return;
               try {
-                await apiJson('/api/hr/bulk-templates', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ name: name, payload: collectBulkTemplatePayload() }),
-                });
-                await fillBulkTemplateSelect();
+                await saveBulkTemplate(name);
                 alert('Template saved.');
               } catch (e) {
                 alert(e.message || 'Could not save');
               }
+            });
+          }
+
+          var btnPromptSave = document.getElementById('btnBulkTemplatePromptSave');
+          if (btnPromptSave) {
+            btnPromptSave.addEventListener('click', async function () {
+              var nameInp = document.getElementById('bulkTemplateSaveName');
+              var name = nameInp ? nameInp.value : '';
+              if (!String(name || '').trim()) {
+                if (nameInp) nameInp.focus();
+                return;
+              }
+              btnPromptSave.disabled = true;
+              try {
+                await saveBulkTemplate(name);
+              } catch (e) {
+                alert(e.message || 'Could not save');
+              } finally {
+                btnPromptSave.disabled = false;
+              }
+            });
+          }
+
+          var btnPromptDismiss = document.getElementById('btnBulkTemplatePromptDismiss');
+          if (btnPromptDismiss) {
+            btnPromptDismiss.addEventListener('click', function () {
+              bulkTemplatePromptDismissed = true;
+              hideBulkTemplateSavePrompt();
             });
           }
         }
@@ -1838,6 +1941,8 @@
             window.setTimeout(function () {
               resetBulkWizard();
               void fillHrIssuingTrustFieldsIfEmpty();
+              bulkTemplatePromptDismissed = false;
+              hideBulkTemplateSavePrompt();
               var st = document.getElementById('bulkStatus');
               if (st) {
                 st.textContent = '';
@@ -1849,6 +1954,7 @@
               var tb = document.getElementById('bulkResultsTbody');
               if (wrap) wrap.hidden = true;
               if (tb) tb.innerHTML = '';
+              hideBulkTemplateSavePrompt();
             }, 0);
           });
         }
@@ -1894,6 +2000,8 @@
             }
             bulkSubmitBusy = true;
             btnBulkSubmit.disabled = true;
+            bulkTemplatePromptDismissed = false;
+            hideBulkTemplateSavePrompt();
             var bulkVizEl = document.getElementById('bulkProvisionResult');
             var bulkSt = document.getElementById('bulkStatus');
             if (bulkSt) bulkSt.hidden = true;
@@ -1966,6 +2074,9 @@
                     '<tr><td>' + esc(r.roster_line) + '</td><td>' + esc(r.status) + '</td><td>' + esc(r.message || '') + '</td></tr>'
                   );
                 }).join('');
+              }
+              if (data && !data.aborted && Number(data.issued || 0) > 0) {
+                maybeShowBulkTemplateSavePrompt();
               }
             } catch (err) {
               if (batchViz()) batchViz().clear(bulkVizEl);

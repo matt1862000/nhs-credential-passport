@@ -8,7 +8,7 @@
 
   <title>Bulk add training &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
-  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260526-3">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260527-1">
   <link rel="stylesheet" href="/static/shared/training-add-form.css?v=20260526-2">
 
 </head>
@@ -50,9 +50,9 @@
     </div>
 
     <div id="bulkView" class="hr-card" hidden>
-      <div class="hr-card" style="margin-bottom:1.25rem;padding:1rem 1.25rem;background:#f0f7fb;border:1px solid var(--nhsuk-border);border-radius:6px;">
+      <div id="bulkTemplatesPanel" class="hr-card hr-bulk-templates-panel" hidden>
         <h3 style="margin:0 0 0.5rem 0;font-size:1rem;">Saved templates</h3>
-        <p class="hr-muted" style="margin:0 0 0.75rem 0;font-size:0.875rem;">Save this wizard&rsquo;s settings to run again later (module, dates, cohort/roster source).</p>
+        <p class="hr-muted" style="margin:0 0 0.75rem 0;font-size:0.875rem;">Load a previous run&rsquo;s settings (module, dates, cohort or roster source). Evidence and roster files are uploaded fresh each time.</p>
         <div style="display:flex;flex-wrap:wrap;gap:0.5rem;align-items:flex-end;">
           <div class="nhsuk-form-group" style="margin:0;flex:1;min-width:10rem;">
             <label class="nhsuk-label" for="bulkTemplateSelect">Load template</label>
@@ -196,6 +196,20 @@
           <tbody id="bulkResultsTbody"></tbody>
         </table>
       </div>
+      <div id="bulkTemplateSavePrompt" class="hr-bulk-template-prompt" hidden role="region" aria-labelledby="bulkTemplateSavePromptTitle">
+        <h3 class="hr-bulk-template-prompt__title" id="bulkTemplateSavePromptTitle">Save settings for next time?</h3>
+        <p class="hr-muted hr-bulk-template-prompt__hint">Reuse module, dates, and recipient settings on your next bulk upload. Class evidence and roster files are not saved &mdash; you&rsquo;ll attach those again each run.</p>
+        <div class="hr-bulk-template-prompt__row">
+          <div class="nhsuk-form-group hr-bulk-template-prompt__name">
+            <label class="nhsuk-label" for="bulkTemplateSaveName">Template name</label>
+            <input class="nhsuk-input" type="text" id="bulkTemplateSaveName" maxlength="120" autocomplete="off">
+          </div>
+          <div class="hr-bulk-template-prompt__actions">
+            <button type="button" class="nhsuk-button" id="btnBulkTemplatePromptSave">Save template</button>
+            <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnBulkTemplatePromptDismiss">Not now</button>
+          </div>
+        </div>
+      </div>
     </div>
 
 
@@ -206,7 +220,7 @@
   <script src="/static/shared/auth.js?v=20260523-1"></script>
   <script src="/static/shared/nav-account.js?v=20260522-1"></script>
   <script>window.__HR_PAGE__ = 'bulk';</script>
-  <script src="/static/hr/hr-app.js?v=20260527-1"></script>
+  <script src="/static/hr/hr-app.js?v=20260527-2"></script>
 </body>
 </html>
 

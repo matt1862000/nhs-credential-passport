@@ -256,6 +256,44 @@
     #addTrainingStatus.hr-bulk-status--error { color: var(--nhsuk-error); font-weight: 600; margin: 0; }
     #addTrainingStatus.hr-bulk-status--ok { color: var(--nhsuk-success); font-weight: 600; margin: 0; }
     #addTrainingStatus.hr-bulk-status--muted { margin: 0; }
+    .hr-bulk-templates-panel {
+      margin-bottom: 1.25rem;
+      padding: 1rem 1.25rem;
+      background: #f0f7fb;
+      border: 1px solid var(--nhsuk-border);
+      border-radius: 6px;
+    }
+    .hr-bulk-template-prompt {
+      margin-top: 1rem;
+      padding: 1rem 1.25rem;
+      background: #f0f7fb;
+      border: 1px solid var(--nhsuk-border);
+      border-radius: 6px;
+    }
+    .hr-bulk-template-prompt__title {
+      margin: 0 0 0.35rem 0;
+      font-size: 1rem;
+    }
+    .hr-bulk-template-prompt__hint {
+      margin: 0 0 0.85rem 0;
+      font-size: 0.875rem;
+    }
+    .hr-bulk-template-prompt__row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      align-items: flex-end;
+    }
+    .hr-bulk-template-prompt__name {
+      margin: 0;
+      flex: 1;
+      min-width: 12rem;
+    }
+    .hr-bulk-template-prompt__actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
     .hr-page-nav { display: inline-flex; flex-wrap: wrap; }
     .hr-page-nav a.hr-nav-link {
       margin: 0;
