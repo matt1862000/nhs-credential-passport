@@ -1859,6 +1859,62 @@ async def hr_share_item_decline(request: Request, session_id: int, credential_id
     return {"ok": True}
 
 
+@router.post("/hr/shares/{session_id}/items/{credential_id}/unverify")
+def hr_share_item_unverify(request: Request, session_id: int, credential_id: str):
+    """Revert a verified share item to pending so HR can review again."""
+    hr = require_premium_user(request)
+    s = db.share_session_get(int(session_id))
+    if not s:
+        raise HTTPException(status_code=404, detail="Share not found")
+    _assert_same_trust(hr, s)
+    if str(s.get("share_kind") or "review").lower() == "portfolio":
+        raise HTTPException(
+            status_code=400,
+            detail="This is a reference-only pack (already verified elsewhere). It cannot be changed here.",
+        )
+    item = next(
+        (it for it in (s.get("items") or []) if it.get("credential_id") == credential_id),
+        None,
+    )
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found in share")
+    if str(item.get("status") or "").upper() != "VERIFIED":
+        raise HTTPException(status_code=400, detail="Only verified records can be unverified.")
+    db.share_item_set_decision(int(session_id), str(credential_id), int(hr["id"]), status="PENDING")
+    return {"ok": True}
+
+
+@router.post("/hr/doctors/{doctor_user_id}/credentials/{credential_id}/unverify")
+def hr_doctor_credential_unverify(request: Request, doctor_user_id: int, credential_id: str):
+    """
+    Premium HR: remove verification for a credential (HR-issued attestation or shared item
+    verified at this trust).
+    """
+    hr = require_premium_user(request)
+    trust = (hr.get("current_trust") or "").strip()
+    if not trust:
+        raise HTTPException(status_code=400, detail="Your HR account must have a current trust set.")
+    with __import__("sqlite3").connect(db.DB_PATH) as conn:
+        if not db._doctor_visible_to_trust(int(doctor_user_id), trust, conn):
+            raise HTTPException(
+                status_code=403,
+                detail="This clinician has not permitted your trust to view or update their records.",
+            )
+    cid = str(credential_id).strip()
+    if db.hr_attestation_delete(int(doctor_user_id), cid, trust):
+        return {"ok": True, "source": "hr_attestation"}
+    found = db.share_item_find_verified_for_trust(int(doctor_user_id), cid, trust)
+    if found:
+        if str(found.get("share_kind") or "review").lower() == "portfolio":
+            raise HTTPException(
+                status_code=400,
+                detail="This is a reference-only pack (already verified elsewhere). It cannot be changed here.",
+            )
+        db.share_item_set_decision(int(found["session_id"]), cid, int(hr["id"]), status="PENDING")
+        return {"ok": True, "source": "share", "session_id": found["session_id"]}
+    raise HTTPException(status_code=404, detail="No verified record found for this clinician at your trust.")
+
+
 # ── Mandatory topics ──────────────────────────────────────────────────────────
 
 def _hr_trust_required(hr_user: dict) -> str:

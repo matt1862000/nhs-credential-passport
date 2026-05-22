@@ -562,21 +562,33 @@
           var isArchived = st === 'VERIFIED' || st === 'DECLINED';
           var sidForApi =
             merged && it.session_id != null ? String(it.session_id) : fixedSessionId != null ? String(fixedSessionId) : '';
-          var btn =
-            isArchived || portfolioRow
-              ? '<span class="hr-muted">—</span>'
-              : '<div class="hr-actions">' +
-                '<button type="button" class="nhsuk-button hr-btn-small" data-verify="1" data-sid="' +
-                esc(sidForApi) +
-                '" data-cid="' +
-                esc(it.credential_id) +
-                '">Verify</button>' +
-                '<button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" data-decline="1" data-sid="' +
-                esc(sidForApi) +
-                '" data-cid="' +
-                esc(it.credential_id) +
-                '">Decline</button>' +
-                '</div>';
+          var btn;
+          if (portfolioRow) {
+            btn = '<span class="hr-muted">—</span>';
+          } else if (st === 'VERIFIED') {
+            btn =
+              '<button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" data-unverify="1" data-sid="' +
+              esc(sidForApi) +
+              '" data-cid="' +
+              esc(it.credential_id) +
+              '">Unverify</button>';
+          } else if (isArchived) {
+            btn = '<span class="hr-muted">—</span>';
+          } else {
+            btn =
+              '<div class="hr-actions">' +
+              '<button type="button" class="nhsuk-button hr-btn-small" data-verify="1" data-sid="' +
+              esc(sidForApi) +
+              '" data-cid="' +
+              esc(it.credential_id) +
+              '">Verify</button>' +
+              '<button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" data-decline="1" data-sid="' +
+              esc(sidForApi) +
+              '" data-cid="' +
+              esc(it.credential_id) +
+              '">Decline</button>' +
+              '</div>';
+          }
           var note =
             st === 'DECLINED' && it.decline_reason
               ? '<div class="hr-muted" style="margin-top:0.25rem;">Reason: ' + esc(it.decline_reason) + '</div>'
@@ -691,17 +703,43 @@
           if (actionInFlight) return;
           var v = e.target && e.target.closest('button[data-verify="1"]');
           var d = e.target && e.target.closest('button[data-decline="1"]');
-          if (!v && !d) return;
-          var cid2 = (v || d).getAttribute('data-cid');
-          var sidAttr = (v || d).getAttribute('data-sid');
+          var u = e.target && e.target.closest('button[data-unverify="1"]');
+          if (!v && !d && !u) return;
+          var cid2 = (v || d || u).getAttribute('data-cid');
+          var sidAttr = (v || d || u).getAttribute('data-sid');
           var sessionIdForApi = sidAttr || (fixedSessionId != null ? String(fixedSessionId) : '');
-          if (!sessionIdForApi) {
-            alert('Missing session for this action.');
-            return;
-          }
           actionInFlight = true;
           try {
-            if (v) {
+            if (u) {
+              if (
+                !confirm(
+                  'Revert this record to awaiting decision? The clinician will no longer see it as verified by HR at your trust.'
+                )
+              ) {
+                actionInFlight = false;
+                return;
+              }
+              if (!sessionIdForApi) {
+                alert('Missing session for this action.');
+                actionInFlight = false;
+                return;
+              }
+              u.disabled = true;
+              u.textContent = 'Reverting…';
+              await apiJson(
+                '/api/hr/shares/' +
+                  encodeURIComponent(sessionIdForApi) +
+                  '/items/' +
+                  encodeURIComponent(String(cid2)) +
+                  '/unverify',
+                { method: 'POST' }
+              );
+            } else if (v) {
+              if (!sessionIdForApi) {
+                alert('Missing session for this action.');
+                actionInFlight = false;
+                return;
+              }
               v.disabled = true;
               v.textContent = 'Verifying…';
               await apiJson(
@@ -713,6 +751,11 @@
                 { method: 'POST' }
               );
             } else {
+              if (!sessionIdForApi) {
+                alert('Missing session for this action.');
+                actionInFlight = false;
+                return;
+              }
               var reason = (
                 prompt('Why are you declining this record? (This will be sent back to the doctor)') || ''
               ).trim();
@@ -891,6 +934,7 @@
         }
 
         var searchDoctorItemsCache = [];
+        var searchDoctorViewId = '';
 
         var bulkMod = document.getElementById('bulkModule');
         if (bulkMod) fillHrModuleSelect(bulkMod);
@@ -1127,7 +1171,42 @@
         var sdTbody = document.getElementById('searchDoctorItemsTbody');
         if (sdTbody && !sdTbody.dataset.certWired) {
           sdTbody.dataset.certWired = '1';
-          sdTbody.addEventListener('click', function (e) {
+          sdTbody.addEventListener('click', async function (e) {
+            var unBtn = e.target && e.target.closest('button[data-search-unverify="1"]');
+            if (unBtn) {
+              e.preventDefault();
+              var cidU = unBtn.getAttribute('data-cid');
+              if (!searchDoctorViewId || !cidU) return;
+              if (
+                !confirm(
+                  'Remove HR verification for this record? The clinician will no longer see it as verified by HR at your trust.'
+                )
+              ) {
+                return;
+              }
+              unBtn.disabled = true;
+              unBtn.textContent = 'Reverting…';
+              try {
+                await apiJson(
+                  '/api/hr/doctors/' +
+                    encodeURIComponent(searchDoctorViewId) +
+                    '/credentials/' +
+                    encodeURIComponent(String(cidU)) +
+                    '/unverify',
+                  { method: 'POST' }
+                );
+                var titleEl = document.getElementById('searchDoctorTitle');
+                await openSearchDoctorView(
+                  searchDoctorViewId,
+                  titleEl ? titleEl.textContent.replace(/^Verified training —\s*/, '') : 'Doctor'
+                );
+              } catch (err) {
+                alert(err.message || err);
+                unBtn.disabled = false;
+                unBtn.textContent = 'Unverify';
+              }
+              return;
+            }
             var btn = e.target && e.target.closest('button[data-view-docs-cid]');
             if (!btn) return;
             var cid = btn.getAttribute('data-view-docs-cid');
@@ -1468,6 +1547,7 @@
         }
 
         async function openSearchDoctorView(doctorId, doctorName) {
+          searchDoctorViewId = String(doctorId || '');
           if (HR_PAGE === 'search') {
             try {
               window.history.replaceState({}, '', '/static/hr/search.html?doctor=' + encodeURIComponent(String(doctorId)));
@@ -1507,12 +1587,20 @@
                   ? ('<button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" data-view-docs-cid="' +
                     esc(String(it.credential_id || '')) + '">View</button>')
                   : '—';
+                var portfolioRow = String(it.session_share_kind || '').toLowerCase() === 'portfolio';
+                var actionCell = portfolioRow
+                  ? '<span class="hr-muted">—</span>'
+                  : (
+                    '<button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" data-search-unverify="1" data-cid="' +
+                    esc(String(it.credential_id || '')) +
+                    '">Unverify</button>'
+                  );
                 return (
                   '<tr>' +
                   '<td>' + name + issuer + '</td>' +
                   '<td>' + expiry + '</td>' +
                   '<td><span class="hr-pill hr-pill--verified">Verified</span>' + verifiedAt + '</td>' +
-                  '<td>' + evCell + '</td>' +
+                  '<td>' + evCell + ' ' + actionCell + '</td>' +
                   '</tr>'
                 );
               }).join('');

@@ -421,6 +421,58 @@ def hr_attestation_upsert(
         conn.commit()
 
 
+def hr_attestation_delete(doctor_user_id: int, credential_id: str, hr_trust: str) -> bool:
+    """Remove HR attestation for a credential at this trust (bulk/single HR issue)."""
+    t = (hr_trust or "").strip().lower()
+    if not t:
+        return False
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_hr_attestations_table(conn)
+        cur = conn.execute(
+            """
+            DELETE FROM hr_attested_credentials
+            WHERE doctor_user_id = ? AND credential_id = ?
+              AND LOWER(TRIM(verified_by_trust_name)) = ?
+            """,
+            (int(doctor_user_id), str(credential_id), t),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def share_item_find_verified_for_trust(
+    doctor_user_id: int, credential_id: str, hr_trust: str
+) -> Optional[dict]:
+    """Most recent VERIFIED share_items row for this doctor/credential at the HR trust."""
+    t = (hr_trust or "").strip().lower()
+    if not t:
+        return None
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_share_tables(conn)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            """
+            SELECT i.session_id, i.status, IFNULL(s.share_kind, 'review') as share_kind
+            FROM share_items i
+            JOIN share_sessions s ON s.id = i.session_id
+            WHERE s.doctor_user_id = ?
+              AND i.credential_id = ?
+              AND UPPER(TRIM(i.status)) = 'VERIFIED'
+              AND LOWER(TRIM(COALESCE(s.target_trust, ''))) = ?
+            ORDER BY s.id DESC
+            LIMIT 1
+            """,
+            (int(doctor_user_id), str(credential_id), t),
+        ).fetchone()
+    if not row:
+        return None
+    return {
+        "session_id": int(row["session_id"]),
+        "status": row["status"],
+        "share_kind": str(row["share_kind"] or "review"),
+    }
+
+
 def hr_attested_rows_for_doctor_trust(doctor_user_id: int, hr_trust: str) -> list[dict]:
     """Attestations visible to an HR trust (same trust name as stored at issue time)."""
     t = (hr_trust or "").strip().lower()
@@ -1741,35 +1793,32 @@ def share_item_set_decision(
         st = (status or "").upper().strip()
         if st not in ("PENDING", "VERIFIED", "DECLINED"):
             st = "PENDING"
-        conn.execute(
-            """
-            UPDATE share_items
-            SET status = ?, decision_at = ?, decision_by_user_id = ?, decline_reason = ?
-            WHERE session_id = ? AND credential_id = ?
-            """,
-            (
-                st,
-                datetime.utcnow().isoformat(),
-                int(hr_user_id),
-                (decline_reason or "").strip() if st == "DECLINED" else None,
-                int(session_id),
-                str(credential_id),
-            ),
-        )
+        decision_at = datetime.utcnow().isoformat() if st in ("VERIFIED", "DECLINED") else None
+        decision_by = int(hr_user_id) if st in ("VERIFIED", "DECLINED") else None
+        decline = (decline_reason or "").strip() if st == "DECLINED" else None
+        verified_trust: Optional[str] = None
         if st == "VERIFIED":
             ut = conn.execute(
                 "SELECT current_trust FROM users WHERE id = ?", (int(hr_user_id),)
             ).fetchone()
-            trust_name = (ut[0] if ut else None) or None
-            if trust_name:
-                conn.execute(
-                    """
-                    UPDATE share_items
-                    SET verified_by_trust_name = ?
-                    WHERE session_id = ? AND credential_id = ?
-                    """,
-                    (str(trust_name).strip(), int(session_id), str(credential_id)),
-                )
+            verified_trust = (str(ut[0]).strip() if ut and ut[0] else None) or None
+        conn.execute(
+            """
+            UPDATE share_items
+            SET status = ?, decision_at = ?, decision_by_user_id = ?, decline_reason = ?,
+                verified_by_trust_name = ?
+            WHERE session_id = ? AND credential_id = ?
+            """,
+            (
+                st,
+                decision_at,
+                decision_by,
+                decline,
+                verified_trust,
+                int(session_id),
+                str(credential_id),
+            ),
+        )
         conn.commit()
 
 
