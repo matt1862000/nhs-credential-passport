@@ -436,7 +436,7 @@
       function selectedItemEntries() {
         var tbody = document.getElementById('itemsTbody');
         if (!tbody) return [];
-        return Array.from(ttbody.querySelectorAll('.hr-item-select-cb[data-cid]:checked')).map(function (cb) {
+        return Array.from(tbody.querySelectorAll('.hr-item-select-cb[data-cid]:checked')).map(function (cb) {
           return {
             sid: cb.getAttribute('data-sid'),
             cid: cb.getAttribute('data-cid'),
