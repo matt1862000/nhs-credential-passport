@@ -1909,10 +1909,28 @@
       syncStaffOnboardingNudge();
     }
 
-    function removeCred(credentialId) {
-      if (!confirm('Remove this training record from your list? This only removes it from this device; it will still show as revoked if someone verifies it.')) return;
-      const list = getStored().filter(c => c.credential_id !== credentialId);
+    async function removeCred(credentialId) {
+      if (!confirm('Remove this training from your list? If it is awaiting HR verification, it will be removed from their queue too.')) return;
+      var list = getStored().filter(function (c) { return c.credential_id !== credentialId; });
       setStored(list);
+      try {
+        if (window.NHSAuth && NHSAuth.user) {
+          var res = await fetch('/api/me/wallet', {
+            method: 'PUT',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(list),
+          });
+          if (!res.ok) {
+            var errText = await res.text();
+            throw new Error(errText || 'Could not sync wallet');
+          }
+        }
+      } catch (e) {
+        alert('Removed locally, but could not update the server. Sign in and try again.');
+        console.warn('removeCred sync failed', e);
+      }
+      await refreshVerifiedMap();
       renderList();
     }
 

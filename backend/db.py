@@ -1993,6 +1993,44 @@ def share_item_set_decision(
         conn.commit()
 
 
+def share_withdraw_pending_for_doctor(doctor_user_id: int, credential_ids: list[str]) -> int:
+    """
+    Drop PENDING review share items when a clinician removes credentials from their wallet.
+    Empty share sessions are deleted afterwards.
+    """
+    ids = list({str(x).strip() for x in credential_ids if str(x).strip()})
+    if not ids:
+        return 0
+    removed = 0
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_share_tables(conn)
+        placeholders = ",".join("?" * len(ids))
+        cur = conn.execute(
+            f"""
+            DELETE FROM share_items
+            WHERE credential_id IN ({placeholders})
+              AND UPPER(TRIM(status)) = 'PENDING'
+              AND session_id IN (
+                SELECT s.id FROM share_sessions s
+                WHERE s.doctor_user_id = ?
+                  AND LOWER(TRIM(COALESCE(s.share_kind, 'review'))) = 'review'
+              )
+            """,
+            (*ids, int(doctor_user_id)),
+        )
+        removed = int(cur.rowcount or 0)
+        conn.execute(
+            """
+            DELETE FROM share_sessions
+            WHERE doctor_user_id = ?
+              AND id NOT IN (SELECT session_id FROM share_items)
+            """,
+            (int(doctor_user_id),),
+        )
+        conn.commit()
+    return removed
+
+
 def doctor_verified_map(doctor_user_id: int) -> dict:
     """Return { credential_id: { shared, status, decision_at, decline_reason, pending_target_trust? } } for a doctor."""
     out: dict = {}

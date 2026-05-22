@@ -869,8 +869,50 @@ async def me_wallet_put(request: Request):
         raise HTTPException(status_code=400, detail="Expected a JSON array of credentials")
     if len(data) > 5000:
         raise HTTPException(status_code=400, detail="Too many credentials")
+    try:
+        old_wallet = json.loads(db.user_wallet_get(uid))
+    except Exception:
+        old_wallet = []
+    if not isinstance(old_wallet, list):
+        old_wallet = []
+    old_ids = {
+        str(c.get("credential_id")).strip()
+        for c in old_wallet
+        if isinstance(c, dict) and str(c.get("credential_id") or "").strip()
+    }
+    new_ids = {
+        str(c.get("credential_id")).strip()
+        for c in data
+        if isinstance(c, dict) and str(c.get("credential_id") or "").strip()
+    }
+    removed_ids = old_ids - new_ids
+    withdrawn = 0
+    if removed_ids:
+        withdrawn = db.share_withdraw_pending_for_doctor(uid, list(removed_ids))
     db.user_wallet_put(uid, json.dumps(data))
-    return {"ok": True, "count": len(data)}
+    return {"ok": True, "count": len(data), "withdrawn_pending_shares": withdrawn}
+
+
+@router.post("/me/shares/withdraw")
+async def me_shares_withdraw(request: Request):
+    """Remove pending HR verification queue entries for credentials dropped from the wallet."""
+    uid = require_user_id(request)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    ids = body.get("credential_ids")
+    if not isinstance(ids, list) or not ids:
+        raise HTTPException(status_code=400, detail="Expected credential_ids: [..]")
+    ids = [str(x).strip() for x in ids if str(x).strip()]
+    if not ids:
+        raise HTTPException(status_code=400, detail="No credential ids provided")
+    if len(ids) > 200:
+        raise HTTPException(status_code=400, detail="Too many credential ids")
+    withdrawn = db.share_withdraw_pending_for_doctor(uid, ids)
+    return {"ok": True, "withdrawn": withdrawn}
 
 
 @router.post("/me/shares")
