@@ -519,7 +519,7 @@
       <div id="verifyAllHrBanner" class="staff-verify-all-banner" hidden>
         <div class="staff-verify-all-banner__text">
           <p class="staff-verify-all-banner__title">Verify all with HR</p>
-          <p class="staff-verify-all-banner__desc">Sends every training record in your list to HR in one go — the same as tapping &ldquo;Verify with HR&rdquo; on each card.</p>
+          <p class="staff-verify-all-banner__desc">Sends any training not yet shared with HR in one go — usually only needed if auto-submit did not run (e.g. profile was incomplete when you added records).</p>
         </div>
         <button type="button" class="nhsuk-button" id="btnVerifyAllHrList" disabled title="Add training first">Verify all with HR</button>
       </div>
@@ -570,6 +570,7 @@
           </div>
         </div>
         <button type="submit" class="nhsuk-button">Add training</button>
+        <p class="nhsuk-hint" style="margin-top:0.75rem;">Sent to HR for verification automatically when your profile is complete.</p>
       </form>
       
     </section>
@@ -912,8 +913,8 @@
         total: 5,
         message:
           step === 4
-            ? 'Add your first training record using the <strong>Add training</strong> tab below.'
-            : 'Select a record and click <strong>Verify with HR</strong> to send it to your trust\u2019s HR team.',
+            ? 'Add your first training record using the <strong>Add training</strong> tab below — it is sent to HR automatically once your profile is complete.'
+            : 'Training is sent to HR for verification automatically when you add it. Check the <strong>Pending</strong> badge while HR review it.',
       };
       if (step === 5) {
         cfg.ctaLabel = 'Back to dashboard';
@@ -1283,22 +1284,7 @@
       }
       try {
         setBusy(true);
-        var res = await fetch('/api/me/shares', {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ credential_ids: ids }),
-        });
-        var parsed = await res.text();
-        var data = null;
-        try { data = parsed ? JSON.parse(parsed) : null; } catch (e) { data = null; }
-        if (!res.ok) {
-          var d = data && data.detail;
-          var msg = typeof d === 'string' ? d : (Array.isArray(d) && d[0] && d[0].msg ? d[0].msg : 'Could not create verification request');
-          throw new Error(msg);
-        }
-        await refreshVerifiedMap();
-        renderList();
+        await shareCredentialsWithHr(ids, { throwOnError: true });
       } catch (e) {
         alert(e.message || e);
         renderList();
@@ -1326,21 +1312,7 @@
       }
       try {
         setBusy(true);
-        var res = await fetch('/api/me/shares', {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ credential_ids: ids }),
-        });
-        var parsed = await res.text();
-        var data = null;
-        try { data = parsed ? JSON.parse(parsed) : null; } catch (e) { data = null; }
-        if (!res.ok) {
-          var d = data && data.detail;
-          throw new Error(typeof d === 'string' ? d : 'Could not send to HR at your current trust');
-        }
-        await refreshVerifiedMap();
-        renderList();
+        await shareCredentialsWithHr(ids, { throwOnError: true });
       } catch (e) {
         alert(e.message || e);
         renderList();
@@ -1647,7 +1619,16 @@
         });
         setStored(list);
         renderList();
-        renderCsvResult(data, { imported: n });
+        var newIds = creds.map(function (c) { return c.credential_id; }).filter(Boolean);
+        var shareResult = await autoShareCredentialsWithHr(newIds, { skipRender: true });
+        if (shareResult.ok && shareResult.count) await refreshVerifiedMap();
+        renderList();
+        renderCsvResult(data, {
+          imported: n,
+          autoShared: shareResult.ok ? shareResult.count : 0,
+          shareError: shareResult.error || null,
+          shareSkippedProfile: shareResult.skipped === 'profile_incomplete',
+        });
         document.querySelector('.nhsuk-tabs button[data-tab="list"]').click();
       } catch (e) {
         document.getElementById('csvImportResult').innerHTML = '<p class="nhsuk-body-s" style="color:var(--nhsuk-error);">' + escapeHtml(e.message) + '</p>';
@@ -1799,7 +1780,6 @@
         var myTrust = (window.NHSAuth && NHSAuth.user && NHSAuth.user.current_trust || '').trim().toLowerCase();
         var allowResend = alreadyPending && pendingTarget && myTrust && pendingTarget !== myTrust;
         var replacedByRenewal = hasRenewalReplacement(list, c);
-        var renewalRow = isRenewalCredential(list, c);
         var canVerifyWithHr = profileOk && (isDeclined || ((!alreadyPending || allowResend) && !alreadyVerified));
         var verifyBtnText = isDeclined
           ? 'Fix and reshare'
@@ -1813,7 +1793,7 @@
         if (verifyBtnTitle) verifyBtnAttrs += ' title="' + verifyBtnTitle.replace(/"/g, '&quot;') + '"';
         var verifyBtnOnclick = profileOk ? `onclick="shareCred('${c.credential_id}')"` : `onclick="return openProfileForVerification();"`;
         var showVerifyHrButton = !replacedByRenewal && !alreadyVerified && (
-          renewalRow || (profileOk && (isDeclined || !alreadyPending || allowResend))
+          isDeclined || allowResend || (!(v && v.shared) && !alreadyPending)
         );
         var renewButtonHtml = '';
         if (!c.revoked && (status === 'expiring' || status === 'expired')) {
@@ -1842,7 +1822,8 @@
                   ${credHasEsrEvidence(c) ? `<button type="button" class="nhsuk-button nhsuk-button--secondary" onclick="downloadCertificate('${c.credential_id}')">ESR evidence</button>` : ''}
                   <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-button--remove" onclick="removeCred('${c.credential_id}')">Remove</button>
                 </div>
-                ${!alreadyVerified && !c.import_evidence_batch ? '<p class="nhsuk-hint" style="margin:0.5rem 0 0 0;">Downloadable evidence is available after HR verification — use the <strong>Download</strong> tab.</p>' : ''}
+                ${!alreadyVerified && !alreadyPending && !c.import_evidence_batch ? '<p class="nhsuk-hint" style="margin:0.5rem 0 0 0;">Sent to HR automatically when added. Downloadable proof is available after verification — use the <strong>Download</strong> tab.</p>' : ''}
+                ${alreadyPending ? '<p class="nhsuk-hint" style="margin:0.5rem 0 0 0;">With HR for verification — no action needed unless declined.</p>' : ''}
                 ${declinedBlock || declinedNote}
               </div>
             </div>
@@ -1938,24 +1919,72 @@
 
     document.getElementById('btnCancelRenew').addEventListener('click', clearRenewal);
 
+    function parseShareApiError(data, fallback) {
+      var d = data && data.detail;
+      if (typeof d === 'string') return d;
+      if (Array.isArray(d) && d[0] && d[0].msg) return d[0].msg;
+      return fallback || 'Could not send to HR';
+    }
+
+    function credentialIdsNeedingHrShare(ids) {
+      var list = getStored();
+      return (ids || []).filter(function (id) {
+        if (!id) return false;
+        var c = list.find(function (x) { return x.credential_id === id; });
+        if (c && hasRenewalReplacement(list, c)) return false;
+        var v = (verifiedMap && verifiedMap[String(id).trim()]) || null;
+        var st = v && v.status ? String(v.status).toUpperCase().trim() : '';
+        return !(v && v.shared && (st === 'VERIFIED' || st === 'PENDING'));
+      });
+    }
+
+    async function shareCredentialsWithHr(credentialIds, opts) {
+      opts = opts || {};
+      var ids = (credentialIds || []).map(function (id) { return String(id || '').trim(); }).filter(Boolean);
+      if (!ids.length) return { ok: true, count: 0 };
+      if (window.NHSAuth && typeof NHSAuth.mergeAndPushWallet === 'function') {
+        await NHSAuth.mergeAndPushWallet();
+      }
+      var res = await fetch('/api/me/shares', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ credential_ids: ids }),
+      });
+      var parsed = await res.text();
+      var data = null;
+      try { data = parsed ? JSON.parse(parsed) : null; } catch (e) { data = null; }
+      if (!res.ok) {
+        var msg = parseShareApiError(data, 'Could not send to HR');
+        if (opts.throwOnError) throw new Error(msg);
+        return { ok: false, error: msg };
+      }
+      await refreshVerifiedMap();
+      if (!opts.skipRender) renderList();
+      return { ok: true, count: ids.length, session_id: data && data.session_id };
+    }
+
+    async function autoShareCredentialsWithHr(credentialIds, opts) {
+      opts = opts || {};
+      if (!isProfileComplete()) {
+        return { ok: false, skipped: 'profile_incomplete' };
+      }
+      var ids = credentialIdsNeedingHrShare(credentialIds);
+      if (!ids.length) return { ok: true, count: 0, skipped: 'none_eligible' };
+      return shareCredentialsWithHr(ids, opts);
+    }
+
+    async function flushUnsharedCredentialsWithHr() {
+      if (!isProfileComplete()) return;
+      var list = getStored().filter(function (c) { return c && c.credential_id && !c.revoked; });
+      var ids = credentialIdsNeedingHrShare(list.map(function (c) { return c.credential_id; }));
+      if (!ids.length) return;
+      await autoShareCredentialsWithHr(ids, { skipRender: true });
+    }
+
     async function shareCred(credentialId) {
       try {
-        var res = await fetch('/api/me/shares', {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ credential_ids: [credentialId] }),
-        });
-        var parsed = await res.text();
-        var data = null;
-        try { data = parsed ? JSON.parse(parsed) : null; } catch (e) { data = null; }
-        if (!res.ok) {
-          var d = data && data.detail;
-          throw new Error(typeof d === 'string' ? d : 'Could not create share');
-        }
-        // For single-item verification, silently send to HR inbox (no QR modal).
-        await refreshVerifiedMap();
-        renderList();
+        await shareCredentialsWithHr([credentialId], { throwOnError: true });
       } catch (e) {
         alert(e.message || e);
       }
@@ -1963,7 +1992,7 @@
 
     function downloadPdf(credentialId) {
       if (!isHrVerified(credentialId)) {
-        alert('Downloadable evidence is only available after HR has verified this training. Use Verify with HR first, then the Download tab.');
+        alert('Downloadable evidence is only available after HR has verified this training. It is sent to HR automatically when added — check the Download tab once verified.');
         return;
       }
       const list = getStored();
@@ -2113,15 +2142,20 @@
         if (renewFrom) entry.supersedes_credential_id = renewFrom;
         list.push(entry);
         setStored(list);
-        renderList();
-        var doReshare = renewFrom && document.getElementById('addRenewReshare') && document.getElementById('addRenewReshare').checked;
+        var shouldAutoShare = !renewFrom || (document.getElementById('addRenewReshare') && document.getElementById('addRenewReshare').checked);
         clearRenewal();
         e.target.reset();
         lastAutoOdsSuggested = { name: '', ods: '' };
         void applyProfileToAddForm();
-        if (doReshare && isProfileComplete()) {
-          await shareCred(issued.credential_id);
+        if (shouldAutoShare) {
+          var shareResult = await autoShareCredentialsWithHr([issued.credential_id], { skipRender: true });
+          if (shareResult.error) {
+            alert('Training added, but could not send to HR automatically: ' + shareResult.error);
+          } else if (shareResult.skipped === 'profile_incomplete') {
+            alert('Training added. Complete your profile to send it to HR automatically.');
+          }
         }
+        renderList();
         document.querySelector('.nhsuk-tabs button[data-tab="list"]').click();
       } catch (err) {
         alert(err.message);
@@ -2227,6 +2261,7 @@
       if (window.NHSNavAccount) void NHSNavAccount.refresh();
       await pullMergeFromServer();
       await refreshVerifiedMap();
+      await flushUnsharedCredentialsWithHr();
 
       var summaryStrip = document.getElementById('staffTrainingSummaryStrip');
       if (summaryStrip) summaryStrip.hidden = !!(NHSAuth.user && NHSAuth.user.premium);

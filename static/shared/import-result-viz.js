@@ -565,6 +565,13 @@
     var successHtml = '';
     if (opts.imported) {
       successHtml = 'Issued ' + opts.imported + ' training record(s). They appear in My training.';
+      if (opts.autoShared > 0) {
+        successHtml += ' Sent ' + opts.autoShared + ' to HR for verification.';
+      } else if (opts.shareSkippedProfile) {
+        successHtml += ' Complete your profile to send them to HR automatically.';
+      } else if (opts.shareError) {
+        successHtml += ' Could not send to HR automatically — use Verify all with HR.';
+      }
     } else if (opts.allDuplicates) {
       successHtml = 'No new records were added; everything matched training you already have.';
     }
