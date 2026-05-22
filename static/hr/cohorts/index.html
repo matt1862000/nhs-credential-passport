@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
   <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260528-1">
   <link rel="stylesheet" href="/static/shared/training-add-form.css?v=20260526-2">
-  <link rel="stylesheet" href="/static/shared/messages-compose.css?v=20260524-2">
+  <link rel="stylesheet" href="/static/shared/messages-compose.css?v=20260528-1">
 </head>
 <body>
   <header class="nhsuk-header" role="banner">
@@ -95,6 +95,13 @@
                     <span class="cohort-method-card__title">Upload spreadsheet</span>
                     <span class="cohort-method-card__desc">Import a CSV or Excel file with full name, GMC number, and personal email columns.</span>
                   </button>
+                  <button type="button" class="cohort-method-card" data-create-method="all_doctors">
+                    <span class="cohort-method-card__icon" aria-hidden="true">
+                      <svg width="22" height="22" viewBox="0 0 24 24" focusable="false"><path fill="currentColor" d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
+                    </span>
+                    <span class="cohort-method-card__title">From All Doctors</span>
+                    <span class="cohort-method-card__desc">Copy clinicians from your default All Doctors group into this cohort.</span>
+                  </button>
                 </div>
                 <div class="cohort-wizard-actions">
                   <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnCreateBackMethod">Back</button>
@@ -150,7 +157,23 @@
                     <p class="cohort-email-error" id="cohortUploadError" hidden role="alert"></p>
                   </div>
 
-                  <div class="cohort-roster-added">
+                  <div id="createPanelAllDoctors" hidden>
+                    <span class="nhsuk-hint nhsuk-hint--secondary">Select clinicians from your <strong>All Doctors</strong> group. Existing accounts are linked to the new cohort — nothing is duplicated.</span>
+                    <p class="hr-muted" id="createAllDoctorsLoading" style="margin:0.75rem 0;">Loading All Doctors&hellip;</p>
+                    <div id="createAllDoctorsEmpty" hidden>
+                      <p class="hr-muted" style="margin:0.75rem 0;">No clinicians in All Doctors yet. Open that group to add some first.</p>
+                      <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnOpenAllDoctors">Open All Doctors</button>
+                    </div>
+                    <div id="createAllDoctorsPicker" hidden>
+                      <label class="nhsuk-label nhsuk-label--s" style="margin-top:0.75rem;display:block;">
+                        <input type="checkbox" id="createAllDoctorsSelectAll" checked> Select all
+                      </label>
+                      <div class="hr-bulk-cohort-list" id="createAllDoctorsList" role="group" aria-label="All Doctors clinicians"></div>
+                    </div>
+                    <p class="cohort-email-error" id="createAllDoctorsError" hidden role="alert"></p>
+                  </div>
+
+                  <div class="cohort-roster-added" id="createRosterAdded">
                     <p class="cohort-roster-added__heading">Added clinicians</p>
                     <span class="cohort-email-count cohort-email-count--empty" id="cohortEmailsCount" aria-live="polite">0 clinicians</span>
                     <p class="cohort-list-empty" id="cohortEmailsListEmpty">No clinicians added yet — use the form above or upload a file.</p>
@@ -380,23 +403,23 @@
         <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnWelcomeReviewEdit" style="margin-top:0.5rem;">Edit message</button>
       </div>
       <div id="welcomeReviewEditBlock" hidden>
-        <div id="welcomeReviewLibraryBlock" class="nhsuk-form-group" style="margin-top:0.75rem;" hidden>
-          <label class="nhsuk-label" for="welcomeReviewLibrarySelect">Saved welcome template</label>
-          <span class="nhsuk-hint nhsuk-hint--secondary" id="welcomeReviewLibraryHint"></span>
-          <div style="display:flex;flex-wrap:wrap;gap:0.5rem;align-items:flex-end;margin-top:0.25rem;">
-            <select class="nhsuk-select" id="welcomeReviewLibrarySelect" style="flex:1;min-width:12rem;">
+        <label class="nhsuk-label" for="welcomeReviewTemplate">Message text</label>
+        <span class="nhsuk-hint nhsuk-hint--secondary">Use <strong>{name}</strong> and <strong>{trust}</strong>.</span>
+        <textarea class="nhsuk-textarea" id="welcomeReviewTemplate" rows="5" maxlength="4000" aria-describedby="welcomeReviewEditPreview welcomeReviewLibraryHint"></textarea>
+        <p class="cohort-welcome-block__preview" id="welcomeReviewEditPreview" aria-live="polite"></p>
+        <div id="welcomeReviewLibraryBlock" class="msg-template-tools msg-template-tools--section" hidden>
+          <div class="msg-template-tools__main">
+            <span class="msg-template-tools__label" id="welcomeReviewLibraryLabel">Template</span>
+            <select class="nhsuk-select" id="welcomeReviewLibrarySelect" aria-labelledby="welcomeReviewLibraryLabel" aria-describedby="welcomeReviewLibraryHint">
               <option value="">— Choose a template —</option>
             </select>
             <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnWelcomeReviewApplyTemplate">Use template</button>
           </div>
-          <p class="nhsuk-hint nhsuk-hint--secondary" style="margin:0.5rem 0 0 0;">
-            <a href="/static/hr/welcome-templates.html">Manage welcome template library</a>
-          </p>
+          <div class="msg-template-tools__links">
+            <a href="/static/hr/welcome-templates.html" class="msg-template-tools__link">Manage library</a>
+          </div>
+          <span class="msg-template-tools__hint" id="welcomeReviewLibraryHint"></span>
         </div>
-        <label class="nhsuk-label" for="welcomeReviewTemplate">Message text</label>
-        <span class="nhsuk-hint nhsuk-hint--secondary">Use <strong>{name}</strong> and <strong>{trust}</strong>.</span>
-        <textarea class="nhsuk-textarea" id="welcomeReviewTemplate" rows="5" maxlength="4000" aria-describedby="welcomeReviewEditPreview"></textarea>
-        <p class="cohort-welcome-block__preview" id="welcomeReviewEditPreview" aria-live="polite"></p>
       </div>
       <div id="welcomeReviewSendResult" class="hr-provision-viz-wrap hr-provision-viz-wrap--compact" style="margin-top:0.75rem;" aria-live="polite"></div>
       <p id="welcomeReviewStatus" class="hr-cohort-status-msg hr-muted" role="status" aria-live="polite" hidden></p>
@@ -457,11 +480,142 @@
       var _cohortsLoadSeq = 0;
       var _createWizardStep = 1;
       var _createMethod = null;
+      var _allDoctorsMembers = [];
+      var _allDoctorsCohortId = null;
       var _addWizardStep = 1;
       var _addMethod = null;
       var _editingMemberId = null;
       var _activeCohortMeta = null;
       var SYSTEM_WELCOME_DEFAULT = 'Welcome {name} to {trust}. Please reply if you have any queries or concerns.';
+
+      function isReservedDefaultCohortName(name) {
+        var n = String(name || '').trim().toLowerCase();
+        return n === 'ad-hoc' || n === 'all doctors';
+      }
+
+      function isDefaultCohort(c) {
+        if (!c) return false;
+        if (c.is_default) return true;
+        var n = String(c.name || '').trim().toLowerCase();
+        return n === 'ad-hoc' || n === 'all doctors';
+      }
+
+      function defaultCohortFromCache() {
+        return _cohortsCache.find(function (c) { return isDefaultCohort(c); }) || null;
+      }
+
+      function syncAllDoctorsSubmitState() {
+        if (_createMethod !== 'all_doctors') return;
+        var submitBtn = document.getElementById('btnCreateSubmit');
+        if (!submitBtn) return;
+        var n = getSelectedAllDoctorsMembers().length;
+        var ready = n > 0;
+        submitBtn.disabled = !ready;
+        submitBtn.classList.toggle('cohort-roster-submit--ready', ready);
+        submitBtn.classList.toggle('cohort-roster-submit--empty', !ready);
+      }
+
+      function getSelectedAllDoctorsMembers() {
+        var list = document.getElementById('createAllDoctorsList');
+        if (!list) return [];
+        var selected = [];
+        list.querySelectorAll('input[type="checkbox"][data-all-doctors-email]:checked').forEach(function (inp) {
+          var email = String(inp.getAttribute('data-all-doctors-email') || '').toLowerCase();
+          var m = _allDoctorsMembers.find(function (x) {
+            return String(x.personal_email || x.email || '').toLowerCase() === email;
+          });
+          if (m) {
+            var dn = (m.display_name && String(m.display_name).trim()) || '';
+            selected.push({
+              personal_email: m.personal_email || m.email,
+              display_name: dn || undefined,
+              gmc_number: m.gmc_number || undefined,
+            });
+          }
+        });
+        return selected;
+      }
+
+      function renderAllDoctorsPicker() {
+        var list = document.getElementById('createAllDoctorsList');
+        if (!list) return;
+        list.innerHTML = _allDoctorsMembers.map(function (m) {
+          var email = m.personal_email || m.email || '';
+          var label = memberDisplayLabel(m);
+          var metaParts = [];
+          if (label.toLowerCase() !== String(email).toLowerCase() && email) metaParts.push(email);
+          if (m.gmc_number) metaParts.push('GMC ' + m.gmc_number);
+          var meta = metaParts.join(' · ');
+          return (
+            '<label class="hr-bulk-cohort-option">' +
+            '<input type="checkbox" data-all-doctors-email="' + esc(email) + '" checked>' +
+            '<span><strong>' + esc(label) + '</strong>' +
+            (meta ? '<span class="hr-bulk-cohort-option__meta">' + esc(meta) + '</span>' : '') +
+            '</span></label>'
+          );
+        }).join('');
+        var selectAll = document.getElementById('createAllDoctorsSelectAll');
+        if (selectAll) selectAll.checked = _allDoctorsMembers.length > 0;
+        syncAllDoctorsSubmitState();
+      }
+
+      async function loadAllDoctorsPicker() {
+        var loading = document.getElementById('createAllDoctorsLoading');
+        var empty = document.getElementById('createAllDoctorsEmpty');
+        var picker = document.getElementById('createAllDoctorsPicker');
+        var err = document.getElementById('createAllDoctorsError');
+        show(loading, true);
+        show(empty, false);
+        show(picker, false);
+        if (err) { err.hidden = true; err.textContent = ''; }
+        _allDoctorsMembers = [];
+        _allDoctorsCohortId = null;
+        syncAllDoctorsSubmitState();
+        try {
+          var cohort = defaultCohortFromCache();
+          if (!cohort) {
+            var data = await apiJson('/api/hr/cohorts');
+            _cohortsCache = (data && data.cohorts) ? data.cohorts : [];
+            cohort = defaultCohortFromCache();
+          }
+          if (!cohort) {
+            show(loading, false);
+            show(empty, true);
+            return;
+          }
+          _allDoctorsCohortId = cohort.id;
+          var detail = await apiJson('/api/hr/cohorts/' + encodeURIComponent(String(cohort.id)));
+          _allDoctorsMembers = sortMembers((detail && detail.members) ? detail.members : []);
+          show(loading, false);
+          if (!_allDoctorsMembers.length) {
+            show(empty, true);
+            return;
+          }
+          renderAllDoctorsPicker();
+          show(picker, true);
+        } catch (e) {
+          show(loading, false);
+          if (err) {
+            err.textContent = e.message || 'Could not load All Doctors';
+            err.hidden = false;
+          }
+        }
+      }
+
+      function resetAllDoctorsPicker() {
+        _allDoctorsMembers = [];
+        _allDoctorsCohortId = null;
+        var loading = document.getElementById('createAllDoctorsLoading');
+        var empty = document.getElementById('createAllDoctorsEmpty');
+        var picker = document.getElementById('createAllDoctorsPicker');
+        var list = document.getElementById('createAllDoctorsList');
+        var err = document.getElementById('createAllDoctorsError');
+        if (list) list.innerHTML = '';
+        show(loading, false);
+        show(empty, false);
+        show(picker, false);
+        if (err) { err.hidden = true; err.textContent = ''; }
+      }
 
       function hrWelcomeDefault() {
         var u = NHSAuth.user;
@@ -1480,9 +1634,9 @@
           return;
         }
         el.innerHTML = _cohortsCache.map(function (c) {
-          var isDefault = c.is_default || String(c.name || '').trim().toLowerCase() === 'ad-hoc';
+          var isDefault = isDefaultCohort(c);
           var meta = esc(String(c.member_count != null ? c.member_count : 0)) + ' member' + (c.member_count === 1 ? '' : 's');
-          if (isDefault) meta += ' · Default for one-off provisioning';
+          if (isDefault) meta += ' · Default group';
           return (
             '<div class="hr-search-result-row" data-cohort-id="' + c.id + '">' +
               '<div><div class="hr-search-result-name">' + esc(c.name) + '</div>' +
@@ -1597,8 +1751,7 @@
         document.getElementById('detailTitle').textContent = c.name;
         var delBtn = document.getElementById('btnDeleteCohort');
         if (delBtn) {
-          var isDefault = c.is_default || String(c.name || '').trim().toLowerCase() === 'ad-hoc';
-          delBtn.hidden = !!isDefault;
+          delBtn.hidden = !!isDefaultCohort(c);
         }
         renderMembersTable();
         updateCohortActionUI();
@@ -1654,9 +1807,13 @@
         var p2 = document.getElementById('createRosterTitle');
         if (p1) p1.textContent = name;
         if (p2) {
-          p2.textContent = _createMethod === 'upload'
-            ? 'Upload roster for “' + name + '”'
-            : 'Add clinicians to “' + name + '”';
+          if (_createMethod === 'upload') {
+            p2.textContent = 'Upload roster for “' + name + '”';
+          } else if (_createMethod === 'all_doctors') {
+            p2.textContent = 'Add from All Doctors to “' + name + '”';
+          } else {
+            p2.textContent = 'Add clinicians to “' + name + '”';
+          }
         }
       }
 
@@ -1670,19 +1827,31 @@
           if (step === 1) label.textContent = 'Step 1 of 3 — Name your cohort';
           else if (step === 2) label.textContent = 'Step 2 of 3 — How to add clinicians';
           else {
-            label.textContent = _createMethod === 'upload'
-              ? 'Step 3 of 3 — Upload spreadsheet'
-              : 'Step 3 of 3 — Add clinicians manually';
+            if (_createMethod === 'upload') {
+              label.textContent = 'Step 3 of 3 — Upload spreadsheet';
+            } else if (_createMethod === 'all_doctors') {
+              label.textContent = 'Step 3 of 3 — Choose from All Doctors';
+            } else {
+              label.textContent = 'Step 3 of 3 — Add clinicians manually';
+            }
           }
         }
         show(document.getElementById('createPanelManual'), step === 3 && _createMethod === 'manual');
         show(document.getElementById('createPanelUpload'), step === 3 && _createMethod === 'upload');
+        show(document.getElementById('createPanelAllDoctors'), step === 3 && _createMethod === 'all_doctors');
+        var rosterAdded = document.getElementById('createRosterAdded');
+        if (rosterAdded) rosterAdded.hidden = step === 3 && _createMethod === 'all_doctors';
         if (step === 3) {
           updateCreateCohortNamePreviews();
           if (_createMethod === 'upload' && _createEmailRoster && _createEmailRoster.syncUploadPicker) {
             _createEmailRoster.syncUploadPicker();
           }
-          var focusId = _createMethod === 'manual' ? 'cohortPersonalEmailInput' : 'cohortEmailsFile';
+          if (_createMethod === 'all_doctors') {
+            syncAllDoctorsSubmitState();
+          }
+          var focusId = _createMethod === 'manual'
+            ? 'cohortPersonalEmailInput'
+            : (_createMethod === 'upload' ? 'cohortEmailsFile' : 'createAllDoctorsSelectAll');
           var focusEl = document.getElementById(focusId);
           if (focusEl && !focusEl.closest('[hidden]')) focusEl.focus();
         }
@@ -1699,6 +1868,7 @@
         setCohortNameError('');
         setCreateWizardStep(1);
         if (_createEmailRoster) _createEmailRoster.clear();
+        resetAllDoctorsPicker();
         var uploadErr = document.getElementById('cohortUploadError');
         if (uploadErr) { uploadErr.hidden = true; uploadErr.textContent = ''; }
       }
@@ -1724,6 +1894,11 @@
         var name = cohortNameValue();
         if (!name) {
           setCohortNameError('Enter a cohort name to continue.');
+          document.getElementById('cohortName').focus();
+          return;
+        }
+        if (isReservedDefaultCohortName(name)) {
+          setCohortNameError('“All Doctors” is reserved for the default group. Choose a different name.');
           document.getElementById('cohortName').focus();
           return;
         }
@@ -1753,37 +1928,98 @@
       document.querySelectorAll('[data-create-method]').forEach(function (btn) {
         btn.addEventListener('click', function () {
           _createMethod = btn.getAttribute('data-create-method');
+          if (_createMethod === 'all_doctors') {
+            void loadAllDoctorsPicker();
+          }
           setCreateWizardStep(3);
         });
       });
+
+      var createAllDoctorsList = document.getElementById('createAllDoctorsList');
+      if (createAllDoctorsList) {
+        createAllDoctorsList.addEventListener('change', function (e) {
+          var selectAll = document.getElementById('createAllDoctorsSelectAll');
+          if (selectAll && e.target && createAllDoctorsList.contains(e.target)) {
+            var boxes = createAllDoctorsList.querySelectorAll('input[type="checkbox"][data-all-doctors-email]');
+            var checked = createAllDoctorsList.querySelectorAll('input[type="checkbox"][data-all-doctors-email]:checked');
+            selectAll.checked = boxes.length > 0 && checked.length === boxes.length;
+            selectAll.indeterminate = checked.length > 0 && checked.length < boxes.length;
+          }
+          var adErr = document.getElementById('createAllDoctorsError');
+          if (adErr) { adErr.hidden = true; adErr.textContent = ''; }
+          syncAllDoctorsSubmitState();
+        });
+      }
+      var createAllDoctorsSelectAll = document.getElementById('createAllDoctorsSelectAll');
+      if (createAllDoctorsSelectAll) {
+        createAllDoctorsSelectAll.addEventListener('change', function () {
+          var list = document.getElementById('createAllDoctorsList');
+          if (!list) return;
+          list.querySelectorAll('input[type="checkbox"][data-all-doctors-email]').forEach(function (inp) {
+            inp.checked = createAllDoctorsSelectAll.checked;
+          });
+          createAllDoctorsSelectAll.indeterminate = false;
+          syncAllDoctorsSubmitState();
+        });
+      }
+      var btnOpenAllDoctors = document.getElementById('btnOpenAllDoctors');
+      if (btnOpenAllDoctors) {
+        btnOpenAllDoctors.addEventListener('click', function () {
+          var cohort = defaultCohortFromCache();
+          if (!cohort && _allDoctorsCohortId != null) {
+            cohort = cohortById(_allDoctorsCohortId);
+          }
+          if (!cohort) return;
+          show(document.getElementById('createCard'), false);
+          resetCreateWizard();
+          openCohort(cohort.id);
+        });
+      }
 
       document.getElementById('formCreateCohort').addEventListener('submit', async function (e) {
         e.preventDefault();
         var status = document.getElementById('createStatus');
         var vizEl = document.getElementById('createProvisionResult');
         var submitBtn = e.target.querySelector('button[type="submit"]');
-        var createFlush = _createEmailRoster ? _createEmailRoster.flushPendingForm() : null;
-        if (createFlush && createFlush.gmcWarning && _createEmailRoster) {
-          _createEmailRoster.setFieldError(createFlush.gmcWarning, 'gmc');
-        }
-        var members = _createEmailRoster ? _createEmailRoster.getMembers() : [];
-        if (!members.length) {
-          var uploadErr = document.getElementById('cohortUploadError');
-          var manualErr = document.getElementById('cohortEmailError');
-          var msg = _createMethod === 'upload'
-            ? 'Upload a spreadsheet with at least one personal email, or go back and choose Add manually.'
-            : 'Add at least one clinician with a personal email.';
-          if (_createMethod === 'upload' && uploadErr) {
-            uploadErr.textContent = msg;
-            uploadErr.hidden = false;
-          } else if (manualErr) {
-            manualErr.textContent = msg;
-            manualErr.hidden = false;
+        var members;
+        if (_createMethod === 'all_doctors') {
+          members = getSelectedAllDoctorsMembers();
+          if (!members.length) {
+            var adErr = document.getElementById('createAllDoctorsError');
+            var adMsg = 'Select at least one clinician from All Doctors.';
+            if (adErr) {
+              adErr.textContent = adMsg;
+              adErr.hidden = false;
+            }
+            show(status, true);
+            status.textContent = adMsg;
+            setCreateWizardStep(3);
+            return;
           }
-          show(status, true);
-          status.textContent = msg;
-          setCreateWizardStep(3);
-          return;
+        } else {
+          var createFlush = _createEmailRoster ? _createEmailRoster.flushPendingForm() : null;
+          if (createFlush && createFlush.gmcWarning && _createEmailRoster) {
+            _createEmailRoster.setFieldError(createFlush.gmcWarning, 'gmc');
+          }
+          members = _createEmailRoster ? _createEmailRoster.getMembers() : [];
+          if (!members.length) {
+            var uploadErr = document.getElementById('cohortUploadError');
+            var manualErr = document.getElementById('cohortEmailError');
+            var msg = _createMethod === 'upload'
+              ? 'Upload a spreadsheet with at least one personal email, or go back and choose Add manually.'
+              : 'Add at least one clinician with a personal email.';
+            if (_createMethod === 'upload' && uploadErr) {
+              uploadErr.textContent = msg;
+              uploadErr.hidden = false;
+            } else if (manualErr) {
+              manualErr.textContent = msg;
+              manualErr.hidden = false;
+            }
+            show(status, true);
+            status.textContent = msg;
+            setCreateWizardStep(3);
+            return;
+          }
         }
         var uploadErrHide = document.getElementById('cohortUploadError');
         if (uploadErrHide) uploadErrHide.hidden = true;

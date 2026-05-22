@@ -26,7 +26,8 @@ DEV_SEED_TRUST_SHEFFIELD = "Sheffield Health Partnership University NHS Foundati
 DEV_SEED_TRUST_ROTHERHAM = "Rotherham Doncaster and South Humber NHS Foundation Trust"
 DEV_SEED_DISPLAY_SHEFFIELD = "Sheffield HR"
 DEV_SEED_DISPLAY_ROTHERHAM = "Rotherham HR"
-DEFAULT_COHORT_NAME = "Ad-Hoc"
+DEFAULT_COHORT_NAME = "All Doctors"
+LEGACY_DEFAULT_COHORT_NAMES = ("Ad-Hoc",)
 _LEGACY_SHEFFIELD_PARTNERSHIP_TRUST_LABELS = (
     "Sheffield Health and Social Care NHS Foundation Trust",
 )
@@ -3005,7 +3006,10 @@ def user_wallet_put(user_id: int, wallet_json: str):
 
 
 def is_default_cohort_name(name: str) -> bool:
-    return (name or "").strip().casefold() == DEFAULT_COHORT_NAME.casefold()
+    n = (name or "").strip().casefold()
+    if n == DEFAULT_COHORT_NAME.casefold():
+        return True
+    return n in {x.casefold() for x in LEGACY_DEFAULT_COHORT_NAMES}
 
 
 def cohort_get_by_name(hr_trust: str, name: str) -> Optional[dict]:
@@ -3033,23 +3037,36 @@ def cohort_get_by_name(hr_trust: str, name: str) -> Optional[dict]:
     return _cohort_row_dict(row)
 
 
-def ensure_default_cohort(hr_trust: str, created_by_user_id: int) -> int:
-    """Ensure each trust has a default Ad-Hoc cohort for one-off provisioning."""
+def cohort_get_default_for_trust(hr_trust: str) -> Optional[dict]:
+    """Return the trust's default All Doctors cohort, including legacy Ad-Hoc name."""
     existing = cohort_get_by_name(hr_trust, DEFAULT_COHORT_NAME)
+    if existing:
+        return existing
+    for legacy in LEGACY_DEFAULT_COHORT_NAMES:
+        existing = cohort_get_by_name(hr_trust, legacy)
+        if existing:
+            return existing
+    return None
+
+
+def ensure_default_cohort(hr_trust: str, created_by_user_id: int) -> int:
+    """Ensure each trust has a default All Doctors cohort for one-off provisioning."""
+    existing = cohort_get_default_for_trust(hr_trust)
     if existing:
         return int(existing["id"])
     return cohort_create(hr_trust, DEFAULT_COHORT_NAME, int(created_by_user_id))
 
 
 def _ensure_default_cohorts_for_premium_hr(conn: sqlite3.Connection) -> None:
-    """Backfill default Ad-Hoc cohort for every trust with a premium HR account."""
+    """Backfill default All Doctors cohort for every trust with a premium HR account."""
     _ensure_hr_cohorts_tables(conn)
     _ensure_users_premium_column(conn)
-    conn.execute(
-        """UPDATE hr_cohorts SET name = ?
-           WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) AND TRIM(name) != ?""",
-        (DEFAULT_COHORT_NAME, DEFAULT_COHORT_NAME, DEFAULT_COHORT_NAME),
-    )
+    for legacy in LEGACY_DEFAULT_COHORT_NAMES:
+        conn.execute(
+            """UPDATE hr_cohorts SET name = ?
+               WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))""",
+            (DEFAULT_COHORT_NAME, legacy),
+        )
     rows = conn.execute(
         """
         SELECT MIN(u.id) AS user_id, TRIM(u.current_trust) AS trust
@@ -3152,7 +3169,10 @@ def cohort_list_for_trust(hr_trust: str) -> list[dict]:
                    (SELECT COUNT(*) FROM hr_cohort_members m WHERE m.cohort_id = c.id) AS member_count
             FROM hr_cohorts c
             WHERE LOWER(TRIM(c.hr_trust)) = LOWER(TRIM(?))
-            ORDER BY CASE WHEN LOWER(TRIM(c.name)) = LOWER(?) THEN 0 ELSE 1 END,
+            ORDER BY CASE
+                       WHEN LOWER(TRIM(c.name)) IN (LOWER(?), 'ad-hoc') THEN 0
+                       ELSE 1
+                     END,
                      c.created_at DESC
             """,
             (hr_trust, DEFAULT_COHORT_NAME),

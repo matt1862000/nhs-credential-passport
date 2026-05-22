@@ -190,3 +190,106 @@
   padding-left: 3.1rem;
   margin-top: 0.35rem;
 }
+/* Template picker — sits below compose field */
+.msg-broadcast-footer {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--nhsuk-border);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  flex-shrink: 0;
+}
+.msg-broadcast-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  flex-shrink: 0;
+}
+.msg-template-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.msg-template-tools__main {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+.msg-template-tools__label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--nhsuk-secondary-text);
+  flex-shrink: 0;
+}
+.msg-template-tools__main .nhsuk-select {
+  flex: 1;
+  min-width: 12rem;
+  max-width: 100%;
+  margin: 0;
+  font-size: 0.875rem;
+}
+.msg-template-tools__links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.5rem;
+  align-items: center;
+  font-size: 0.8125rem;
+}
+.msg-template-tools__link,
+a.msg-template-tools__link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 0.8125rem;
+  color: var(--nhsuk-link);
+  cursor: pointer;
+  text-decoration: underline;
+}
+.msg-template-tools__link:hover,
+a.msg-template-tools__link:hover {
+  color: #003087;
+}
+.msg-template-tools__sep {
+  color: var(--nhsuk-secondary-text);
+  user-select: none;
+}
+.msg-template-tools__hint {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--nhsuk-secondary-text);
+  line-height: 1.45;
+}
+.msg-template-preview {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--nhsuk-secondary-text);
+  line-height: 1.45;
+  font-style: italic;
+}
+.msg-compose-templates {
+  padding: 0.5rem 0.75rem 0.35rem;
+  border-top: 1px solid var(--nhsuk-border);
+  background: transparent;
+}
+.msg-template-tools--section {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--nhsuk-border);
+}
+.msg-compose-templates__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.5rem;
+  align-items: center;
+  margin-bottom: 0.35rem;
+}
+.msg-compose-templates__row .nhsuk-select {
+  flex: 1;
+  min-width: 8rem;
+  font-size: 0.8125rem;
+  margin: 0;
+}

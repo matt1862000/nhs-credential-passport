@@ -1361,7 +1361,7 @@
           list.innerHTML = _bulkCohortsCache.map(function (c) {
             var n = (c.name || 'Cohort').trim();
             var cnt = c.member_count != null ? c.member_count : 0;
-            var checked = c.is_default || String(n).toLowerCase() === 'ad-hoc' ? ' checked' : '';
+            var checked = c.is_default || String(n).toLowerCase() === 'all doctors' || String(n).toLowerCase() === 'ad-hoc' ? ' checked' : '';
             return (
               '<label class="hr-bulk-cohort-option">' +
               '<input type="checkbox" data-bulk-cohort-id="' + esc(String(c.id)) + '"' + checked + '>' +
@@ -1478,12 +1478,13 @@
           bulkWizardStep = 1;
           bulkRecipientMethod = null;
           clearBulkCohortSelection();
-          var adHoc = _bulkCohortsCache.find(function (c) {
-            return c.is_default || String(c.name || '').trim().toLowerCase() === 'ad-hoc';
+          var defaultCohort = _bulkCohortsCache.find(function (c) {
+            return c.is_default || String(c.name || '').trim().toLowerCase() === 'all doctors'
+              || String(c.name || '').trim().toLowerCase() === 'ad-hoc';
           });
-          if (adHoc && adHoc.id != null) {
+          if (defaultCohort && defaultCohort.id != null) {
             var inp = document.querySelector(
-              'input[data-bulk-cohort-id="' + String(adHoc.id) + '"]'
+              'input[data-bulk-cohort-id="' + String(defaultCohort.id) + '"]'
             );
             if (inp) inp.checked = true;
           }

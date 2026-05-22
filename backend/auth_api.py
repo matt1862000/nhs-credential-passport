@@ -3433,7 +3433,7 @@ async def hr_cohorts_create(request: Request):
     if db.is_default_cohort_name(name) and db.cohort_get_by_name(trust, name):
         raise HTTPException(
             status_code=400,
-            detail='A default "Ad-Hoc" cohort already exists. Open it to add clinicians.',
+            detail='A default "All Doctors" cohort already exists. Open it to add clinicians.',
         )
     members = _parse_cohort_members(body)
     _validate_cohort_members(members)
@@ -3489,7 +3489,7 @@ def hr_cohorts_delete(request: Request, cohort_id: int):
     if db.is_default_cohort_name(cohort.get("name")):
         raise HTTPException(
             status_code=400,
-            detail='The default "Ad-Hoc" cohort cannot be deleted. Add clinicians to it instead.',
+            detail='The default "All Doctors" cohort cannot be deleted. Add clinicians to it instead.',
         )
     if not db.cohort_delete(int(cohort_id), trust):
         raise HTTPException(status_code=404, detail="Cohort not found")
