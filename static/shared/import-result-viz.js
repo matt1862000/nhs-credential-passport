@@ -85,6 +85,7 @@
   }
 
   var PROGRESS_BAR_PHASES = {
+    prepare: true,
     validate: true,
     wallet: true,
     issue: true,

@@ -8,6 +8,7 @@
 
   <title>My training — DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
+  <link rel="stylesheet" href="/static/shared/import-result-viz.css?v=20260525-2">
   <style>
     :root {
       --nhsuk-text: #212b32;
@@ -425,6 +426,8 @@
     .esr-preview-table th, .esr-preview-table td { padding: 0.45rem 0.6rem; border-bottom: 1px solid var(--nhsuk-border); text-align: left; }
     .esr-preview-table th { background: #f0f4f5; font-weight: 700; }
     .esr-wizard-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 1.25rem; }
+    .esr-import-feedback { margin-top: 1rem; min-height: 0; }
+    .esr-import-feedback:not(:empty) { min-height: 4.5rem; }
     .staff-renew-panel {
       margin-bottom: 1rem; padding: 0.85rem 1rem;
       background: #f0f7fb; border: 1px solid var(--nhsuk-border); border-left: 4px solid var(--nhsuk-link);
@@ -623,7 +626,6 @@
         <div id="esrStep3" class="esr-wizard-panel" hidden>
           <p class="nhsuk-hint" style="margin-top:0;">Rows we will import for you (from your CSV):</p>
           <div id="esrPreviewWrap"></div>
-          <div id="csvImportResult" style="margin-top:1rem;" aria-live="polite"></div>
         </div>
 
         <div id="esrStep4" class="esr-wizard-panel" hidden>
@@ -642,6 +644,8 @@
           <p id="esrConfirmSummary" class="nhsuk-body-s" style="margin-top:0;"></p>
           <button type="button" class="nhsuk-button" id="btnCsvUpload" disabled>Import into my wallet</button>
         </div>
+
+        <div id="csvImportResult" class="esr-import-feedback" aria-live="polite"></div>
 
         <div class="esr-wizard-actions">
           <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnEsrBack" hidden>Back</button>
@@ -1345,6 +1349,26 @@
     });
 
     var csvUploadInFlight = false;
+    function setCsvImportBusy(busy, message) {
+      var btn = document.getElementById('btnCsvUpload');
+      var backBtn = document.getElementById('btnEsrBack');
+      var nextBtn = document.getElementById('btnEsrNext');
+      csvUploadInFlight = !!busy;
+      if (btn) {
+        btn.disabled = !!busy || !document.getElementById('csv_upload')?.files?.[0] || !document.getElementById('csv_evidence')?.files?.[0];
+        btn.classList.toggle('is-loading', !!busy);
+        if (busy) {
+          btn.setAttribute('aria-busy', 'true');
+          btn.textContent = message || 'Importing…';
+        } else {
+          btn.removeAttribute('aria-busy');
+          btn.textContent = 'Import into my wallet';
+        }
+      }
+      if (backBtn) backBtn.disabled = !!busy;
+      if (nextBtn) nextBtn.disabled = !!busy;
+      updateCsvImportButtonState();
+    }
     function updateCsvImportButtonState() {
       var btn = document.getElementById('btnCsvUpload');
       var csv = document.getElementById('csv_upload');
@@ -1535,59 +1559,44 @@
         return;
       }
       var btn = document.getElementById('btnCsvUpload');
-      var labelUpload = 'Import into my wallet';
-      csvUploadInFlight = true;
-      updateCsvImportButtonState();
-      if (btn) {
-        btn.disabled = true;
-        btn.textContent = 'Importing…';
-      }
-      showCsvImportLoading('Importing your training…');
+      setCsvImportBusy(true, 'Importing…');
+      showCsvImportLoading('Preparing your import…');
       try {
         var checked = _esrPreviewData;
         if (!checked || checked.fatal_error || !(checked.valid_row_count > 0)) {
+          showCsvImportLoading('Checking which rows match your profile…');
           checked = await postCsv(true);
           _esrPreviewData = checked;
         }
         if (!checked) {
-          if (btn) { btn.disabled = false; btn.textContent = labelUpload; }
-          csvUploadInFlight = false;
-          updateCsvImportButtonState();
+          setCsvImportBusy(false);
           return;
         }
         if (checked.fatal_error || !(checked.valid_row_count > 0)) {
           renderCsvResult(checked, {});
-          if (btn) { btn.disabled = false; btn.textContent = labelUpload; }
-          csvUploadInFlight = false;
-          updateCsvImportButtonState();
+          setCsvImportBusy(false);
           return;
         }
         var validCount = Number(checked.valid_row_count || 0);
         if (validCount > 250) {
-          if (btn) {
-            btn.disabled = false;
-            btn.textContent = 'Upload ' + validCount + ' rows';
-          }
-          csvUploadInFlight = false;
-          updateCsvImportButtonState();
+          if (btn) btn.textContent = 'Upload ' + validCount + ' rows';
+          setCsvImportBusy(false);
           return;
         }
-        showCsvImportLoading('Importing your training — this can take up to a minute…');
+        showCsvImportLoading('Importing ' + validCount + ' training record' + (validCount === 1 ? '' : 's') + '…');
         if (window.NHSAuth && typeof NHSAuth.mergeAndPushWallet === 'function') {
+          showCsvImportLoading('Syncing your wallet…');
           await NHSAuth.mergeAndPushWallet();
+          showCsvImportLoading('Importing ' + validCount + ' training record' + (validCount === 1 ? '' : 's') + '…');
         }
         var data = await postCsv(false);
         if (!data) {
-          if (btn) { btn.disabled = false; btn.textContent = labelUpload; }
-          csvUploadInFlight = false;
-          updateCsvImportButtonState();
+          setCsvImportBusy(false);
           return;
         }
         if (data.fatal_error) {
           renderCsvResult(data, {});
-          if (btn) { btn.disabled = false; btn.textContent = labelUpload; }
-          csvUploadInFlight = false;
-          updateCsvImportButtonState();
+          setCsvImportBusy(false);
           return;
         }
         var creds = data.credentials || [];
@@ -1597,9 +1606,7 @@
           } else {
             document.getElementById('csvImportResult').innerHTML = '<p class="nhsuk-body-s" style="color:var(--nhsuk-error);">Server returned no records. Try uploading again.</p>';
           }
-          if (btn) { btn.disabled = false; btn.textContent = labelUpload; }
-          csvUploadInFlight = false;
-          updateCsvImportButtonState();
+          setCsvImportBusy(false);
           return;
         }
         var evFile = evEl.files && evEl.files[0];
@@ -1639,11 +1646,7 @@
       } catch (e) {
         document.getElementById('csvImportResult').innerHTML = '<p class="nhsuk-body-s" style="color:var(--nhsuk-error);">' + escapeHtml(e.message) + '</p>';
       }
-      if (btn) {
-        btn.textContent = labelUpload;
-      }
-      csvUploadInFlight = false;
-      updateCsvImportButtonState();
+      setCsvImportBusy(false);
     }
 
     document.getElementById('btnCsvUpload').addEventListener('click', function () {
@@ -2200,6 +2203,18 @@
     }
 
     (async function boot() {
+      var staffCertClose = document.getElementById('staffCertModalClose');
+      var staffCertModal = document.getElementById('staffCertModal');
+      if (staffCertClose) staffCertClose.addEventListener('click', closeStaffCertModal);
+      if (staffCertModal) {
+        staffCertModal.addEventListener('click', function (e) {
+          if (e.target === staffCertModal) closeStaffCertModal();
+        });
+      }
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') closeStaffCertModal();
+      });
+
       await NHSAuth.refresh();
       if (!NHSAuth.requireAuth()) return;
       if (!NHSAuth.requireProfileComplete()) return;
