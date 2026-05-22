@@ -6,6 +6,19 @@
   <title>Welcome templates &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
   <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260527-1">
+  <style>
+    .hr-template-editor .nhsuk-input,
+    .hr-template-editor .nhsuk-textarea {
+      width: 100%;
+      max-width: none;
+      box-sizing: border-box;
+    }
+    .hr-template-editor .nhsuk-textarea {
+      min-height: 14rem;
+      resize: vertical;
+      line-height: 1.5;
+    }
+  </style>
 </head>
 <body>
   <header class="nhsuk-header" role="banner">
@@ -29,25 +42,16 @@
   </header>
   <main class="nhsuk-main hr-wrap" role="main">
     <h1 class="nhsuk-page-heading">Message templates</h1>
-    <p class="nhsuk-lead">Reusable text for HR messages and cohort welcomes. Use <strong>{name}</strong> and <strong>{trust}</strong> — each clinician gets their own name when you send. Link templates to mandatory topics for gap-based suggestions on cohort pages.</p>
-    <div class="hr-actions" style="margin-bottom:1rem;">
-      <a href="/static/hr/cohorts/" class="nhsuk-button nhsuk-button--secondary">Cohorts</a>
-      <a href="/static/dashboard/" class="nhsuk-button nhsuk-button--secondary">Dashboard</a>
-    </div>
-    <div class="hr-card">
+    <p class="nhsuk-lead">Reusable text for HR messages and cohort welcomes. Use <strong>{name}</strong> and <strong>{trust}</strong> — each clinician gets their own name when you send.</p>
+    <div class="hr-card hr-template-editor">
       <h2 style="margin-top:0;font-size:1.125rem;">New template</h2>
       <div class="nhsuk-form-group">
         <label class="nhsuk-label" for="wtName">Name</label>
         <input class="nhsuk-input" type="text" id="wtName" maxlength="120" placeholder="e.g. Fire Safety gap reminder">
       </div>
       <div class="nhsuk-form-group">
-        <label class="nhsuk-label" for="wtTopicId">Mandatory topic ID (optional)</label>
-        <span class="nhsuk-hint">For auto-suggest when a cohort has gaps on that topic.</span>
-        <input class="nhsuk-input" type="number" id="wtTopicId" min="1" placeholder="Topic ID from Mandatory requirements">
-      </div>
-      <div class="nhsuk-form-group">
         <label class="nhsuk-label" for="wtBody">Message</label>
-        <textarea class="nhsuk-textarea" id="wtBody" rows="5" maxlength="4000" placeholder="Hi {name}, welcome to {trust}. Please complete Fire Safety and share evidence with HR."></textarea>
+        <textarea class="nhsuk-textarea" id="wtBody" rows="10" maxlength="4000" placeholder="Hi {name}, welcome to {trust}. Please complete Fire Safety and share evidence with HR."></textarea>
       </div>
       <button type="button" class="nhsuk-button" id="btnSaveTemplate">Save template</button>
       <input type="hidden" id="wtEditId" value="">
@@ -57,7 +61,7 @@
       <h2 style="margin-top:0;font-size:1.125rem;">Library</h2>
       <div class="hr-table-wrap">
         <table class="hr-table">
-          <thead><tr><th>Name</th><th>Topic</th><th></th></tr></thead>
+          <thead><tr><th>Name</th><th></th></tr></thead>
           <tbody id="wtTbody"></tbody>
         </table>
       </div>
@@ -85,11 +89,11 @@
         var rows = data.templates || [];
         var tb = document.getElementById('wtTbody');
         if (!rows.length) {
-          tb.innerHTML = '<tr><td colspan="3" class="hr-muted">No templates yet.</td></tr>';
+          tb.innerHTML = '<tr><td colspan="2" class="hr-muted">No templates yet.</td></tr>';
           return;
         }
         tb.innerHTML = rows.map(function (t) {
-          return '<tr><td>' + esc(t.name) + '</td><td>' + esc(t.topic_name || (t.topic_id ? '#' + t.topic_id : '—')) + '</td><td>'
+          return '<tr><td>' + esc(t.name) + '</td><td>'
             + '<button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" data-edit="' + t.id + '">Edit</button> '
             + '<button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" data-del="' + t.id + '">Delete</button></td></tr>';
         }).join('');
@@ -100,7 +104,6 @@
           var body = {
             name: document.getElementById('wtName').value,
             body: document.getElementById('wtBody').value,
-            topic_id: document.getElementById('wtTopicId').value || null,
           };
           var eid = document.getElementById('wtEditId').value;
           if (eid) body.id = Number(eid);
@@ -113,7 +116,6 @@
           document.getElementById('wtEditId').value = '';
           document.getElementById('wtName').value = '';
           document.getElementById('wtBody').value = '';
-          document.getElementById('wtTopicId').value = '';
           await loadList();
         } catch (e) {
           st.textContent = e.message || 'Error';
@@ -130,7 +132,6 @@
             document.getElementById('wtEditId').value = String(t.id);
             document.getElementById('wtName').value = t.name || '';
             document.getElementById('wtBody').value = t.body || '';
-            document.getElementById('wtTopicId').value = t.topic_id || '';
           }
           return;
         }

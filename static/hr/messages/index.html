@@ -198,8 +198,8 @@
                   <button type="button" class="nhsuk-button msg-send-btn" id="btnSend">Send</button>
                 </div>
                 <ul class="msg-pending-files" id="msgPendingFiles" hidden aria-label="Files to send"></ul>
-                <div class="msg-compose-templates" id="threadTemplateBar">
-                  <div class="msg-compose-templates__row">
+                <div class="msg-compose-templates" id="threadTemplateBar" hidden>
+                  <div class="msg-compose-templates__row" id="threadTemplatePicker">
                     <span class="msg-template-tools__label">Template</span>
                     <select class="nhsuk-select" id="threadTemplateSelect" aria-label="Message template">
                       <option value="">— Choose a template —</option>
@@ -231,7 +231,7 @@
                 </div>
                 <div class="msg-broadcast-footer">
                   <div class="msg-template-tools" id="broadcastTemplateBar">
-                    <div class="msg-template-tools__main">
+                    <div class="msg-template-tools__main" id="broadcastTemplatePicker" hidden>
                       <span class="msg-template-tools__label" id="broadcastTemplateLabel">Template</span>
                       <select class="nhsuk-select" id="broadcastTemplateSelect" aria-labelledby="broadcastTemplateLabel" aria-describedby="broadcastTemplateHint">
                         <option value="">— Choose a template —</option>
@@ -243,7 +243,7 @@
                       <span class="msg-template-tools__sep" aria-hidden="true">·</span>
                       <a href="/static/hr/welcome-templates.html" class="msg-template-tools__link">Manage library</a>
                     </div>
-                    <span class="msg-template-tools__hint" id="broadcastTemplateHint">Placeholders <strong>{name}</strong> and <strong>{trust}</strong> are replaced for each recipient.</span>
+                    <span class="msg-template-tools__hint" id="broadcastTemplateHint" hidden>Placeholders <strong>{name}</strong> and <strong>{trust}</strong> are replaced for each recipient.</span>
                     <p class="msg-template-preview" id="broadcastTemplatePreview" hidden aria-live="polite"></p>
                   </div>
                   <div class="msg-broadcast-actions">
@@ -509,6 +509,21 @@
         };
       }
 
+      function syncMessageTemplatePickerVisibility() {
+        var has = _messageTemplatesCache.length > 0;
+        var broadcastPicker = document.getElementById('broadcastTemplatePicker');
+        var broadcastHint = document.getElementById('broadcastTemplateHint');
+        var threadBar = document.getElementById('threadTemplateBar');
+        var preview = document.getElementById('broadcastTemplatePreview');
+        if (broadcastPicker) broadcastPicker.hidden = !has;
+        if (broadcastHint) broadcastHint.hidden = !has;
+        if (threadBar) threadBar.hidden = !has;
+        if (preview && !has) {
+          preview.hidden = true;
+          preview.textContent = '';
+        }
+      }
+
       function fillMessageTemplateSelects() {
         var opts = '<option value="">— Choose a template —</option>' +
           _messageTemplatesCache.map(function (t) {
@@ -529,6 +544,7 @@
             }).join('');
           if (tv) tSel.value = tv;
         }
+        syncMessageTemplatePickerVisibility();
       }
 
       async function loadMessageTemplates() {
