@@ -383,6 +383,178 @@
       var itemsFilterStatus = '';
       var lastInboxGroups = [];
       var lastSessionPayload = null;
+      var lastItemsFixedSessionId = null;
+
+      function itemsTableColspan(showSelectCol) {
+        return showSelectCol ? 5 : 4;
+      }
+
+      function isItemActionable(it, merged, portfolioSession) {
+        var st = String(it.status || '').toUpperCase();
+        if (st === 'VERIFIED' || st === 'DECLINED') return false;
+        var portfolioRow = merged
+          ? String(it.session_share_kind || '').toLowerCase() === 'portfolio'
+          : portfolioSession;
+        return !portfolioRow;
+      }
+
+      function syncItemsBulkBarCounts() {
+        var tbody = document.getElementById('itemsTbody');
+        var bulkBar = document.getElementById('itemsBulkBar');
+        if (!tbody || !bulkBar || bulkBar.hidden) return;
+        var all = tbody.querySelectorAll('.hr-item-select-cb[data-cid]');
+        var checked = tbody.querySelectorAll('.hr-item-select-cb[data-cid]:checked');
+        var n = checked.length;
+        var countEl = document.getElementById('itemsBulkCount');
+        var btnV = document.getElementById('btnItemsVerifySelected');
+        var btnD = document.getElementById('btnItemsDeclineSelected');
+        var selectAll = document.getElementById('itemsSelectAll');
+        if (countEl) {
+          countEl.textContent = n === 0 ? '0 selected' : (n === 1 ? '1 selected' : n + ' selected');
+        }
+        if (btnV) btnV.disabled = n === 0;
+        if (btnD) btnD.disabled = n === 0;
+        if (selectAll) {
+          selectAll.indeterminate = n > 0 && n < all.length;
+          selectAll.checked = all.length > 0 && n === all.length;
+        }
+      }
+
+      function updateItemsBulkControls(showSelectCol) {
+        var bulkBar = document.getElementById('itemsBulkBar');
+        var th = document.getElementById('itemsSelectAllTh');
+        var selectAll = document.getElementById('itemsSelectAll');
+        if (th) th.hidden = !showSelectCol;
+        if (bulkBar) bulkBar.hidden = !showSelectCol;
+        if (selectAll) {
+          selectAll.checked = false;
+          selectAll.indeterminate = false;
+        }
+        syncItemsBulkBarCounts();
+      }
+
+      function selectedItemEntries() {
+        var tbody = document.getElementById('itemsTbody');
+        if (!tbody) return [];
+        return Array.from(ttbody.querySelectorAll('.hr-item-select-cb[data-cid]:checked')).map(function (cb) {
+          return {
+            sid: cb.getAttribute('data-sid'),
+            cid: cb.getAttribute('data-cid'),
+          };
+        }).filter(function (e) {
+          return e.sid && e.cid;
+        });
+      }
+
+      function notifyHrInboxChanged() {
+        if (window.NHSNavAccount && typeof NHSNavAccount.notifyVerifyInboxChanged === 'function') {
+          NHSNavAccount.notifyVerifyInboxChanged();
+        }
+        if (window.NHSNavAccount && typeof NHSNavAccount.notifyAlertsChanged === 'function') {
+          NHSNavAccount.notifyAlertsChanged();
+        }
+      }
+
+      async function runBulkVerify(entries) {
+        if (!entries.length) return;
+        if (!confirm('Verify ' + entries.length + ' selected record' + (entries.length === 1 ? '' : 's') + '?')) return;
+        var btn = document.getElementById('btnItemsVerifySelected');
+        if (btn) {
+          btn.disabled = true;
+          btn.textContent = 'Verifying…';
+        }
+        var failed = 0;
+        for (var i = 0; i < entries.length; i++) {
+          try {
+            await apiJson(
+              '/api/hr/shares/' +
+                encodeURIComponent(entries[i].sid) +
+                '/items/' +
+                encodeURIComponent(entries[i].cid) +
+                '/verify',
+              { method: 'POST' }
+            );
+          } catch (err) {
+            failed++;
+          }
+        }
+        await refreshPayloadAfterAction(lastItemsFixedSessionId);
+        notifyHrInboxChanged();
+        if (failed) alert('Could not verify ' + failed + ' record(s). The rest were updated.');
+        if (btn) btn.textContent = 'Verify selected';
+      }
+
+      async function runBulkDecline(entries) {
+        if (!entries.length) return;
+        var reason = (prompt('Why are you declining these records? (Sent back to the clinician)') || '').trim();
+        if (!reason) return;
+        var btn = document.getElementById('btnItemsDeclineSelected');
+        if (btn) {
+          btn.disabled = true;
+          btn.textContent = 'Declining…';
+        }
+        var failed = 0;
+        for (var i = 0; i < entries.length; i++) {
+          try {
+            await apiJson(
+              '/api/hr/shares/' +
+                encodeURIComponent(entries[i].sid) +
+                '/items/' +
+                encodeURIComponent(entries[i].cid) +
+                '/decline',
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ reason: reason }),
+              }
+            );
+          } catch (err) {
+            failed++;
+          }
+        }
+        await refreshPayloadAfterAction(lastItemsFixedSessionId);
+        notifyHrInboxChanged();
+        if (failed) alert('Could not decline ' + failed + ' record(s). The rest were updated.');
+        if (btn) btn.textContent = 'Decline selected';
+      }
+
+      function wireItemsBulkHandlers() {
+        var selectAll = document.getElementById('itemsSelectAll');
+        var tbody = document.getElementById('itemsTbody');
+        var btnV = document.getElementById('btnItemsVerifySelected');
+        var btnD = document.getElementById('btnItemsDeclineSelected');
+        if (selectAll && !selectAll._hrBulkWired) {
+          selectAll._hrBulkWired = true;
+          selectAll.addEventListener('change', function () {
+            if (!tbody) return;
+            var on = !!selectAll.checked;
+            tbody.querySelectorAll('.hr-item-select-cb[data-cid]').forEach(function (cb) {
+              cb.checked = on;
+            });
+            syncItemsBulkBarCounts();
+          });
+        }
+        if (tbody && !tbody._hrBulkChangeWired) {
+          tbody._hrBulkChangeWired = true;
+          tbody.addEventListener('change', function (e) {
+            if (e.target && e.target.classList && e.target.classList.contains('hr-item-select-cb') && e.target.getAttribute('data-cid')) {
+              syncItemsBulkBarCounts();
+            }
+          });
+        }
+        if (btnV && !btnV._hrBulkWired) {
+          btnV._hrBulkWired = true;
+          btnV.addEventListener('click', function () {
+            void runBulkVerify(selectedItemEntries());
+          });
+        }
+        if (btnD && !btnD._hrBulkWired) {
+          btnD._hrBulkWired = true;
+          btnD.addEventListener('click', function () {
+            void runBulkDecline(selectedItemEntries());
+          });
+        }
+      }
 
       function mergeModuleNameLists(lists) {
         var seen = Object.create(null);
@@ -724,6 +896,13 @@
           if (itemsFilterStatus && st !== itemsFilterStatus) return false;
           return true;
         });
+        var showSelectCol =
+          itemsTab === 'new' &&
+          items.some(function (it) {
+            return isItemActionable(it, merged, portfolioSession);
+          });
+        var colspan = itemsTableColspan(showSelectCol);
+        updateItemsBulkControls(showSelectCol);
         var prevSid = null;
         var parts = [];
         items.forEach(function (it) {
@@ -731,7 +910,9 @@
             prevSid = it.session_id;
             var when = formatSharedAt(it.session_created_at);
             parts.push(
-              '<tr class="hr-session-divider"><td colspan="4">Submission · ' +
+              '<tr class="hr-session-divider"><td colspan="' +
+                String(colspan) +
+                '">Submission · ' +
                 esc(when) +
                 ' · #' +
                 esc(String(it.session_id)) +
@@ -813,6 +994,20 @@
           }
           var hasCert = !!(rowCert || fallbackSameSubmissionCert || fallbackAnyCert);
           var modLabel = esc(it.module_name || it.credential_id || '—');
+          var actionable = showSelectCol && isItemActionable(it, merged, portfolioSession);
+          var selectCell = showSelectCol
+            ? '<td class="hr-table__select">' +
+              (actionable
+                ? '<input type="checkbox" class="hr-item-select-cb" data-sid="' +
+                  esc(sidForApi) +
+                  '" data-cid="' +
+                  esc(it.credential_id) +
+                  '" aria-label="Select ' +
+                  modLabel +
+                  '">'
+                : '') +
+              '</td>'
+            : '';
           var modCell = hasCert
             ? '<button type="button" class="hr-module-name-btn" data-view-cert="1" data-cid="' +
               esc(it.credential_id) +
@@ -828,6 +1023,7 @@
             : modLabel;
           parts.push(
             '<tr>' +
+              selectCell +
               '<td>' +
               modCell +
               priorNote +
@@ -847,20 +1043,22 @@
               '</tr>'
           );
         });
-        tbody.innerHTML = parts.join('') || '<tr><td colspan="4" class="hr-muted">No items.</td></tr>';
+        tbody.innerHTML = parts.join('') || '<tr><td colspan="' + String(colspan) + '" class="hr-muted">No items.</td></tr>';
+        syncItemsBulkBarCounts();
       }
 
       async function loadDoctorQueue(doctorUserId) {
         var tbody = document.getElementById('itemsTbody');
         var titleEl = document.getElementById('sessionViewTitle');
         if (titleEl) titleEl.textContent = 'E-learning from this clinician';
-        tbody.innerHTML = '<tr><td colspan="4" class="hr-muted">Loading…</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="5" class="hr-muted">Loading…</td></tr>';
         lastSessionPayload = await apiJson('/api/hr/doctors/' + encodeURIComponent(String(doctorUserId)) + '/queue');
         renderItemsTable(lastSessionPayload, null);
         attachItemsRowHandler(null);
       }
 
       function attachItemsRowHandler(fixedSessionId) {
+        lastItemsFixedSessionId = fixedSessionId;
         var tbody = document.getElementById('itemsTbody');
         var actionInFlight = false;
         tbody.onclick = async function (e) {
@@ -969,12 +1167,7 @@
               );
             }
             await refreshPayloadAfterAction(fixedSessionId);
-            if (window.NHSNavAccount && typeof NHSNavAccount.notifyVerifyInboxChanged === 'function') {
-              NHSNavAccount.notifyVerifyInboxChanged();
-            }
-            if (window.NHSNavAccount && typeof NHSNavAccount.notifyAlertsChanged === 'function') {
-              NHSNavAccount.notifyAlertsChanged();
-            }
+            notifyHrInboxChanged();
           } catch (err) {
             alert(err.message || err);
             await refreshPayloadAfterAction(fixedSessionId);
@@ -1001,7 +1194,7 @@
         var tbody = document.getElementById('itemsTbody');
         var titleEl = document.getElementById('sessionViewTitle');
         if (titleEl) titleEl.textContent = 'E-learning in this set';
-        tbody.innerHTML = '<tr><td colspan="4" class="hr-muted">Loading…</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="5" class="hr-muted">Loading…</td></tr>';
         lastSessionPayload = await apiJson('/api/hr/shares/' + encodeURIComponent(String(sessionId)));
         if (titleEl) {
           titleEl.textContent =
@@ -1257,6 +1450,10 @@
               opt.textContent = n + ' (' + cnt + ' member' + (cnt === 1 ? '' : 's') + ')';
               sel.appendChild(opt);
             });
+            var adHoc = cohorts.find(function (c) {
+              return c.is_default || String(c.name || '').trim().toLowerCase() === 'ad-hoc';
+            });
+            if (adHoc && adHoc.id != null) sel.value = String(adHoc.id);
           } catch (e) {
             /* keep default option */
           }
@@ -1981,6 +2178,7 @@
             }
           });
         }
+        wireItemsBulkHandlers();
 
         if (doctorId) {
           show(document.getElementById('sessionView'), true);

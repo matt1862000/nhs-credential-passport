@@ -3347,6 +3347,7 @@ def _welcome_review_summary(user_ids: list[int]) -> dict:
 def hr_cohorts_list(request: Request):
     hr = require_premium_user(request)
     trust = _hr_trust_required(hr)
+    db.ensure_default_cohort(trust, int(hr["id"]))
     return {"cohorts": db.cohort_list_for_trust(trust)}
 
 
@@ -3363,6 +3364,11 @@ async def hr_cohorts_create(request: Request):
     name = str(body.get("name") or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="Cohort name is required")
+    if db.is_default_cohort_name(name) and db.cohort_get_by_name(trust, name):
+        raise HTTPException(
+            status_code=400,
+            detail='A default "Ad-Hoc" cohort already exists. Open it to add clinicians.',
+        )
     members = _parse_cohort_members(body)
     _validate_cohort_members(members)
     stream = bool(body.get("stream"))
@@ -3411,6 +3417,14 @@ async def hr_cohorts_create(request: Request):
 def hr_cohorts_delete(request: Request, cohort_id: int):
     hr = require_premium_user(request)
     trust = _hr_trust_required(hr)
+    cohort = db.cohort_get(int(cohort_id), trust)
+    if not cohort:
+        raise HTTPException(status_code=404, detail="Cohort not found")
+    if db.is_default_cohort_name(cohort.get("name")):
+        raise HTTPException(
+            status_code=400,
+            detail='The default "Ad-Hoc" cohort cannot be deleted. Add clinicians to it instead.',
+        )
     if not db.cohort_delete(int(cohort_id), trust):
         raise HTTPException(status_code=404, detail="Cohort not found")
     return {"ok": True, "deleted_cohort_id": int(cohort_id)}

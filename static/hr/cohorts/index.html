@@ -1479,13 +1479,16 @@
           return;
         }
         el.innerHTML = _cohortsCache.map(function (c) {
+          var isDefault = c.is_default || String(c.name || '').trim().toLowerCase() === 'ad-hoc';
+          var meta = esc(String(c.member_count != null ? c.member_count : 0)) + ' member' + (c.member_count === 1 ? '' : 's');
+          if (isDefault) meta += ' · Default for one-off provisioning';
           return (
             '<div class="hr-search-result-row" data-cohort-id="' + c.id + '">' +
               '<div><div class="hr-search-result-name">' + esc(c.name) + '</div>' +
-              '<div class="hr-search-result-meta">' + esc(String(c.member_count != null ? c.member_count : 0)) + ' member' + (c.member_count === 1 ? '' : 's') + '</div></div>' +
+              '<div class="hr-search-result-meta">' + meta + '</div></div>' +
               '<div class="hr-search-result-actions">' +
                 '<button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" data-cohort-open="' + c.id + '">Open</button>' +
-                '<button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small cohort-delete-btn" data-cohort-delete="' + c.id + '">Delete</button>' +
+                (isDefault ? '' : '<button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small cohort-delete-btn" data-cohort-delete="' + c.id + '">Delete</button>') +
               '</div>' +
             '</div>'
           );
@@ -1591,6 +1594,11 @@
         _detailMembers = sortMembers(data.members || []);
         _activeCohortMeta = c;
         document.getElementById('detailTitle').textContent = c.name;
+        var delBtn = document.getElementById('btnDeleteCohort');
+        if (delBtn) {
+          var isDefault = c.is_default || String(c.name || '').trim().toLowerCase() === 'ad-hoc';
+          delBtn.hidden = !!isDefault;
+        }
         renderMembersTable();
         updateCohortActionUI();
         updateAddCohortNamePreviews();

@@ -8,7 +8,7 @@
 
   <title>Verify shared training &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
-  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260528-1">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260529-1">
   <link rel="stylesheet" href="/static/shared/training-add-form.css?v=20260526-2">
 
 </head>
@@ -88,7 +88,7 @@
           <tbody id="sessionsTbody"></tbody>
         </table>
       </div>
-      <p class="hr-muted" style="margin:0.85rem 0 0 0;">Open a set to verify or decline each e-learning record. Under <strong>Decided</strong>, you can <strong>Unverify</strong> a record to send it back for review. Your decision is sent back to the clinician.</p>
+      <p class="hr-muted" style="margin:0.85rem 0 0 0;">Open a set to verify or decline each e-learning record. On <strong>Awaiting decision</strong>, tick records and use <strong>Verify selected</strong> or <strong>Decline selected</strong> for bulk actions. Under <strong>Decided</strong>, you can <strong>Unverify</strong> a record to send it back for review.</p>
     </div>
 
     <div id="sessionView" class="hr-card" hidden>
@@ -118,14 +118,23 @@
           </select>
         </div>
       </div>
+      <div id="itemsBulkBar" class="hr-items-bulk-bar" hidden>
+        <span class="hr-items-bulk-bar__count" id="itemsBulkCount" aria-live="polite">0 selected</span>
+        <button type="button" class="nhsuk-button hr-btn-small" id="btnItemsVerifySelected" disabled>Verify selected</button>
+        <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnItemsDeclineSelected" disabled>Decline selected</button>
+      </div>
       <div class="hr-table-wrap">
-        <table class="hr-table" aria-label="Shared training records">
+        <table class="hr-table" aria-label="Shared training records" id="itemsTable">
           <thead>
             <tr>
-              <th>Module</th>
-              <th>Expires</th>
-              <th>Status</th>
-              <th></th>
+              <th scope="col" id="itemsSelectAllTh" class="hr-table__select" hidden>
+                <label class="visually-hidden" for="itemsSelectAll">Select all pending records</label>
+                <input type="checkbox" id="itemsSelectAll" class="hr-item-select-cb" aria-label="Select all pending records">
+              </th>
+              <th scope="col">Module</th>
+              <th scope="col">Expires</th>
+              <th scope="col">Status</th>
+              <th scope="col"><span class="visually-hidden">Actions</span></th>
             </tr>
           </thead>
           <tbody id="itemsTbody"></tbody>
@@ -146,7 +155,7 @@
   <script src="/static/shared/auth.js?v=20260523-1"></script>
   <script src="/static/shared/nav-account.js?v=20260522-1"></script>
   <script>window.__HR_PAGE__ = 'inbox';</script>
-  <script src="/static/hr/hr-app.js?v=20260528-1"></script>
+  <script src="/static/hr/hr-app.js?v=20260529-1"></script>
 </body>
 </html>
 

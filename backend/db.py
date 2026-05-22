@@ -26,6 +26,7 @@ DEV_SEED_TRUST_SHEFFIELD = "Sheffield Health Partnership University NHS Foundati
 DEV_SEED_TRUST_ROTHERHAM = "Rotherham Doncaster and South Humber NHS Foundation Trust"
 DEV_SEED_DISPLAY_SHEFFIELD = "Sheffield HR"
 DEV_SEED_DISPLAY_ROTHERHAM = "Rotherham HR"
+DEFAULT_COHORT_NAME = "Ad-Hoc"
 _LEGACY_SHEFFIELD_PARTNERSHIP_TRUST_LABELS = (
     "Sheffield Health and Social Care NHS Foundation Trust",
 )
@@ -97,6 +98,7 @@ def init_db():
         _ensure_hr_welcome_templates_table(conn)
         _ensure_seed_privileged_user(conn)
         _ensure_seed_rotherham_user(conn)
+        _ensure_default_cohorts_for_premium_hr(conn)
         _backfill_sheffield_partnership_trust_labels(conn)
         _backfill_uppercase_current_trust(conn)
         _migrate_provisioned_personal_email_login(conn)
@@ -2965,6 +2967,85 @@ def user_wallet_put(user_id: int, wallet_json: str):
 # ---------- HR cohorts (provision clinicians + group messaging) ----------
 
 
+def is_default_cohort_name(name: str) -> bool:
+    return (name or "").strip().casefold() == DEFAULT_COHORT_NAME.casefold()
+
+
+def cohort_get_by_name(hr_trust: str, name: str) -> Optional[dict]:
+    hr_trust = (hr_trust or "").strip()
+    name = (name or "").strip()
+    if not hr_trust or not name:
+        return None
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_hr_cohorts_tables(conn)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            """
+            SELECT c.id, c.hr_trust, c.name, c.created_at, c.created_by_user_id,
+                   c.welcome_message_template,
+                   (SELECT COUNT(*) FROM hr_cohort_members m WHERE m.cohort_id = c.id) AS member_count
+            FROM hr_cohorts c
+            WHERE LOWER(TRIM(c.hr_trust)) = LOWER(TRIM(?))
+              AND LOWER(TRIM(c.name)) = LOWER(TRIM(?))
+            LIMIT 1
+            """,
+            (hr_trust, name),
+        ).fetchone()
+    if not row:
+        return None
+    return _cohort_row_dict(row)
+
+
+def ensure_default_cohort(hr_trust: str, created_by_user_id: int) -> int:
+    """Ensure each trust has a default Ad-Hoc cohort for one-off provisioning."""
+    existing = cohort_get_by_name(hr_trust, DEFAULT_COHORT_NAME)
+    if existing:
+        return int(existing["id"])
+    return cohort_create(hr_trust, DEFAULT_COHORT_NAME, int(created_by_user_id))
+
+
+def _ensure_default_cohorts_for_premium_hr(conn: sqlite3.Connection) -> None:
+    """Backfill default Ad-Hoc cohort for every trust with a premium HR account."""
+    _ensure_hr_cohorts_tables(conn)
+    _ensure_users_premium_column(conn)
+    conn.execute(
+        """UPDATE hr_cohorts SET name = ?
+           WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) AND TRIM(name) != ?""",
+        (DEFAULT_COHORT_NAME, DEFAULT_COHORT_NAME, DEFAULT_COHORT_NAME),
+    )
+    rows = conn.execute(
+        """
+        SELECT MIN(u.id) AS user_id, TRIM(u.current_trust) AS trust
+        FROM users u
+        WHERE u.premium = 1 AND TRIM(COALESCE(u.current_trust, '')) != ''
+        GROUP BY LOWER(TRIM(u.current_trust))
+        """
+    ).fetchall()
+    now = datetime.utcnow().isoformat()
+    for row in rows:
+        trust = (row[1] or "").strip()
+        user_id = int(row[0])
+        if not trust:
+            continue
+        exists = conn.execute(
+            """
+            SELECT id FROM hr_cohorts
+            WHERE LOWER(TRIM(hr_trust)) = LOWER(TRIM(?))
+              AND LOWER(TRIM(name)) = LOWER(TRIM(?))
+            LIMIT 1
+            """,
+            (trust, DEFAULT_COHORT_NAME),
+        ).fetchone()
+        if exists:
+            continue
+        conn.execute(
+            """INSERT INTO hr_cohorts
+               (hr_trust, name, created_at, created_by_user_id, welcome_message_template)
+               VALUES (?, ?, ?, ?, NULL)""",
+            (trust, DEFAULT_COHORT_NAME, now, user_id),
+        )
+
+
 def cohort_create(
     hr_trust: str,
     name: str,
@@ -3001,6 +3082,7 @@ def _cohort_row_dict(row: sqlite3.Row) -> dict:
         "welcome_message_template": row["welcome_message_template"]
         if "welcome_message_template" in keys
         else None,
+        "is_default": is_default_cohort_name(row["name"]),
     }
 
 
@@ -3033,9 +3115,10 @@ def cohort_list_for_trust(hr_trust: str) -> list[dict]:
                    (SELECT COUNT(*) FROM hr_cohort_members m WHERE m.cohort_id = c.id) AS member_count
             FROM hr_cohorts c
             WHERE LOWER(TRIM(c.hr_trust)) = LOWER(TRIM(?))
-            ORDER BY c.created_at DESC
+            ORDER BY CASE WHEN LOWER(TRIM(c.name)) = LOWER(?) THEN 0 ELSE 1 END,
+                     c.created_at DESC
             """,
-            (hr_trust,),
+            (hr_trust, DEFAULT_COHORT_NAME),
         ).fetchall()
     return [_cohort_row_dict(r) for r in rows]
 
@@ -3080,7 +3163,10 @@ def cohort_get(cohort_id: int, hr_trust: str) -> Optional[dict]:
 
 def cohort_delete(cohort_id: int, hr_trust: str) -> bool:
     """Remove a cohort and its membership rows (clinician accounts are kept)."""
-    if not cohort_get(cohort_id, hr_trust):
+    cohort = cohort_get(cohort_id, hr_trust)
+    if not cohort:
+        return False
+    if is_default_cohort_name(cohort.get("name")):
         return False
     with sqlite3.connect(DB_PATH) as conn:
         _ensure_hr_cohorts_tables(conn)
