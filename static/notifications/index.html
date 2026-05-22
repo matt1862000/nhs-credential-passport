@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="application-name" content="DocPass">
+  <meta name="theme-color" content="#005eb8">
+  <title>Alerts &mdash; DocPass</title>
+  <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
+  <style>
+    .alerts-wrap { max-width: 42rem; }
+    .alerts-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0 0 1rem 0; align-items: center; }
+    .alerts-list { list-style: none; margin: 0; padding: 0; }
+    .alerts-item {
+      background: #fff;
+      border: 1px solid var(--nhsuk-border);
+      border-radius: 6px;
+      padding: 1rem 1.1rem;
+      margin-bottom: 0.65rem;
+    }
+    .alerts-item--unread { border-left: 4px solid var(--nhsuk-link); }
+    .alerts-item__head { display: flex; justify-content: space-between; gap: 0.75rem; align-items: flex-start; }
+    .alerts-item__title { font-weight: 700; margin: 0; font-size: 1rem; }
+    .alerts-item__time { font-size: 0.8125rem; color: var(--nhsuk-secondary-text); white-space: nowrap; }
+    .alerts-item__body { margin: 0.45rem 0 0 0; font-size: 0.9375rem; line-height: 1.45; color: var(--nhsuk-text); }
+    .alerts-item__link { margin-top: 0.65rem; font-size: 0.9375rem; font-weight: 600; }
+    .alerts-empty { color: var(--nhsuk-secondary-text); padding: 1rem 0; }
+  </style>
+</head>
+<body>
+  <header class="nhsuk-header" role="banner">
+    <div class="nhsuk-header__container">
+      <div class="nhsuk-header__service">
+        <a class="nhsuk-header__service-logo nhsuk-header__service-logo--docpass" href="/static/dashboard/" aria-label="Dashboard">
+          <img class="docpass-header-logo" src="/static/shared/docpass-logo.png?v=20260519-1" alt="DocPass" width="420" height="146">
+        </a>
+      </div>
+      <nav class="nhsuk-topnav" aria-label="Account">
+        <div class="nhsuk-topnav__account" id="navAccount">
+          <span class="nhsuk-topnav__name" id="navUserName">&nbsp;</span>
+        </div>
+        <div class="nhsuk-menu">
+          <button type="button" id="btnMenu" aria-haspopup="true" aria-expanded="false" aria-controls="menuPanel">Menu</button>
+          <div class="nhsuk-menu__panel" id="menuPanel" role="menu" hidden>
+            <a href="/static/dashboard/" role="menuitem">Dashboard</a>
+            <a href="/static/profile/" role="menuitem">Profile</a>
+            <button type="button" id="btnSignOut" role="menuitem">Sign out</button>
+          </div>
+        </div>
+      </nav>
+    </div>
+  </header>
+
+  <main class="nhsuk-main alerts-wrap" id="maincontent" role="main">
+    <h1 class="nhsuk-page-heading">Alerts</h1>
+    <p class="nhsuk-lead">Updates about HR verification and training recorded on your behalf.</p>
+    <div class="alerts-actions">
+      <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnMarkAllRead" hidden>Mark all as read</button>
+      <a href="/static/dashboard/" class="nhsuk-button nhsuk-button--secondary">Dashboard</a>
+    </div>
+    <ul class="alerts-list" id="alertsList" aria-live="polite"></ul>
+    <p class="alerts-empty" id="alertsEmpty" hidden>No alerts yet.</p>
+  </main>
+
+  <script src="/static/shared/auth.js"></script>
+  <script src="/static/shared/nav-account.js?v=20260527-1"></script>
+  <script>
+    (function () {
+      function esc(s) {
+        var d = document.createElement('div');
+        d.textContent = s == null ? '' : String(s);
+        return d.innerHTML;
+      }
+      function fmtTime(iso) {
+        if (!iso) return '';
+        try {
+          var d = new Date(iso);
+          if (isNaN(d.getTime())) return '';
+          return d.toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+        } catch (e) {
+          return '';
+        }
+      }
+      async function load() {
+        var list = document.getElementById('alertsList');
+        var empty = document.getElementById('alertsEmpty');
+        var markAll = document.getElementById('btnMarkAllRead');
+        list.innerHTML = '<li class="alerts-empty">Loading…</li>';
+        try {
+          var data = await fetch('/api/me/notifications?limit=80', { credentials: 'include' }).then(function (r) {
+            if (!r.ok) throw new Error('Could not load alerts');
+            return r.json();
+          });
+          var items = data.items || [];
+          if (window.NHSNavAccount && NHSNavAccount.refreshAlertsBadge) {
+            await NHSNavAccount.refreshAlertsBadge();
+          }
+          if (!items.length) {
+            list.innerHTML = '';
+            empty.hidden = false;
+            if (markAll) markAll.hidden = true;
+            return;
+          }
+          empty.hidden = true;
+          if (markAll) markAll.hidden = !items.some(function (x) { return x.unread; });
+          list.innerHTML = items.map(function (it) {
+            var href = it.link_path || '/static/staff/';
+            return (
+              '<li class="alerts-item' + (it.unread ? ' alerts-item--unread' : '') + '" data-id="' + esc(String(it.id)) + '">' +
+              '<div class="alerts-item__head">' +
+              '<p class="alerts-item__title">' + esc(it.title) + '</p>' +
+              '<span class="alerts-item__time">' + esc(fmtTime(it.created_at)) + '</span>' +
+              '</div>' +
+              '<p class="alerts-item__body">' + esc(it.body) + '</p>' +
+              '<a class="alerts-item__link" href="' + esc(href) + '">View training</a>' +
+              '</li>'
+            );
+          }).join('');
+          list.querySelectorAll('.alerts-item__link').forEach(function (a) {
+            a.addEventListener('click', function () {
+              var li = a.closest('.alerts-item');
+              var id = li && li.getAttribute('data-id');
+              if (id) {
+                fetch('/api/me/notifications/' + encodeURIComponent(id) + '/read', {
+                  method: 'POST',
+                  credentials: 'include',
+                }).catch(function () {});
+              }
+            });
+          });
+        } catch (err) {
+          list.innerHTML = '<li class="alerts-empty">' + esc(err.message || err) + '</li>';
+        }
+      }
+      document.getElementById('btnMarkAllRead').addEventListener('click', async function () {
+        await fetch('/api/me/notifications/read-all', { method: 'POST', credentials: 'include' });
+        if (window.NHSNavAccount && NHSNavAccount.refreshAlertsBadge) {
+          await NHSNavAccount.refreshAlertsBadge();
+        }
+        await load();
+      });
+      (async function () {
+        await NHSAuth.refresh();
+        if (!NHSAuth.user) {
+          window.location.href = '/static/auth/';
+          return;
+        }
+        if (window.NHSNavAccount) await NHSNavAccount.refresh();
+        await load();
+      })();
+    })();
+  </script>
+</body>
+</html>

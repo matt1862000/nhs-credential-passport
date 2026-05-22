@@ -8,7 +8,7 @@
 
   <title>Verify shared training &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
-  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260526-3">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260528-1">
   <link rel="stylesheet" href="/static/shared/training-add-form.css?v=20260526-2">
 
 </head>
@@ -58,6 +58,23 @@
         <button type="button" role="tab" aria-selected="true" class="active" id="tab-inbox-new" data-tab="new">Needs action</button>
         <button type="button" role="tab" aria-selected="false" id="tab-inbox-arch" data-tab="archived">Completed</button>
       </div>
+      <div class="hr-inbox-filters" id="inboxFilters">
+        <div class="nhsuk-form-group">
+          <label class="nhsuk-label" for="inboxFilterModule">Module</label>
+          <select class="nhsuk-select" id="inboxFilterModule" aria-label="Filter inbox by module">
+            <option value="">All modules</option>
+          </select>
+        </div>
+        <div class="nhsuk-form-group">
+          <label class="nhsuk-label" for="inboxFilterStatus">Record status</label>
+          <select class="nhsuk-select" id="inboxFilterStatus" aria-label="Filter inbox by record status">
+            <option value="">Any status</option>
+            <option value="pending">Has pending verification</option>
+            <option value="declined">Has declined records</option>
+            <option value="no_pending">No pending (decided only)</option>
+          </select>
+        </div>
+      </div>
       <div class="hr-table-wrap">
         <table class="hr-table" aria-label="Shared training sets">
           <thead>
@@ -83,6 +100,23 @@
       <div class="hr-segment" role="tablist" aria-label="Filter records in this set">
         <button type="button" role="tab" aria-selected="true" class="active" id="tab-items-new" data-tab="new">Awaiting decision</button>
         <button type="button" role="tab" aria-selected="false" id="tab-items-arch" data-tab="archived">Decided</button>
+      </div>
+      <div class="hr-inbox-filters" id="itemsFilters">
+        <div class="nhsuk-form-group">
+          <label class="nhsuk-label" for="itemsFilterModule">Module</label>
+          <select class="nhsuk-select" id="itemsFilterModule" aria-label="Filter records by module">
+            <option value="">All modules</option>
+          </select>
+        </div>
+        <div class="nhsuk-form-group">
+          <label class="nhsuk-label" for="itemsFilterStatus">Status</label>
+          <select class="nhsuk-select" id="itemsFilterStatus" aria-label="Filter records by status">
+            <option value="">Any</option>
+            <option value="PENDING">Pending</option>
+            <option value="VERIFIED">Verified</option>
+            <option value="DECLINED">Declined</option>
+          </select>
+        </div>
       </div>
       <div class="hr-table-wrap">
         <table class="hr-table" aria-label="Shared training records">
@@ -112,7 +146,7 @@
   <script src="/static/shared/auth.js"></script>
   <script src="/static/shared/nav-account.js?v=20260522-1"></script>
   <script>window.__HR_PAGE__ = 'inbox';</script>
-  <script src="/static/hr/hr-app.js?v=20260527-1"></script>
+  <script src="/static/hr/hr-app.js?v=20260528-1"></script>
 </body>
 </html>
 

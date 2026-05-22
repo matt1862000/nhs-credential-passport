@@ -15,7 +15,7 @@ import bcrypt
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
-from . import crypto, db, session_auth
+from . import compliance_snapshot, crypto, db, session_auth
 from .credential_service import (
     completion_dedupe_key,
     get_verification_url_base,
@@ -580,6 +580,20 @@ def _hr_commit_training_for_clinician(
         module_name=module_name,
         expiry_date=ed.isoformat(),
     )
+    _notify_clinician_hr_training(
+        doc_id,
+        kind="hr_issued",
+        module_name=module_name,
+        trust_name=trust,
+    )
+    _audit_hr_action(
+        hr,
+        "hr_issue_training",
+        doctor_user_id=doc_id,
+        credential_id=cred_id,
+        detail=module_name,
+        meta={"roster_line": roster_line, "expiry_date": ed.isoformat()},
+    )
     return (
         HrBulkTrainingRow(
             roster_line=roster_line,
@@ -987,6 +1001,71 @@ def _hr_trust(hr_user: dict) -> Optional[str]:
     """Normalised current_trust of an HR user, used for trust-scoping inbox queries."""
     t = (hr_user.get("current_trust") or "").strip().lower()
     return t or None
+
+
+def _notify_clinician_hr_training(
+    doctor_user_id: int,
+    *,
+    kind: str,
+    module_name: str,
+    trust_name: str,
+    decline_reason: Optional[str] = None,
+) -> None:
+    mod = (module_name or "Training").strip() or "Training"
+    trust = (trust_name or "HR").strip() or "HR"
+    titles = {
+        "hr_verified": "Training verified",
+        "hr_declined": "Training declined",
+        "hr_unverified": "Verification reverted",
+        "hr_issued": "Training recorded by HR",
+    }
+    title = titles.get(kind, "Training update")
+    if kind == "hr_verified":
+        body = f"{mod} was verified by HR at {trust}."
+        link = "/static/staff/"
+    elif kind == "hr_declined":
+        reason = (decline_reason or "").strip()
+        body = f"{mod} was declined by HR at {trust}."
+        if reason:
+            body += f" Reason: {reason}"
+        link = "/static/staff/"
+    elif kind == "hr_unverified":
+        body = f"HR at {trust} reverted verification for {mod}. It is awaiting review again."
+        link = "/static/staff/"
+    else:
+        body = f"{mod} was recorded by HR at {trust}."
+        link = "/static/staff/"
+    db.notification_create(
+        int(doctor_user_id),
+        kind=kind,
+        title=title,
+        body=body,
+        link_path=link,
+        meta={"module_name": mod, "trust_name": trust},
+    )
+
+
+def _audit_hr_action(
+    hr: dict,
+    action: str,
+    *,
+    doctor_user_id: Optional[int] = None,
+    credential_id: Optional[str] = None,
+    session_id: Optional[int] = None,
+    detail: Optional[str] = None,
+    meta: Optional[dict] = None,
+) -> None:
+    trust = (hr.get("current_trust") or "").strip()
+    db.hr_audit_log_append(
+        int(hr["id"]),
+        action,
+        trust_name=trust,
+        doctor_user_id=doctor_user_id,
+        credential_id=credential_id,
+        session_id=session_id,
+        detail=detail,
+        meta=meta,
+    )
 
 
 def _assert_same_trust(hr_user: dict, session: dict) -> None:
@@ -1826,9 +1905,29 @@ def hr_share_item_verify(request: Request, session_id: int, credential_id: str):
             detail="This is a reference-only pack (already verified elsewhere). No further verification is required.",
         )
     # Ensure item exists in session
-    if not any(it.get("credential_id") == credential_id for it in (s.get("items") or [])):
+    item = next(
+        (it for it in (s.get("items") or []) if it.get("credential_id") == credential_id),
+        None,
+    )
+    if not item:
         raise HTTPException(status_code=404, detail="Item not found in share")
     db.share_item_set_decision(int(session_id), str(credential_id), int(hr["id"]), status="VERIFIED")
+    trust_label = (hr.get("current_trust") or s.get("target_trust") or "").strip()
+    mod = (item.get("module_name") or credential_id or "Training").strip()
+    _notify_clinician_hr_training(
+        int(s["doctor_user_id"]),
+        kind="hr_verified",
+        module_name=mod,
+        trust_name=trust_label,
+    )
+    _audit_hr_action(
+        hr,
+        "verify",
+        doctor_user_id=int(s["doctor_user_id"]),
+        credential_id=credential_id,
+        session_id=int(session_id),
+        detail=mod,
+    )
     return {"ok": True}
 
 
@@ -1855,7 +1954,29 @@ async def hr_share_item_decline(request: Request, session_id: int, credential_id
         reason = str(body.get("reason") or "").strip()
     if not reason:
         raise HTTPException(status_code=400, detail="Decline reason required")
+    item = next(
+        (it for it in (s.get("items") or []) if it.get("credential_id") == credential_id),
+        None,
+    )
     db.share_item_set_decision(int(session_id), str(credential_id), int(hr["id"]), status="DECLINED", decline_reason=reason)
+    trust_label = (hr.get("current_trust") or s.get("target_trust") or "").strip()
+    mod = ((item or {}).get("module_name") or credential_id or "Training").strip()
+    _notify_clinician_hr_training(
+        int(s["doctor_user_id"]),
+        kind="hr_declined",
+        module_name=mod,
+        trust_name=trust_label,
+        decline_reason=reason,
+    )
+    _audit_hr_action(
+        hr,
+        "decline",
+        doctor_user_id=int(s["doctor_user_id"]),
+        credential_id=credential_id,
+        session_id=int(session_id),
+        detail=reason,
+        meta={"module_name": mod},
+    )
     return {"ok": True}
 
 
@@ -1881,6 +2002,22 @@ def hr_share_item_unverify(request: Request, session_id: int, credential_id: str
     if str(item.get("status") or "").upper() != "VERIFIED":
         raise HTTPException(status_code=400, detail="Only verified records can be unverified.")
     db.share_item_set_decision(int(session_id), str(credential_id), int(hr["id"]), status="PENDING")
+    trust_label = (hr.get("current_trust") or s.get("target_trust") or "").strip()
+    mod = (item.get("module_name") or credential_id or "Training").strip()
+    _notify_clinician_hr_training(
+        int(s["doctor_user_id"]),
+        kind="hr_unverified",
+        module_name=mod,
+        trust_name=trust_label,
+    )
+    _audit_hr_action(
+        hr,
+        "unverify",
+        doctor_user_id=int(s["doctor_user_id"]),
+        credential_id=credential_id,
+        session_id=int(session_id),
+        detail=mod,
+    )
     return {"ok": True}
 
 
@@ -1901,7 +2038,32 @@ def hr_doctor_credential_unverify(request: Request, doctor_user_id: int, credent
                 detail="This clinician has not permitted your trust to view or update their records.",
             )
     cid = str(credential_id).strip()
+    mod = cid
+    wallet = []
+    try:
+        wallet = json.loads(db.user_wallet_get(int(doctor_user_id)))
+    except Exception:
+        wallet = []
+    if isinstance(wallet, list):
+        for c in wallet:
+            if isinstance(c, dict) and str(c.get("credential_id")) == cid:
+                mod = (c.get("module_name") or cid).strip()
+                break
     if db.hr_attestation_delete(int(doctor_user_id), cid, trust):
+        _notify_clinician_hr_training(
+            int(doctor_user_id),
+            kind="hr_unverified",
+            module_name=mod,
+            trust_name=trust,
+        )
+        _audit_hr_action(
+            hr,
+            "unverify",
+            doctor_user_id=int(doctor_user_id),
+            credential_id=cid,
+            detail=mod,
+            meta={"source": "hr_attestation"},
+        )
         return {"ok": True, "source": "hr_attestation"}
     found = db.share_item_find_verified_for_trust(int(doctor_user_id), cid, trust)
     if found:
@@ -1911,8 +2073,397 @@ def hr_doctor_credential_unverify(request: Request, doctor_user_id: int, credent
                 detail="This is a reference-only pack (already verified elsewhere). It cannot be changed here.",
             )
         db.share_item_set_decision(int(found["session_id"]), cid, int(hr["id"]), status="PENDING")
+        _notify_clinician_hr_training(
+            int(doctor_user_id),
+            kind="hr_unverified",
+            module_name=mod,
+            trust_name=trust,
+        )
+        _audit_hr_action(
+            hr,
+            "unverify",
+            doctor_user_id=int(doctor_user_id),
+            credential_id=cid,
+            session_id=int(found["session_id"]),
+            detail=mod,
+            meta={"source": "share"},
+        )
         return {"ok": True, "source": "share", "session_id": found["session_id"]}
     raise HTTPException(status_code=404, detail="No verified record found for this clinician at your trust.")
+
+
+# ── Phase 0: notifications, audit, compliance snapshots ─────────────────────
+
+@router.get("/me/notifications")
+def me_notifications_list(request: Request, limit: int = 50, unread_only: bool = False):
+    uid = require_user_id(request)
+    return {
+        "items": db.notifications_list(uid, limit=limit, unread_only=unread_only),
+        "unread_count": db.notifications_unread_count(uid),
+    }
+
+
+@router.get("/me/notifications/unread-count")
+def me_notifications_unread_count(request: Request):
+    uid = require_user_id(request)
+    return {"count": db.notifications_unread_count(uid)}
+
+
+@router.post("/me/notifications/{notification_id}/read")
+def me_notification_mark_read(request: Request, notification_id: int):
+    uid = require_user_id(request)
+    if not db.notification_mark_read(int(notification_id), uid):
+        raise HTTPException(status_code=404, detail="Notification not found")
+    return {"ok": True, "unread_count": db.notifications_unread_count(uid)}
+
+
+@router.post("/me/notifications/read-all")
+def me_notifications_read_all(request: Request):
+    uid = require_user_id(request)
+    n = db.notifications_mark_all_read(uid)
+    return {"ok": True, "marked": n, "unread_count": 0}
+
+
+@router.get("/me/compliance-snapshot")
+def me_compliance_snapshot(request: Request):
+    uid = require_user_id(request)
+    u = db.user_get_by_id(uid)
+    if not u:
+        raise HTTPException(status_code=401, detail="Not signed in")
+    trust = (u.get("current_trust") or "").strip()
+    if not trust:
+        return {"snapshot": None, "message": "Set your current trust in Profile to see mandatory requirements."}
+    _try_seed_mandatory_from_pack(trust)
+    return {"snapshot": compliance_snapshot.doctor_compliance_snapshot(uid, trust)}
+
+
+@router.get("/hr/audit-log")
+def hr_audit_log(request: Request, limit: int = 100, offset: int = 0, action: Optional[str] = None):
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    return {
+        "items": db.hr_audit_log_list(trust, limit=limit, offset=offset, action=action or None),
+        "trust": trust,
+    }
+
+
+@router.get("/hr/compliance/expiring")
+def hr_compliance_expiring(
+    request: Request,
+    window_days: int = 90,
+    cohort_id: Optional[int] = None,
+):
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    return compliance_snapshot.trust_expiring_report(
+        trust, window_days=window_days, cohort_id=cohort_id
+    )
+
+
+@router.get("/hr/cohorts/{cohort_id}/compliance-snapshot")
+def hr_cohort_compliance_snapshot(request: Request, cohort_id: int):
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    snap = compliance_snapshot.cohort_compliance_snapshot(int(cohort_id), trust)
+    if not snap:
+        raise HTTPException(status_code=404, detail="Cohort not found")
+    return {"snapshot": snap}
+
+
+@router.get("/hr/cohorts/{cohort_id}/compliance-export")
+def hr_cohort_compliance_export(request: Request, cohort_id: int):
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    result = compliance_snapshot.cohort_compliance_csv(int(cohort_id), trust)
+    if not result:
+        raise HTTPException(status_code=404, detail="Cohort not found")
+    filename, csv_text = result
+    return Response(
+        content=csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ── Phase 3: trust move, bulk templates, verifier links, welcome templates ───
+
+
+@router.get("/me/trust-move/candidates")
+def me_trust_move_candidates(request: Request):
+    """HR-verified wallet items eligible for a portfolio reference pack."""
+    uid = require_user_id(request)
+    u = db.user_get_by_id(uid)
+    if not u:
+        raise HTTPException(status_code=401, detail="Not signed in")
+    items = db.doctor_verified_bundle_items(uid)
+    return {
+        "current_trust": (u.get("current_trust") or "").strip() or None,
+        "items": items,
+    }
+
+
+@router.post("/me/trust-move/complete")
+async def me_trust_move_complete(request: Request):
+    """
+    Update current trust, create portfolio share for selected verified credentials.
+    """
+    uid = require_user_id(request)
+    u = db.user_get_by_id(uid)
+    if not u:
+        raise HTTPException(status_code=401, detail="Not signed in")
+    require_profile_complete(u)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Expected JSON object")
+    new_trust = (body.get("new_trust") or "").strip()
+    if not new_trust:
+        raise HTTPException(status_code=400, detail="new_trust is required")
+    ids = body.get("portfolio_credential_ids") or []
+    if not isinstance(ids, list):
+        raise HTTPException(status_code=400, detail="portfolio_credential_ids must be a list")
+    ids = [str(x).strip() for x in ids if str(x).strip()]
+    if body.get("update_profile", True):
+        db.user_set_profile(
+            uid,
+            (u.get("display_name") or "").strip() or None,
+            (u.get("gmc_number") or "").strip() or None,
+            new_trust,
+        )
+    portfolio_session = None
+    share_url = None
+    if ids:
+        wallet_raw = db.user_wallet_get(uid)
+        try:
+            wallet = json.loads(wallet_raw)
+        except Exception:
+            wallet = []
+        if not isinstance(wallet, list):
+            wallet = []
+        wallet_by_id = {
+            str(c.get("credential_id")): c
+            for c in wallet
+            if isinstance(c, dict) and c.get("credential_id")
+        }
+        vmap = db.doctor_verified_map(uid)
+        items = []
+        for cid in ids:
+            if str(vmap.get(cid, {}).get("status") or "").upper() != "VERIFIED":
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Credential {cid} is not HR-verified and cannot go in a reference pack.",
+                )
+            w = wallet_by_id.get(cid) or {}
+            issuing = _issuing_trust_from_wallet_entry(w)
+            entry = {
+                "credential_id": cid,
+                "module_name": w.get("module_name"),
+                "expiry_date": w.get("expiry_date"),
+                "certificate_base64": w.get("certificate_base64"),
+                "certificate_filename": w.get("certificate_filename"),
+                "issuing_trust_name": issuing,
+            }
+            prior = db.share_portfolio_prior_decision_at(uid, cid)
+            entry["portfolio_verified_at"] = prior or datetime.utcnow().isoformat()
+            entry["verified_by_trust_name"] = db.share_portfolio_prior_verifier_trust(uid, cid)
+            items.append(entry)
+        created = db.share_session_create(
+            doctor_user_id=uid,
+            doctor_email=u.get("email") or "",
+            items=items,
+            share_kind="portfolio",
+            target_trust=new_trust,
+        )
+        portfolio_session = created.get("session_id")
+        base = _public_app_base(request)
+        share_url = f"{base}/static/hr/?session={portfolio_session}"
+    snap = None
+    try:
+        from . import compliance_snapshot
+
+        snap = compliance_snapshot.doctor_compliance_snapshot(uid, new_trust)
+    except Exception:
+        snap = None
+    return {
+        "ok": True,
+        "new_trust": new_trust,
+        "portfolio_session_id": portfolio_session,
+        "share_url": share_url,
+        "compliance_at_new_trust": snap,
+    }
+
+
+@router.get("/public/verifier-link/{token}")
+def public_verifier_link_bundle(request: Request, token: str):
+    """Read-only verified training bundle for staffing (no login)."""
+    row = db.verifier_link_get_by_token(token)
+    if not row:
+        raise HTTPException(status_code=404, detail="Link not found")
+    payload = db.verifier_link_bundle_payload(row)
+    if not payload:
+        raise HTTPException(status_code=410, detail="This link has expired or been revoked")
+    return payload
+
+
+@router.get("/hr/verifier-links")
+def hr_verifier_links_list_api(request: Request, limit: int = 50):
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    return {"items": db.verifier_links_list(trust, limit=limit), "trust": trust}
+
+
+@router.post("/hr/verifier-links")
+async def hr_verifier_links_create(request: Request):
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Expected JSON object")
+    doctor_user_id = body.get("doctor_user_id")
+    cohort_id = body.get("cohort_id")
+    try:
+        link = db.verifier_link_create(
+            hr_trust=trust,
+            created_by_user_id=int(hr["id"]),
+            doctor_user_id=int(doctor_user_id) if doctor_user_id else None,
+            cohort_id=int(cohort_id) if cohort_id else None,
+            label=(body.get("label") or "").strip() or None,
+            expires_days=int(body.get("expires_days") or 14),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    base = _public_app_base(request)
+    url = f"{base}/static/verifier/bundle.html?token={link['token']}"
+    _audit_hr_action(
+        hr,
+        "verifier_link_created",
+        doctor_user_id=int(doctor_user_id) if doctor_user_id else None,
+        detail=link.get("label") or url,
+        meta={"link_id": link.get("id"), "cohort_id": cohort_id},
+    )
+    return {"ok": True, "link": link, "url": url}
+
+
+@router.post("/hr/verifier-links/{link_id}/revoke")
+def hr_verifier_link_revoke(request: Request, link_id: int):
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    if not db.verifier_link_revoke(int(link_id), trust):
+        raise HTTPException(status_code=404, detail="Link not found")
+    return {"ok": True}
+
+
+@router.get("/hr/bulk-templates")
+def hr_bulk_templates_list_api(request: Request):
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    return {"templates": db.hr_bulk_templates_list(trust), "trust": trust}
+
+
+@router.post("/hr/bulk-templates")
+async def hr_bulk_templates_save_api(request: Request):
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Expected JSON object")
+    name = (body.get("name") or "").strip()
+    payload = body.get("payload")
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="payload object required")
+    tid = body.get("id")
+    tmpl = db.hr_bulk_template_save(
+        trust,
+        int(hr["id"]),
+        name,
+        payload,
+        template_id=int(tid) if tid else None,
+    )
+    return {"ok": True, "template": tmpl}
+
+
+@router.delete("/hr/bulk-templates/{template_id}")
+def hr_bulk_templates_delete_api(request: Request, template_id: int):
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    if not db.hr_bulk_template_delete(int(template_id), trust):
+        raise HTTPException(status_code=404, detail="Template not found")
+    return {"ok": True}
+
+
+@router.get("/hr/welcome-templates")
+def hr_welcome_templates_list_api(request: Request):
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    return {"templates": db.hr_welcome_templates_list(trust), "trust": trust}
+
+
+@router.post("/hr/welcome-templates")
+async def hr_welcome_templates_save_api(request: Request):
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Expected JSON object")
+    tmpl = db.hr_welcome_template_save(
+        trust,
+        (body.get("name") or "").strip() or "Template",
+        (body.get("body") or "").strip(),
+        topic_id=body.get("topic_id"),
+        template_id=int(body["id"]) if body.get("id") else None,
+    )
+    return {"ok": True, "template": tmpl}
+
+
+@router.delete("/hr/welcome-templates/{template_id}")
+def hr_welcome_templates_delete_api(request: Request, template_id: int):
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    if not db.hr_welcome_template_delete(int(template_id), trust):
+        raise HTTPException(status_code=404, detail="Template not found")
+    return {"ok": True}
+
+
+@router.get("/hr/cohorts/{cohort_id}/welcome-template-suggestions")
+def hr_cohort_welcome_template_suggestions(request: Request, cohort_id: int):
+    """Suggest welcome templates based on mandatory gaps in the cohort."""
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    snap = compliance_snapshot.cohort_compliance_snapshot(int(cohort_id), trust)
+    if not snap:
+        raise HTTPException(status_code=404, detail="Cohort not found")
+    gap_topics = [
+        t for t in (snap.get("topics") or [])
+        if int(t.get("gap") or 0) > 0 or int(t.get("expiring") or 0) > 0
+    ]
+    all_tmpl = db.hr_welcome_templates_list(trust)
+    suggested = []
+    for gt in gap_topics:
+        tname = (gt.get("topic_name") or "").strip().lower()
+        tid = gt.get("topic_id")
+        for tmpl in all_tmpl:
+            if tmpl.get("topic_id") and tid and int(tmpl["topic_id"]) == int(tid):
+                suggested.append({**tmpl, "reason": "Matches gap topic: " + (gt.get("topic_name") or "")})
+                break
+            elif tmpl.get("topic_name") and tname and tname in (tmpl.get("name") or "").lower():
+                suggested.append({**tmpl, "reason": "Related to: " + (gt.get("topic_name") or "")})
+                break
+    return {
+        "gap_topics": gap_topics,
+        "suggested_templates": suggested,
+        "all_templates": all_tmpl,
+    }
 
 
 # ── Mandatory topics ──────────────────────────────────────────────────────────
@@ -3053,6 +3604,59 @@ async def hr_cohorts_welcome_skip(request: Request, cohort_id: int):
     return {"skipped": skipped, "doctor_user_ids": user_ids}
 
 
+@router.get("/hr/cohorts/{cohort_id}/pending-verification")
+def hr_cohort_pending_verification(request: Request, cohort_id: int):
+    """Cohort members who still have training awaiting HR verification at this trust."""
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    if not db.cohort_get(int(cohort_id), trust):
+        raise HTTPException(status_code=404, detail="Cohort not found")
+    members = db.cohort_members_pending_verification(int(cohort_id), trust)
+    return {"members": members, "count": len(members)}
+
+
+async def _cohort_message_payload(request: Request) -> tuple[str, list[tuple[str, str, bytes]], list[int]]:
+    """Parse cohort broadcast body; optional doctor_user_ids limits recipients."""
+    ct = (request.headers.get("content-type") or "").lower()
+    subset: list[int] = []
+    if "multipart/form-data" in ct:
+        form = await request.form()
+        subset = _parse_doctor_user_ids(form.get("doctor_user_ids"))
+        text = str(form.get("body") or "").strip()
+        attachments: list[tuple[str, str, bytes]] = []
+        for uf in form.getlist("files"):
+            if not hasattr(uf, "read"):
+                continue
+            raw = await uf.read()
+            name = (getattr(uf, "filename", None) or "attachment").strip()
+            mime = _hr_evidence_content_type(getattr(uf, "content_type", None), name)
+            if not mime:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unsupported file type for {name}. Use PDF or image (JPEG, PNG, WebP).",
+                )
+            if len(raw) > MAX_MESSAGE_ATTACHMENT_BYTES:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"File too large (max 5 MB): {name}",
+                )
+            attachments.append((name, mime, raw))
+        if len(attachments) > MAX_MESSAGE_ATTACHMENTS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Maximum {MAX_MESSAGE_ATTACHMENTS} attachments per message.",
+            )
+        return text, attachments, subset
+    try:
+        raw = await request.json()
+    except Exception:
+        raw = {}
+    if not isinstance(raw, dict):
+        raw = {}
+    subset = _parse_doctor_user_ids(raw.get("doctor_user_ids"))
+    return str(raw.get("body") or "").strip(), [], subset
+
+
 @router.post("/hr/cohorts/{cohort_id}/message")
 async def hr_cohorts_message(
     request: Request,
@@ -3063,11 +3667,19 @@ async def hr_cohorts_message(
     trust = _hr_trust_required(hr)
     if not db.cohort_get(int(cohort_id), trust):
         raise HTTPException(status_code=404, detail="Cohort not found")
-    text, attachments = await _message_send_payload(request)
+    text, attachments, subset_ids = await _cohort_message_payload(request)
     _require_message_content(text, attachments)
     doctor_ids = db.cohort_member_user_ids(int(cohort_id), trust)
     if not doctor_ids:
         raise HTTPException(status_code=400, detail="Cohort has no members")
+    if subset_ids:
+        member_set = set(doctor_ids)
+        doctor_ids = [d for d in subset_ids if d in member_set]
+        if not doctor_ids:
+            raise HTTPException(
+                status_code=400,
+                detail="No selected recipients are members of this cohort",
+            )
     if len(doctor_ids) > MAX_HR_COHORT_LINES:
         raise HTTPException(status_code=400, detail="Cohort is too large to message in one request")
     if stream:

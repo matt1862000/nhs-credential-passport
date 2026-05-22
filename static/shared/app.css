@@ -154,7 +154,8 @@ a:hover {
   gap: 0.35rem;
   flex-shrink: 0;
 }
-.nhsuk-topnav__verify-wrap {
+.nhsuk-topnav__verify-wrap,
+.nhsuk-topnav__alerts-wrap {
   position: relative;
   display: inline-flex;
   align-items: center;

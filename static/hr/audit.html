@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HR audit log &mdash; DocPass</title>
+  <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260527-1">
+  <style>
+    .audit-wrap { max-width: 56rem; }
+    .audit-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+    .audit-table th, .audit-table td { padding: 0.5rem 0.65rem; border-bottom: 1px solid var(--nhsuk-border); text-align: left; vertical-align: top; }
+    .audit-table th { font-weight: 700; background: #f0f4f5; }
+  </style>
+</head>
+<body>
+  <header class="nhsuk-header" role="banner">
+    <div class="nhsuk-header__container">
+      <div class="nhsuk-header__service">
+        <a class="nhsuk-header__service-logo nhsuk-header__service-logo--docpass" href="/static/dashboard/" aria-label="Dashboard">
+          <img class="docpass-header-logo" src="/static/shared/docpass-logo.png?v=20260519-1" alt="DocPass" width="420" height="146">
+        </a>
+      </div>
+      <nav class="nhsuk-topnav" aria-label="Account">
+        <div class="nhsuk-topnav__account" id="navAccount">
+          <span class="nhsuk-topnav__name" id="navUserName">&nbsp;</span>
+        </div>
+        <div class="nhsuk-menu">
+          <button type="button" id="btnMenu" aria-haspopup="true" aria-expanded="false" aria-controls="menuPanel">Menu</button>
+          <div class="nhsuk-menu__panel" id="menuPanel" role="menu" hidden>
+            <a href="/static/dashboard/" role="menuitem">Dashboard</a>
+            <a href="/static/profile/" role="menuitem">Profile</a>
+            <button type="button" id="btnSignOut" role="menuitem">Sign out</button>
+          </div>
+        </div>
+      </nav>
+    </div>
+  </header>
+
+  <main class="nhsuk-main audit-wrap hr-wrap" role="main">
+    <h1 class="nhsuk-page-heading">HR audit log</h1>
+    <p class="nhsuk-lead">Record of verification and training actions at your trust.</p>
+    <div class="hr-actions" style="margin-bottom:1rem;">
+      <a href="/static/dashboard/" class="nhsuk-button nhsuk-button--secondary">Dashboard</a>
+      <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnExportCsv">Download CSV</button>
+    </div>
+    <div class="nhsuk-form-group" style="max-width:20rem;margin-bottom:1rem;">
+      <label class="nhsuk-label" for="filterAction">Filter by action</label>
+      <select class="nhsuk-select" id="filterAction">
+        <option value="">All actions</option>
+        <option value="verify">verify</option>
+        <option value="decline">decline</option>
+        <option value="unverify">unverify</option>
+        <option value="hr_issue_training">hr_issue_training</option>
+      </select>
+    </div>
+    <div class="hr-table-wrap">
+      <table class="audit-table" aria-label="Audit log">
+        <thead>
+          <tr>
+            <th>When</th>
+            <th>Action</th>
+            <th>HR user</th>
+            <th>Clinician</th>
+            <th>Detail</th>
+          </tr>
+        </thead>
+        <tbody id="auditTbody"></tbody>
+      </table>
+    </div>
+  </main>
+
+  <script src="/static/shared/auth.js"></script>
+  <script src="/static/shared/nav-account.js?v=20260527-1"></script>
+  <script>
+    (function () {
+      var cache = [];
+      function esc(s) {
+        var d = document.createElement('div');
+        d.textContent = s == null ? '' : String(s);
+        return d.innerHTML;
+      }
+      function renderRows(items) {
+        var tbody = document.getElementById('auditTbody');
+        cache = items || [];
+        if (!cache.length) {
+          tbody.innerHTML = '<tr><td colspan="5">No entries yet.</td></tr>';
+          return;
+        }
+        tbody.innerHTML = cache.map(function (row) {
+          return (
+            '<tr>' +
+            '<td>' + esc((row.created_at || '').slice(0, 19).replace('T', ' ')) + '</td>' +
+            '<td>' + esc(row.action) + '</td>' +
+            '<td>' + esc(row.hr_display_name || row.hr_email || row.hr_user_id) + '</td>' +
+            '<td>' + esc(row.doctor_user_id || '—') + (row.credential_id ? '<br><span style="font-size:0.75rem;">' + esc(row.credential_id) + '</span>' : '') + '</td>' +
+            '<td>' + esc(row.detail || '—') + '</td>' +
+            '</tr>'
+          );
+        }).join('');
+      }
+
+      async function load() {
+        var tbody = document.getElementById('auditTbody');
+        tbody.innerHTML = '<tr><td colspan="5">Loading…</td></tr>';
+        var action = document.getElementById('filterAction').value || '';
+        var url = '/api/hr/audit-log?limit=200';
+        if (action) url += '&action=' + encodeURIComponent(action);
+        var data = await fetch(url, { credentials: 'include' }).then(function (r) {
+          if (!r.ok) throw new Error('Could not load audit log');
+          return r.json();
+        });
+        renderRows(data.items || []);
+      }
+
+      document.getElementById('filterAction').addEventListener('change', function () { void load(); });
+      document.getElementById('btnExportCsv').addEventListener('click', function () {
+        var lines = ['when,action,hr_user,doctor_user_id,credential_id,detail'];
+        cache.forEach(function (row) {
+          function q(v) {
+            var s = String(v == null ? '' : v).replace(/"/g, '""');
+            return '"' + s + '"';
+          }
+          lines.push([
+            q(row.created_at),
+            q(row.action),
+            q(row.hr_display_name || row.hr_email),
+            q(row.doctor_user_id),
+            q(row.credential_id),
+            q(row.detail),
+          ].join(','));
+        });
+        var blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'hr-audit-log.csv';
+        a.click();
+        URL.revokeObjectURL(a.href);
+      });
+      (async function () {
+        await NHSAuth.refresh();
+        if (!NHSAuth.user || !NHSAuth.user.premium) {
+          window.location.href = '/static/dashboard/';
+          return;
+        }
+        if (window.NHSNavAccount) await NHSNavAccount.refresh();
+        await load();
+      })();
+    })();
+  </script>
+</body>
+</html>

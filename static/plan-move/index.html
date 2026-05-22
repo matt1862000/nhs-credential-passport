@@ -99,6 +99,12 @@
     .moving-gap-summary { font-size: 1rem; margin: 0 0 1rem 0; padding: 0.75rem 1rem; background: #fff; border: 1px solid var(--nhsuk-border); border-radius: 4px; }
     .moving-muted { color: var(--nhsuk-secondary-text); font-size: 0.9375rem; }
     .moving-footnote { margin-top: 0.6rem; font-size: 0.875rem; }
+    .move-wizard { margin-top: 1.5rem; padding: 1.25rem; background: #fff; border: 1px solid var(--nhsuk-border); border-left: 4px solid var(--nhsuk-link); border-radius: 4px; }
+    .move-wizard-steps { font-size: 0.8125rem; color: var(--nhsuk-secondary-text); margin: 0 0 1rem 0; }
+    .move-wizard-steps .on { font-weight: 700; color: var(--nhsuk-link); }
+    .move-checklist { list-style: none; margin: 0.75rem 0; padding: 0; }
+    .move-checklist li { margin: 0.35rem 0; }
+    .move-wizard-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 1rem; }
     .empty-list-prompt {
       background: #fff; border: 1px solid var(--nhsuk-warn); border-left: 4px solid var(--nhsuk-warn);
       border-radius: 4px; padding: 1rem 1.15rem; margin-bottom: 1.25rem;
@@ -166,6 +172,41 @@
         <p class="moving-trust-hint">From your profile &mdash; <a href="/static/profile/">update in profile</a></p>
       </div>
       <p id="movingError" role="alert"></p>
+    </section>
+
+    <section class="move-wizard" id="moveWizard" aria-labelledby="moveWizardTitle">
+      <h2 id="moveWizardTitle" style="margin:0 0 0.5rem 0;font-size:1.25rem;">Complete your trust move</h2>
+      <p class="moving-muted" style="margin:0;">After you run the checklist above, use this wizard to send a <strong>reference pack</strong> to your new trust and update your profile.</p>
+      <p class="move-wizard-steps" id="moveWizardStepLabel" aria-live="polite">
+        <span class="on" data-mw="1">1. Understand</span> &rarr;
+        <span data-mw="2">2. Select records</span> &rarr;
+        <span data-mw="3">3. Confirm</span> &rarr;
+        <span data-mw="4">4. Done</span>
+      </p>
+      <div id="mwStep1">
+        <p><strong>Reference pack</strong> — training already verified by HR at your old trust. Your new trust can view these for reference; they do not need to verify them again.</p>
+        <p><strong>New verification</strong> — anything still missing for your new trust&rsquo;s mandatory list must be completed and shared for normal HR review.</p>
+      </div>
+      <div id="mwStep2" hidden>
+        <p class="moving-muted">Tick HR-verified records to include in your reference pack:</p>
+        <ul class="move-checklist" id="mwCredList"></ul>
+        <p id="mwCredEmpty" class="moving-muted" hidden>No HR-verified records yet. Share training with HR at your current trust first.</p>
+      </div>
+      <div id="mwStep3" hidden>
+        <p>Your profile <strong>current trust</strong> will be set to the trust you selected as <em>I am joining</em>.</p>
+        <p id="mwConfirmTrust" class="moving-muted"></p>
+      </div>
+      <div id="mwStep4" hidden>
+        <p id="mwDoneMsg" role="status"></p>
+        <p id="mwGapHint" class="moving-muted"></p>
+        <p style="margin-top:0.75rem;"><a class="nhsuk-button nhsuk-button--secondary" href="/static/staff/">My training</a>
+          <a class="nhsuk-button" href="/static/requirements/" style="margin-left:0.5rem;">Trust requirements</a></p>
+      </div>
+      <div class="move-wizard-actions">
+        <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnMwBack" hidden>Back</button>
+        <button type="button" class="nhsuk-button" id="btnMwNext">Start wizard</button>
+      </div>
+      <p id="mwStatus" class="moving-muted" role="status" aria-live="polite"></p>
     </section>
 
     <div id="movingResults" hidden aria-hidden="true">
@@ -328,6 +369,126 @@
       document.addEventListener('keydown', function (e) {
         if (e.key === 'Escape') close();
       });
+    })();
+
+    (function moveWizard() {
+      var step = 0;
+      var candidates = [];
+      function esc(s) {
+        var d = document.createElement('div');
+        d.textContent = s == null ? '' : String(s);
+        return d.innerHTML;
+      }
+      function setStep(n) {
+        step = n;
+        [1, 2, 3, 4].forEach(function (i) {
+          var el = document.getElementById('mwStep' + i);
+          if (el) el.hidden = i !== n;
+        });
+        document.querySelectorAll('[data-mw]').forEach(function (sp) {
+          sp.classList.toggle('on', Number(sp.getAttribute('data-mw')) === n);
+        });
+        var back = document.getElementById('btnMwBack');
+        var next = document.getElementById('btnMwNext');
+        if (back) back.hidden = n <= 1;
+        if (next) {
+          next.textContent = n === 1 ? 'Next' : n === 2 ? 'Next' : n === 3 ? 'Complete move' : 'Done';
+          next.hidden = n >= 4;
+        }
+      }
+      async function loadCandidates() {
+        var r = await fetch('/api/me/trust-move/candidates', { credentials: 'include' });
+        if (!r.ok) throw new Error('Could not load verified training');
+        var data = await r.json();
+        candidates = data.items || [];
+        return data;
+      }
+      function renderCredList() {
+        var ul = document.getElementById('mwCredList');
+        var empty = document.getElementById('mwCredEmpty');
+        if (!ul) return;
+        if (!candidates.length) {
+          ul.innerHTML = '';
+          if (empty) empty.hidden = false;
+          return;
+        }
+        if (empty) empty.hidden = true;
+        ul.innerHTML = candidates.map(function (c) {
+          return '<li><label><input type="checkbox" class="mw-cred-cb" value="' + esc(c.credential_id) + '" checked> '
+            + esc(c.module_name || 'Training') + ' <span class="moving-muted">(expires ' + esc(c.expiry_date || '—') + ')</span></label></li>';
+        }).join('');
+      }
+      document.getElementById('btnMwNext').addEventListener('click', async function () {
+        var status = document.getElementById('mwStatus');
+        var join = (document.getElementById('joinTrustInput') || {}).value || '';
+        if (step === 0) {
+          setStep(1);
+          return;
+        }
+        if (step === 1) {
+          try {
+            if (status) status.textContent = '';
+            await loadCandidates();
+            renderCredList();
+            setStep(2);
+          } catch (e) {
+            if (status) status.textContent = e.message || 'Error';
+          }
+          return;
+        }
+        if (step === 2) {
+          if (!join.trim()) {
+            alert('Choose the trust you are joining (search above) first.');
+            return;
+          }
+          var conf = document.getElementById('mwConfirmTrust');
+          if (conf) conf.textContent = 'New current trust: ' + join.trim();
+          setStep(3);
+          return;
+        }
+        if (step === 3) {
+          var ids = Array.from(document.querySelectorAll('.mw-cred-cb:checked')).map(function (cb) { return cb.value; });
+          if (status) status.textContent = 'Saving…';
+          try {
+            var res = await fetch('/api/me/trust-move/complete', {
+              method: 'POST',
+              credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                new_trust: join.trim(),
+                portfolio_credential_ids: ids,
+                update_profile: true,
+              }),
+            });
+            var data = await res.json();
+            if (!res.ok) throw new Error((data && data.detail) || 'Could not complete move');
+            var msg = document.getElementById('mwDoneMsg');
+            if (msg) {
+              msg.innerHTML = 'Profile updated. '
+                + (data.portfolio_session_id ? 'Reference pack sent to HR at your new trust.' : 'No reference pack was created (none selected).');
+            }
+            var gap = document.getElementById('mwGapHint');
+            var snap = data.compliance_at_new_trust;
+            if (gap && snap && snap.summary) {
+              var s = snap.summary;
+              var gaps = Number(s.gap || 0) + Number(s.expiring || 0);
+              gap.textContent = gaps
+                ? 'At your new trust you still have ' + gaps + ' mandatory topic(s) to address — see Trust requirements.'
+                : 'You appear to meet all mandatory topics at your new trust.';
+            }
+            if (status) status.textContent = '';
+            await NHSAuth.refresh();
+            setStep(4);
+          } catch (e) {
+            if (status) status.textContent = e.message || 'Error';
+          }
+        }
+      });
+      document.getElementById('btnMwBack').addEventListener('click', function () {
+        if (step > 1) setStep(step - 1);
+        else setStep(0);
+      });
+      setStep(0);
     })();
   </script>
 </body>

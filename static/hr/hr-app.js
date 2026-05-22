@@ -92,6 +92,8 @@
             created_at: latest,
             _session_count: sess.length,
             sessions: sess,
+            module_names: mergeModuleNameLists(sess.map(function (x) { return x.module_names; })),
+            pending_module_names: mergeModuleNameLists(sess.map(function (x) { return x.pending_module_names; })),
           };
         }).sort(function (a, b) {
           return String(b.created_at || '').localeCompare(String(a.created_at || ''));
@@ -371,9 +373,126 @@
         syncHrTrustSuggestLastAutoFromDom();
       }
 
+      var LS_INBOX_TAB = 'hr_tab_inbox';
+      var LS_ITEMS_TAB = 'hr_tab_items';
       var inboxTab = 'new';
       var itemsTab = 'new';
+      var inboxFilterModule = '';
+      var inboxFilterStatus = '';
+      var itemsFilterModule = '';
+      var itemsFilterStatus = '';
+      var lastInboxGroups = [];
       var lastSessionPayload = null;
+
+      function mergeModuleNameLists(lists) {
+        var seen = Object.create(null);
+        var out = [];
+        (lists || []).forEach(function (arr) {
+          (arr || []).forEach(function (n) {
+            var k = String(n || '').trim();
+            if (!k || seen[k]) return;
+            seen[k] = true;
+            out.push(k);
+          });
+        });
+        return out.sort(function (a, b) {
+          return a.localeCompare(b, undefined, { sensitivity: 'base' });
+        });
+      }
+
+      function loadStoredTab(key, fallback) {
+        try {
+          var v = localStorage.getItem(key);
+          return v === 'archived' ? 'archived' : v === 'new' ? 'new' : fallback;
+        } catch (e) {
+          return fallback;
+        }
+      }
+
+      function saveStoredTab(key, tab) {
+        try {
+          localStorage.setItem(key, tab === 'archived' ? 'archived' : 'new');
+        } catch (e) { /* ignore */ }
+      }
+
+      function setSegmentTab(containerId, tab) {
+        var root = document.getElementById(containerId);
+        if (!root) return;
+        var wanted = tab === 'archived' ? 'archived' : 'new';
+        Array.from(root.querySelectorAll('button[data-tab]')).forEach(function (x) {
+          var active = x.getAttribute('data-tab') === wanted;
+          x.classList.toggle('active', active);
+          x.setAttribute('aria-selected', active ? 'true' : 'false');
+        });
+      }
+
+      function filterInboxGroups(groups) {
+        return (groups || []).filter(function (g) {
+          if (inboxFilterStatus === 'pending' && !(g.pending_count > 0)) return false;
+          if (inboxFilterStatus === 'declined' && !(g.declined_count > 0)) return false;
+          if (inboxFilterStatus === 'no_pending' && g.pending_count > 0) return false;
+          if (inboxFilterModule) {
+            var names =
+              g.pending_module_names && g.pending_module_names.length
+                ? g.pending_module_names
+                : g.module_names || [];
+            if (names.indexOf(inboxFilterModule) < 0) return false;
+          }
+          return true;
+        });
+      }
+
+      function fillInboxModuleSelect(groups) {
+        var sel = document.getElementById('inboxFilterModule');
+        if (!sel) return;
+        var names = mergeModuleNameLists(
+          (groups || []).map(function (g) {
+            return g.pending_module_names && g.pending_module_names.length
+              ? g.pending_module_names
+              : g.module_names;
+          })
+        );
+        var cur = inboxFilterModule;
+        sel.innerHTML =
+          '<option value="">All modules</option>' +
+          names
+            .map(function (n) {
+              return (
+                '<option value="' +
+                esc(n).replace(/"/g, '&quot;') +
+                '">' +
+                esc(n) +
+                '</option>'
+              );
+            })
+            .join('');
+        if (cur && names.indexOf(cur) >= 0) sel.value = cur;
+      }
+
+      function fillItemsModuleSelect(payload) {
+        var sel = document.getElementById('itemsFilterModule');
+        if (!sel || !payload) return;
+        var names = mergeModuleNameLists(
+          (payload.items || []).map(function (it) {
+            return it.module_name ? [it.module_name] : [];
+          })
+        );
+        var cur = itemsFilterModule;
+        sel.innerHTML =
+          '<option value="">All modules</option>' +
+          names
+            .map(function (n) {
+              return (
+                '<option value="' +
+                esc(n).replace(/"/g, '&quot;') +
+                '">' +
+                esc(n) +
+                '</option>'
+              );
+            })
+            .join('');
+        if (cur && names.indexOf(cur) >= 0) sel.value = cur;
+      }
 
       function closeHrCertModal() {
         var modal = document.getElementById('hrCertModal');
@@ -406,7 +525,7 @@
         modal.hidden = false;
       }
 
-      function wireTabs(containerId, onPick) {
+      function wireTabs(containerId, storageKey, onPick) {
         var root = document.getElementById(containerId);
         if (!root) return;
         root.addEventListener('click', function (e) {
@@ -419,6 +538,7 @@
             x.classList.toggle('active', active);
             x.setAttribute('aria-selected', active ? 'true' : 'false');
           });
+          if (storageKey) saveStoredTab(storageKey, wanted);
           onPick(wanted);
         });
       }
@@ -437,7 +557,9 @@
           if (inboxTab === 'new') return !isPortfolio && hasPending;
           return !isPortfolio && !hasPending;
         });
-        var groups = aggregateDoctorGroups(sessions);
+        lastInboxGroups = aggregateDoctorGroups(sessions);
+        fillInboxModuleSelect(lastInboxGroups);
+        var groups = filterInboxGroups(lastInboxGroups);
         if (summaryEl) {
           if (inboxTab === 'new') {
             if (groups.length === 0) {
@@ -476,7 +598,70 @@
           rows ||
           '<tr><td colspan="4" class="hr-muted">' +
             (inboxTab === 'new' ? 'No sets need action right now.' : 'No completed sets to show.') +
+            (lastInboxGroups.length && groups.length < lastInboxGroups.length
+              ? ' (filters hide ' + (lastInboxGroups.length - groups.length) + ' clinician' +
+                (lastInboxGroups.length - groups.length === 1 ? '' : 's') + '.)'
+              : '') +
             '</td></tr>';
+      }
+
+      function rerenderInboxFromCache() {
+        if (!lastInboxGroups.length) {
+          void loadInbox();
+          return;
+        }
+        var tbody = document.getElementById('sessionsTbody');
+        var summaryEl = document.getElementById('inboxSummary');
+        fillInboxModuleSelect(lastInboxGroups);
+        var groups = filterInboxGroups(lastInboxGroups);
+        if (summaryEl) {
+          if (inboxTab === 'new') {
+            if (groups.length === 0) {
+              summaryEl.innerHTML = lastInboxGroups.length
+                ? 'No clinicians match the current filters.'
+                : 'Nothing waiting — <strong>all caught up</strong> for now.';
+            } else if (groups.length === 1) {
+              summaryEl.innerHTML = '<strong>1</strong> clinician still has records to verify.';
+            } else {
+              summaryEl.innerHTML =
+                '<strong>' + String(groups.length) + '</strong> clinicians still have records to verify.';
+            }
+          } else {
+            summaryEl.innerHTML =
+              groups.length === 0
+                ? (lastInboxGroups.length ? 'No clinicians match the current filters.' : 'No completed sets in this list yet.')
+                : '<strong>' + String(groups.length) + '</strong> clinician(s) with every submission fully verified or declined.';
+          }
+        }
+        var rows = groups.map(function (g) {
+          var when = formatSharedAt(g.created_at);
+          var sub = '';
+          if ((g._session_count || 0) > 1) {
+            sub = '<div class="hr-date-sub">' + String(g._session_count) + ' submissions · latest below</div>';
+          }
+          var reviewHref =
+            g.doctor_user_id != null && g.doctor_user_id !== ''
+              ? '/static/hr/?doctor=' + encodeURIComponent(String(g.doctor_user_id))
+              : '/static/hr/?session=' + encodeURIComponent(String((g.sessions && g.sessions[0] && g.sessions[0].session_id) || ''));
+          return (
+            '<tr>' +
+              '<td>' + doctorCellHtml(g) + '</td>' +
+              '<td><div class="hr-date-main">' + esc(when) + '</div>' + sub + '</td>' +
+              '<td>' + statusPillsHtml(g) + '</td>' +
+              '<td class="hr-open-wrap"><a class="hr-open-btn" href="' + reviewHref + '">Review</a></td>' +
+            '</tr>'
+          );
+        }).join('');
+        if (tbody) {
+          tbody.innerHTML =
+            rows ||
+            '<tr><td colspan="4" class="hr-muted">' +
+              (inboxTab === 'new' ? 'No sets need action right now.' : 'No completed sets to show.') +
+              (lastInboxGroups.length && groups.length < lastInboxGroups.length
+                ? ' (filters hide ' + (lastInboxGroups.length - groups.length) + '.)'
+                : '') +
+              '</td></tr>';
+        }
       }
 
       /**
@@ -526,14 +711,18 @@
             (sub.length ? '<div class="hr-doctor-meta" style="text-align:right;">' + sub.join(' · ') + '</div>' : '') +
             tail;
         }
+        fillItemsModuleSelect(s);
         var items = (s.items || []).filter(function (it) {
           var st = String(it.status || '').toUpperCase();
           var pending = st !== 'VERIFIED' && st !== 'DECLINED';
           var pr = merged
             ? String(it.session_share_kind || '').toLowerCase() === 'portfolio'
             : portfolioSession;
-          if (pr) return itemsTab === 'new';
-          return itemsTab === 'new' ? pending : !pending;
+          var tabOk = pr ? itemsTab === 'new' : itemsTab === 'new' ? pending : !pending;
+          if (!tabOk) return false;
+          if (itemsFilterModule && String(it.module_name || '') !== itemsFilterModule) return false;
+          if (itemsFilterStatus && st !== itemsFilterStatus) return false;
+          return true;
         });
         var prevSid = null;
         var parts = [];
@@ -558,7 +747,8 @@
               ? '<span class="hr-pill hr-pill--verified">VERIFIED</span>'
               : st === 'DECLINED'
                 ? '<span class="hr-pill">DECLINED</span>'
-                : '<span class="hr-pill">PENDING</span>';
+                : '<span class="hr-pill">PENDING</span>'
+                  + (it.is_resubmission ? '<span class="hr-pill hr-pill--resubmit">Resubmission</span>' : '');
           var isArchived = st === 'VERIFIED' || st === 'DECLINED';
           var sidForApi =
             merged && it.session_id != null ? String(it.session_id) : fixedSessionId != null ? String(fixedSessionId) : '';
@@ -781,6 +971,9 @@
             await refreshPayloadAfterAction(fixedSessionId);
             if (window.NHSNavAccount && typeof NHSNavAccount.notifyVerifyInboxChanged === 'function') {
               NHSNavAccount.notifyVerifyInboxChanged();
+            }
+            if (window.NHSNavAccount && typeof NHSNavAccount.notifyAlertsChanged === 'function') {
+              NHSNavAccount.notifyAlertsChanged();
             }
           } catch (err) {
             alert(err.message || err);
@@ -1163,7 +1356,96 @@
           void (async function () {
             await fillBulkCohortSelect();
             resetBulkWizard();
+            await fillBulkTemplateSelect();
           })();
+
+          function collectBulkTemplatePayload() {
+            return {
+              recipient_method: bulkRecipientMethod,
+              cohort_id: (document.getElementById('bulkCohort') || {}).value || null,
+              module_code: (document.getElementById('bulkModule') || {}).value || '',
+              completion_date: (document.getElementById('bulkCompletion') || {}).value || '',
+              expiry_date: (document.getElementById('bulkExpiry') || {}).value || '',
+              issuing_trust_name: (document.getElementById('bulkIssuingName') || {}).value || '',
+              issuing_trust_ods_code: (document.getElementById('bulkOds') || {}).value || '',
+            };
+          }
+
+          function applyBulkTemplatePayload(p) {
+            if (!p || typeof p !== 'object') return;
+            if (p.recipient_method === 'cohort' || p.recipient_method === 'roster') {
+              bulkRecipientMethod = p.recipient_method;
+              setBulkWizardStep(2);
+              if (p.cohort_id) {
+                var sel = document.getElementById('bulkCohort');
+                if (sel) sel.value = String(p.cohort_id);
+              }
+            }
+            if (p.module_code) {
+              var mod = document.getElementById('bulkModule');
+              if (mod) mod.value = p.module_code;
+            }
+            var comp = document.getElementById('bulkCompletion');
+            var exp = document.getElementById('bulkExpiry');
+            if (comp && p.completion_date) comp.value = p.completion_date;
+            if (exp && p.expiry_date) exp.value = p.expiry_date;
+            if (p.issuing_trust_name) {
+              var tn = document.getElementById('bulkIssuingName');
+              if (tn) tn.value = p.issuing_trust_name;
+            }
+            if (p.issuing_trust_ods_code) {
+              var ods = document.getElementById('bulkOds');
+              if (ods) ods.value = p.issuing_trust_ods_code;
+            }
+            setBulkWizardStep(4);
+            updateBulkRecipientsSummary();
+          }
+
+          async function fillBulkTemplateSelect() {
+            var sel = document.getElementById('bulkTemplateSelect');
+            if (!sel) return;
+            try {
+              var data = await apiJson('/api/hr/bulk-templates');
+              var tmpls = data.templates || [];
+              sel.innerHTML = '<option value="">—</option>' + tmpls.map(function (t) {
+                return '<option value="' + t.id + '">' + esc(t.name) + '</option>';
+              }).join('');
+            } catch (e) { /* ignore */ }
+          }
+
+          var btnLoadTpl = document.getElementById('btnBulkLoadTemplate');
+          if (btnLoadTpl) {
+            btnLoadTpl.addEventListener('click', async function () {
+              var sel = document.getElementById('bulkTemplateSelect');
+              if (!sel || !sel.value) return;
+              try {
+                var data = await apiJson('/api/hr/bulk-templates');
+                var t = (data.templates || []).find(function (x) { return String(x.id) === sel.value; });
+                if (t && t.payload) applyBulkTemplatePayload(t.payload);
+              } catch (e) {
+                alert(e.message || 'Could not load template');
+              }
+            });
+          }
+
+          var btnSaveTpl = document.getElementById('btnBulkSaveTemplate');
+          if (btnSaveTpl) {
+            btnSaveTpl.addEventListener('click', async function () {
+              var name = window.prompt('Template name');
+              if (!name) return;
+              try {
+                await apiJson('/api/hr/bulk-templates', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ name: name, payload: collectBulkTemplatePayload() }),
+                });
+                await fillBulkTemplateSelect();
+                alert('Template saved.');
+              } catch (e) {
+                alert(e.message || 'Could not save');
+              }
+            });
+          }
         }
         fillHrModuleSelect(document.getElementById('addTrainingModule'));
         initHrIssuingTrustAutocomplete();
@@ -1548,6 +1830,13 @@
 
         async function openSearchDoctorView(doctorId, doctorName) {
           searchDoctorViewId = String(doctorId || '');
+          var vlink = document.getElementById('btnSearchVerifierLink');
+          if (vlink) {
+            vlink.hidden = false;
+            vlink.onclick = function () {
+              window.location.assign('/static/hr/verifier-links.html?doctor_user_id=' + encodeURIComponent(searchDoctorViewId));
+            };
+          }
           if (HR_PAGE === 'search') {
             try {
               window.history.replaceState({}, '', '/static/hr/search.html?doctor=' + encodeURIComponent(String(doctorId)));
@@ -1658,10 +1947,47 @@
         }
 
         /* HR_PAGE === 'inbox' */
+        var inboxModSel = document.getElementById('inboxFilterModule');
+        var inboxStSel = document.getElementById('inboxFilterStatus');
+        if (inboxModSel) {
+          inboxModSel.addEventListener('change', function () {
+            inboxFilterModule = this.value || '';
+            rerenderInboxFromCache();
+          });
+        }
+        if (inboxStSel) {
+          inboxStSel.addEventListener('change', function () {
+            inboxFilterStatus = this.value || '';
+            rerenderInboxFromCache();
+          });
+        }
+        var itemsModSel = document.getElementById('itemsFilterModule');
+        var itemsStSel = document.getElementById('itemsFilterStatus');
+        if (itemsModSel) {
+          itemsModSel.addEventListener('change', function () {
+            itemsFilterModule = this.value || '';
+            if (lastSessionPayload) {
+              var sid = qs().get('session');
+              renderItemsTable(lastSessionPayload, sid || null);
+            }
+          });
+        }
+        if (itemsStSel) {
+          itemsStSel.addEventListener('change', function () {
+            itemsFilterStatus = this.value || '';
+            if (lastSessionPayload) {
+              var sid2 = qs().get('session');
+              renderItemsTable(lastSessionPayload, sid2 || null);
+            }
+          });
+        }
+
         if (doctorId) {
           show(document.getElementById('sessionView'), true);
           show(document.getElementById('inboxView'), false);
-          wireTabs('sessionView', function (tab) {
+          itemsTab = loadStoredTab(LS_ITEMS_TAB, 'new');
+          setSegmentTab('sessionView', itemsTab);
+          wireTabs('sessionView', LS_ITEMS_TAB, function (tab) {
             itemsTab = tab === 'archived' ? 'archived' : 'new';
             if (lastSessionPayload) renderItemsTable(lastSessionPayload, null);
           });
@@ -1669,7 +1995,9 @@
         } else if (sessionId) {
           show(document.getElementById('sessionView'), true);
           show(document.getElementById('inboxView'), false);
-          wireTabs('sessionView', function (tab) {
+          itemsTab = loadStoredTab(LS_ITEMS_TAB, 'new');
+          setSegmentTab('sessionView', itemsTab);
+          wireTabs('sessionView', LS_ITEMS_TAB, function (tab) {
             itemsTab = tab === 'archived' ? 'archived' : 'new';
             if (lastSessionPayload) renderItemsTable(lastSessionPayload, sessionId);
           });
@@ -1677,7 +2005,9 @@
         } else {
           show(document.getElementById('inboxView'), true);
           show(document.getElementById('sessionView'), false);
-          wireTabs('inboxView', async function (tab) {
+          inboxTab = loadStoredTab(LS_INBOX_TAB, 'new');
+          setSegmentTab('inboxView', inboxTab);
+          wireTabs('inboxView', LS_INBOX_TAB, async function (tab) {
             inboxTab = tab === 'archived' ? 'archived' : 'new';
             await loadInbox();
           });

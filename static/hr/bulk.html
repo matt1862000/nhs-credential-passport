@@ -50,6 +50,18 @@
     </div>
 
     <div id="bulkView" class="hr-card" hidden>
+      <div class="hr-card" style="margin-bottom:1.25rem;padding:1rem 1.25rem;background:#f0f7fb;border:1px solid var(--nhsuk-border);border-radius:6px;">
+        <h3 style="margin:0 0 0.5rem 0;font-size:1rem;">Saved templates</h3>
+        <p class="hr-muted" style="margin:0 0 0.75rem 0;font-size:0.875rem;">Save this wizard&rsquo;s settings to run again later (module, dates, cohort/roster source).</p>
+        <div style="display:flex;flex-wrap:wrap;gap:0.5rem;align-items:flex-end;">
+          <div class="nhsuk-form-group" style="margin:0;flex:1;min-width:10rem;">
+            <label class="nhsuk-label" for="bulkTemplateSelect">Load template</label>
+            <select class="nhsuk-select" id="bulkTemplateSelect"><option value="">—</option></select>
+          </div>
+          <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnBulkLoadTemplate">Load</button>
+          <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnBulkSaveTemplate">Save current as…</button>
+        </div>
+      </div>
       <div class="hr-inbox-head">
         <h2>Upload details</h2>
       </div>

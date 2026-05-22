@@ -291,9 +291,29 @@
     var resultEl = document.getElementById('result');
     var params = new URLSearchParams(window.location.search);
     var b = params.get('b');
+    var token = params.get('token');
 
     function runFromItems(items) {
       verifyBundle(items, introEl, resultEl);
+    }
+
+    if (token) {
+      introEl.textContent = 'Loading verified training from secure link…';
+      fetch('/api/public/verifier-link/' + encodeURIComponent(token))
+        .then(function (r) { return r.ok ? r.json() : r.json().then(function (d) { throw new Error(d.detail || 'Link invalid'); }); })
+        .then(function (data) {
+          if (introEl && data.title) introEl.textContent = data.title;
+          var items = normalizeBundleItems(data);
+          if (!items.length) {
+            resultEl.innerHTML = '<p class="nhsuk-body-s">No verified credentials in this link.</p>';
+            return;
+          }
+          verifyBundle(items, introEl, resultEl);
+        })
+        .catch(function (err) {
+          introEl.textContent = 'This link is not available.';
+          resultEl.innerHTML = '<p class="nhsuk-body-s" style="color:var(--nhsuk-error);">' + escapeHtml(err.message) + '</p>';
+        });
     }
 
     document.getElementById('bundleFileInput').addEventListener('change', function () {
@@ -333,7 +353,9 @@
       }
     });
 
-    if (b) {
+    if (token) {
+      /* loaded above */
+    } else if (b) {
       var bundle = base64urlDecode(b);
       if (!bundle || !Array.isArray(bundle) || bundle.length === 0) {
         introEl.textContent = 'That link does not contain a valid list. Ask the person sharing to send the link or QR again, or use “Choose saved list file” above.';

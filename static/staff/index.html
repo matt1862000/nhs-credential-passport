@@ -393,6 +393,25 @@
       height: 100%;
       border: 0;
     }
+    .esr-wizard-steps {
+      display: flex; flex-wrap: wrap; gap: 0.35rem 0.75rem; margin: 0 0 1rem 0;
+      font-size: 0.8125rem; color: var(--nhsuk-secondary-text);
+    }
+    .esr-wizard-steps span.esr-wizard-steps__on { font-weight: 700; color: var(--nhsuk-link); }
+    .esr-wizard-panel { margin-top: 0.5rem; }
+    .esr-preview-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; margin-top: 0.75rem; }
+    .esr-preview-table th, .esr-preview-table td { padding: 0.45rem 0.6rem; border-bottom: 1px solid var(--nhsuk-border); text-align: left; }
+    .esr-preview-table th { background: #f0f4f5; font-weight: 700; }
+    .esr-wizard-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 1.25rem; }
+    .staff-renew-panel {
+      margin-bottom: 1rem; padding: 0.85rem 1rem;
+      background: #f0f7fb; border: 1px solid var(--nhsuk-border); border-left: 4px solid var(--nhsuk-link);
+      border-radius: 4px;
+    }
+    .staff-declined-box {
+      margin: 0.5rem 0 0 0; padding: 0.65rem 0.75rem; background: #fef7f7;
+      border: 1px solid rgba(213, 40, 27, 0.25); border-radius: 4px; font-size: 0.875rem;
+    }
   </style>
 </head>
 <body>
@@ -490,7 +509,18 @@
     </section>
 
     <section id="add" role="tabpanel" aria-labelledby="tab-add" aria-hidden="true">
+      <div id="addRenewPanel" class="staff-renew-panel" hidden role="region" aria-label="Renew training">
+        <p style="margin:0 0 0.5rem 0;">Renewing <strong id="addRenewModuleLabel">training</strong> — add a new completion with updated dates. Your previous record stays in the list.</p>
+        <div class="nhsuk-checkboxes" style="margin:0.5rem 0;">
+          <div class="nhsuk-checkboxes__item">
+            <input class="nhsuk-checkboxes__input" type="checkbox" id="addRenewReshare" checked>
+            <label class="nhsuk-label nhsuk-checkboxes__label" for="addRenewReshare">Reshare with HR after adding</label>
+          </div>
+        </div>
+        <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnCancelRenew">Cancel renewal</button>
+      </div>
       <form id="addForm">
+        <input type="hidden" id="addRenewFromId" value="">
         <div class="nhsuk-form-group"><label class="nhsuk-label" for="staff_full_name">Your full name</label><input class="nhsuk-input" id="staff_full_name" type="text" name="staff_full_name" required placeholder="Jane Smith" autocomplete="name"></div>
         <div class="nhsuk-form-group"><label class="nhsuk-label" for="staff_identifier">GMC number</label><input class="nhsuk-input" id="staff_identifier" type="text" name="staff_identifier" inputmode="numeric" required placeholder="1234567" maxlength="11" autocomplete="off"></div>
         <div class="nhsuk-form-group"><label class="nhsuk-label" for="moduleSelect">Module</label><select class="nhsuk-select" name="module_code" id="moduleSelect"></select></div>
@@ -522,53 +552,79 @@
     <section id="import" role="tabpanel" aria-labelledby="tab-import" aria-hidden="true">
       <div class="nhsuk-bulk-export-panel">
         <h3 class="nhsuk-bulk-export-panel__title">Import from ESR</h3>
-        <p class="nhsuk-bulk-export-panel__desc">Choose your ESR CSV export, then add <strong>evidence</strong> (for example a screenshot of your ESR Compliance page). Press <strong>Upload</strong> only when both are ready — the file is not sent until then. We import <strong>your</strong> rows only (matched to your profile name and GMC); team or trust-wide exports skip everyone else’s training.</p>
+        <p class="nhsuk-bulk-export-panel__desc">Step-by-step import: we match <strong>your</strong> rows only (name and GMC from Profile). Team exports skip other people&rsquo;s training.</p>
+        <p class="esr-wizard-steps" id="esrWizardStepLabel" aria-live="polite">
+          <span class="esr-wizard-steps__on" data-step-label="1">1. Help</span> &rarr;
+          <span data-step-label="2">2. CSV</span> &rarr;
+          <span data-step-label="3">3. Preview</span> &rarr;
+          <span data-step-label="4">4. Evidence</span> &rarr;
+          <span data-step-label="5">5. Import</span>
+        </p>
 
-        <div class="esr-help" aria-label="Help exporting ESR CSV">
-          <details>
-            <summary>How to export your training from ESR</summary>
-            <p class="nhsuk-body-s">Follow these steps in the ESR portal. Labels can vary slightly by role or ESR version.</p>
-            <ol>
-              <li>Log into the ESR Portal.</li>
-              <li>Scroll down to <strong>Compliance</strong> and expand the menu (down arrow).</li>
-              <li>Click <strong>View My Compliance</strong> (your own record — not a team list).</li>
-              <li>Click <strong>Export</strong>.</li>
-              <li>Save the CSV, then take a screenshot or export a PDF from ESR as supporting evidence.</li>
-              <li>Return here, choose your CSV and evidence file, then press <strong>Upload</strong>.</li>
-            </ol>
-            <div class="esr-video" aria-label="YouTube video: How to export ESR CSV">
-              <iframe
-                src="https://www.youtube-nocookie.com/embed/L3p_vo3IyCg"
-                title="How to export your training from ESR"
-                loading="lazy"
-                referrerpolicy="strict-origin-when-cross-origin"
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                allowfullscreen></iframe>
+        <div id="esrStep1" class="esr-wizard-panel">
+          <div class="esr-help" aria-label="Help exporting ESR CSV">
+            <details open>
+              <summary>How to export your training from ESR</summary>
+              <p class="nhsuk-body-s">Follow these steps in the ESR portal. Labels can vary slightly by role or ESR version.</p>
+              <ol>
+                <li>Log into the ESR Portal.</li>
+                <li>Scroll down to <strong>Compliance</strong> and expand the menu (down arrow).</li>
+                <li>Click <strong>View My Compliance</strong> (your own record — not a team list).</li>
+                <li>Click <strong>Export</strong>.</li>
+                <li>Save the CSV, then take a screenshot or export a PDF from ESR as supporting evidence.</li>
+                <li>Continue through the steps below to preview and import.</li>
+              </ol>
+              <div class="esr-video" aria-label="YouTube video: How to export ESR CSV">
+                <iframe
+                  src="https://www.youtube-nocookie.com/embed/L3p_vo3IyCg"
+                  title="How to export your training from ESR"
+                  loading="lazy"
+                  referrerpolicy="strict-origin-when-cross-origin"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                  allowfullscreen></iframe>
+              </div>
+            </details>
+          </div>
+        </div>
+
+        <div id="esrStep2" class="esr-wizard-panel" hidden>
+          <div class="nhsuk-form-group nhsuk-file-upload">
+            <label class="nhsuk-label" for="csv_upload">CSV file</label>
+            <div class="nhsuk-file-upload__stack">
+              <label for="csv_upload" class="nhsuk-file-upload__trigger">Choose CSV file</label>
+              <input id="csv_upload" type="file" name="csv" accept=".csv,text/csv">
+              <span class="nhsuk-file-upload__name" id="csv_filename" aria-live="polite"></span>
             </div>
-          </details>
-        </div>
-        
-        <div class="nhsuk-form-group nhsuk-file-upload">
-          <label class="nhsuk-label" for="csv_upload">CSV file</label>
-          <div class="nhsuk-file-upload__stack">
-            <label for="csv_upload" class="nhsuk-file-upload__trigger">Choose CSV file</label>
-            <input id="csv_upload" type="file" name="csv" accept=".csv,text/csv">
-            <span class="nhsuk-file-upload__name" id="csv_filename" aria-live="polite"></span>
           </div>
         </div>
-        <div class="nhsuk-form-group nhsuk-file-upload" style="margin-top:1rem;">
-          <label class="nhsuk-label" for="csv_evidence">Evidence of completion</label>
-          <div class="nhsuk-file-upload__stack">
-            <p class="nhsuk-hint" id="csv_evidence_hint" style="margin:0;">Required for import: a screenshot (PNG or JPEG) or PDF showing your training on ESR (e.g. Compliance tab), so your trust can see what the CSV is based on.</p>
-            <label for="csv_evidence" class="nhsuk-file-upload__trigger">Choose evidence file</label>
-            <input id="csv_evidence" type="file" name="csv_evidence" accept=".pdf,.png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp,application/pdf" aria-describedby="csv_evidence_hint">
-            <span class="nhsuk-file-upload__name" id="csv_evidence_filename" aria-live="polite"></span>
+
+        <div id="esrStep3" class="esr-wizard-panel" hidden>
+          <p class="nhsuk-hint" style="margin-top:0;">Rows we will import for you (from your CSV):</p>
+          <div id="esrPreviewWrap"></div>
+          <div id="csvImportResult" style="margin-top:1rem;" aria-live="polite"></div>
+        </div>
+
+        <div id="esrStep4" class="esr-wizard-panel" hidden>
+          <div class="nhsuk-form-group nhsuk-file-upload">
+            <label class="nhsuk-label" for="csv_evidence">Evidence of completion</label>
+            <div class="nhsuk-file-upload__stack">
+              <p class="nhsuk-hint" id="csv_evidence_hint" style="margin:0;">Required: a screenshot (PNG or JPEG) or PDF showing your training on ESR (e.g. Compliance tab).</p>
+              <label for="csv_evidence" class="nhsuk-file-upload__trigger">Choose evidence file</label>
+              <input id="csv_evidence" type="file" name="csv_evidence" accept=".pdf,.png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp,application/pdf" aria-describedby="csv_evidence_hint">
+              <span class="nhsuk-file-upload__name" id="csv_evidence_filename" aria-live="polite"></span>
+            </div>
           </div>
         </div>
-        <div style="display:flex; flex-wrap:wrap; gap:0.75rem; margin-top:1rem;">
-          <button type="button" class="nhsuk-button" id="btnCsvUpload" disabled>Upload</button>
+
+        <div id="esrStep5" class="esr-wizard-panel" hidden>
+          <p id="esrConfirmSummary" class="nhsuk-body-s" style="margin-top:0;"></p>
+          <button type="button" class="nhsuk-button" id="btnCsvUpload" disabled>Import into my wallet</button>
         </div>
-        <div id="csvImportResult" style="margin-top:1.25rem;" aria-live="polite"></div>
+
+        <div class="esr-wizard-actions">
+          <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnEsrBack" hidden>Back</button>
+          <button type="button" class="nhsuk-button" id="btnEsrNext">Next</button>
+        </div>
       </div>
     </section>
 
@@ -1223,9 +1279,108 @@
       var ok = !!(csv.files && csv.files[0] && ev.files && ev.files[0]);
       btn.disabled = !ok || csvUploadInFlight;
     }
+    var _esrWizardStep = 1;
+    var _esrPreviewData = null;
+
+    function setEsrWizardStep(step) {
+      _esrWizardStep = step;
+      for (var i = 1; i <= 5; i++) {
+        var panel = document.getElementById('esrStep' + i);
+        if (panel) panel.hidden = i !== step;
+      }
+      var backBtn = document.getElementById('btnEsrBack');
+      var nextBtn = document.getElementById('btnEsrNext');
+      if (backBtn) backBtn.hidden = step <= 1;
+      if (nextBtn) nextBtn.hidden = step >= 5;
+      document.querySelectorAll('[data-step-label]').forEach(function (sp) {
+        sp.classList.toggle('esr-wizard-steps__on', Number(sp.getAttribute('data-step-label')) === step);
+      });
+      if (step === 5) updateEsrConfirmSummary();
+    }
+
+    function updateEsrConfirmSummary() {
+      var el = document.getElementById('esrConfirmSummary');
+      if (!el || !_esrPreviewData) return;
+      var n = Number(_esrPreviewData.valid_row_count || 0);
+      el.textContent = n
+        ? 'Ready to import ' + n + ' training record' + (n === 1 ? '' : 's') + ' into your wallet.'
+        : 'No rows to import — go back and check your CSV.';
+    }
+
+    function renderEsrPreviewSummary(data) {
+      var wrap = document.getElementById('esrPreviewWrap');
+      if (!wrap) return;
+      if (!data) { wrap.innerHTML = ''; return; }
+      if (data.fatal_error) {
+        wrap.innerHTML = '<p style="color:var(--nhsuk-error);">' + escapeHtml(data.fatal_error) + '</p>';
+        return;
+      }
+      var n = Number(data.valid_row_count || 0);
+      var html = '<p style="margin:0.5rem 0;"><strong>' + n + '</strong> row' + (n === 1 ? '' : 's') + ' matched your profile and will be imported.</p>';
+      if (data.skipped_other_person_count > 0) {
+        html += '<p class="nhsuk-hint">' + data.skipped_other_person_count + ' row(s) skipped (other people in the export).</p>';
+      }
+      if (data.invalid && data.invalid.length) {
+        html += '<table class="esr-preview-table" aria-label="Rows with issues"><thead><tr><th>Row</th><th>Issue</th></tr></thead><tbody>';
+        data.invalid.slice(0, 12).forEach(function (r) {
+          html += '<tr><td>' + escapeHtml(String(r.row)) + '</td><td>' + escapeHtml(r.message) + '</td></tr>';
+        });
+        html += '</tbody></table>';
+      }
+      wrap.innerHTML = html;
+    }
+
+    async function esrWizardNext() {
+      if (_esrWizardStep === 1) {
+        setEsrWizardStep(2);
+        return;
+      }
+      if (_esrWizardStep === 2) {
+        var csvEl = document.getElementById('csv_upload');
+        if (!csvEl.files || !csvEl.files[0]) {
+          alert('Choose your ESR CSV file first.');
+          return;
+        }
+        setEsrWizardStep(3);
+        showCsvImportLoading('Checking which rows match your profile…');
+        try {
+          _esrPreviewData = await postCsv(true);
+          renderEsrPreviewSummary(_esrPreviewData);
+          renderCsvResult(_esrPreviewData, {});
+        } catch (e) {
+          document.getElementById('esrPreviewWrap').innerHTML = '<p style="color:var(--nhsuk-error);">' + escapeHtml(e.message) + '</p>';
+        }
+        return;
+      }
+      if (_esrWizardStep === 3) {
+        if (!_esrPreviewData || _esrPreviewData.fatal_error || !(_esrPreviewData.valid_row_count > 0)) {
+          alert('Fix your CSV or profile (name and GMC) before continuing.');
+          return;
+        }
+        setEsrWizardStep(4);
+        return;
+      }
+      if (_esrWizardStep === 4) {
+        var evEl = document.getElementById('csv_evidence');
+        if (!evEl.files || !evEl.files[0]) {
+          alert('Choose evidence of completion before continuing.');
+          return;
+        }
+        setEsrWizardStep(5);
+        updateCsvImportButtonState();
+      }
+    }
+
+    document.getElementById('btnEsrNext').addEventListener('click', function () { void esrWizardNext(); });
+    document.getElementById('btnEsrBack').addEventListener('click', function () {
+      if (_esrWizardStep > 1) setEsrWizardStep(_esrWizardStep - 1);
+    });
+    setEsrWizardStep(1);
+
     document.getElementById('csv_upload').addEventListener('change', function() {
       document.getElementById('csv_filename').textContent = this.files.length ? 'Chosen: ' + this.files[0].name : '';
       document.getElementById('csvImportResult').innerHTML = '';
+      _esrPreviewData = null;
       updateCsvImportButtonState();
     });
     document.getElementById('csv_evidence').addEventListener('change', function() {
@@ -1306,30 +1461,33 @@
         return;
       }
       var btn = document.getElementById('btnCsvUpload');
-      var labelUpload = 'Upload';
+      var labelUpload = 'Import into my wallet';
       csvUploadInFlight = true;
       updateCsvImportButtonState();
       if (btn) {
         btn.disabled = true;
-        btn.textContent = 'Uploading…';
+        btn.textContent = 'Importing…';
       }
-      showCsvImportLoading('Checking your file…');
+      showCsvImportLoading('Importing your training…');
       try {
-        var checked = await postCsv(true);
+        var checked = _esrPreviewData;
+        if (!checked || checked.fatal_error || !(checked.valid_row_count > 0)) {
+          checked = await postCsv(true);
+          _esrPreviewData = checked;
+        }
         if (!checked) {
           if (btn) { btn.disabled = false; btn.textContent = labelUpload; }
           csvUploadInFlight = false;
           updateCsvImportButtonState();
           return;
         }
-        renderCsvResult(checked, {});
         if (checked.fatal_error || !(checked.valid_row_count > 0)) {
+          renderCsvResult(checked, {});
           if (btn) { btn.disabled = false; btn.textContent = labelUpload; }
           csvUploadInFlight = false;
           updateCsvImportButtonState();
           return;
         }
-        // Very large files can hit proxy timeouts on free hosting. For those, show results and require a click.
         var validCount = Number(checked.valid_row_count || 0);
         if (validCount > 250) {
           if (btn) {
@@ -1507,22 +1665,31 @@
              </label>`
           : '';
         var profileOk = !!(window.NHSAuth && NHSAuth.user && NHSAuth.user.display_name && NHSAuth.user.gmc_number && NHSAuth.user.current_trust);
+        var isDeclined = !!(v && v.shared && st === 'DECLINED');
         var alreadyPending = !!(v && v.shared && st === 'PENDING');
-        var alreadyDecided = !!(v && v.shared && (st === 'VERIFIED' || st === 'DECLINED'));
+        var alreadyVerified = !!(v && v.shared && st === 'VERIFIED');
         var pendingTarget = v && v.pending_target_trust ? String(v.pending_target_trust).trim().toLowerCase() : '';
         var myTrust = (window.NHSAuth && NHSAuth.user && NHSAuth.user.current_trust || '').trim().toLowerCase();
         var allowResend = alreadyPending && pendingTarget && myTrust && pendingTarget !== myTrust;
-        var canVerifyWithHr = profileOk && (!alreadyPending || allowResend) && !alreadyDecided;
-        var verifyBtnText = allowResend
-          ? 'Send to HR at my current trust'
-          : (alreadyPending ? 'Pending verification' : (st === 'VERIFIED' ? 'Verified' : (st === 'DECLINED' ? 'Declined' : 'Verify with HR')));
+        var canVerifyWithHr = profileOk && (isDeclined || ((!alreadyPending || allowResend) && !alreadyVerified));
+        var verifyBtnText = isDeclined
+          ? 'Fix and reshare'
+          : (allowResend
+            ? 'Send to HR at my current trust'
+            : (alreadyPending ? 'Pending verification' : (alreadyVerified ? 'Verified' : 'Verify with HR')));
         var verifyBtnAttrs = canVerifyWithHr ? '' : ' disabled';
         var verifyBtnTitle = !profileOk
           ? 'Complete your profile to verify with HR'
-          : (allowResend ? 'You previously sent this to a different trust. Send again to your current trust HR.' : (alreadyPending ? 'Already sent to HR' : (alreadyDecided ? 'Decision already recorded' : '')));
+          : (isDeclined ? 'Send again after updating dates or evidence' : (allowResend ? 'You previously sent this to a different trust. Send again to your current trust HR.' : (alreadyPending ? 'Already sent to HR' : (alreadyVerified ? 'Decision already recorded' : ''))));
         if (verifyBtnTitle) verifyBtnAttrs += ' title="' + verifyBtnTitle.replace(/"/g, '&quot;') + '"';
         var verifyBtnOnclick = profileOk ? `onclick="shareCred('${c.credential_id}')"` : `onclick="return openProfileForVerification();"`;
-        var showVerifyHrButton = !(v && v.shared && (st === 'VERIFIED' || st === 'DECLINED'));
+        var showVerifyHrButton = profileOk && !alreadyVerified && (isDeclined || !alreadyPending || allowResend);
+        var showRenew = !c.revoked && (status === 'expiring' || status === 'expired');
+        var declinedBlock = isDeclined
+          ? ('<div class="staff-declined-box"><strong>HR declined this record.</strong>'
+            + (v.decline_reason ? ' ' + escapeHtml(v.decline_reason) : '')
+            + ' Update your training or evidence, then use <strong>Fix and reshare</strong>, or <strong>Renew</strong> to add a new completion.</div>')
+          : '';
         return `
           <div class="nhsuk-card ${c.revoked ? 'revoked' : ''}" data-id="${c.credential_id}">
             <div class="nhsuk-card__row" style="display:flex; align-items:flex-start; gap:0.75rem;">
@@ -1532,12 +1699,13 @@
                 <div class="nhsuk-card__meta">Expires ${c.expiry_date}${c.revoked ? ' · Revoked' : ''}</div>
                 <span class="nhsuk-tag nhsuk-tag--${status}">${expiryStatusLabel(status)}</span>${verifiedTag}${declinedTag}
                 <div class="nhsuk-card__actions">
+                  ${showRenew ? `<button type="button" class="nhsuk-button" onclick="startRenewal('${c.credential_id}')">Renew</button>` : ''}
                   ${showVerifyHrButton ? `<button type="button" class="nhsuk-button nhsuk-button--secondary"${verifyBtnAttrs} ${verifyBtnOnclick}>${verifyBtnText}</button>` : ''}
                   ${!c.import_evidence_batch ? `<button type="button" class="nhsuk-button" onclick="downloadPdf('${c.credential_id}')">Download evidence</button>` : ''}
                   ${credHasEsrEvidence(c) ? `<button type="button" class="nhsuk-button nhsuk-button--secondary" onclick="downloadCertificate('${c.credential_id}')">ESR evidence</button>` : ''}
                   <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-button--remove" onclick="removeCred('${c.credential_id}')">Remove</button>
                 </div>
-                ${declinedNote}
+                ${declinedBlock || declinedNote}
               </div>
             </div>
           </div>`;
@@ -1598,6 +1766,39 @@
       setStored(list);
       renderList();
     }
+
+    function clearRenewal() {
+      var hid = document.getElementById('addRenewFromId');
+      var panel = document.getElementById('addRenewPanel');
+      if (hid) hid.value = '';
+      if (panel) panel.hidden = true;
+      var submitBtn = document.querySelector('#addForm button[type="submit"]');
+      if (submitBtn) submitBtn.textContent = 'Add training';
+    }
+
+    window.startRenewal = function (credentialId) {
+      var c = getStored().find(function (x) { return x.credential_id === credentialId; });
+      if (!c) return;
+      document.getElementById('addRenewFromId').value = credentialId;
+      document.getElementById('addRenewModuleLabel').textContent = c.module_name || 'training';
+      document.getElementById('addRenewPanel').hidden = false;
+      var modSel = document.getElementById('moduleSelect');
+      var match = MODULES.find(function (m) { return m.name === c.module_name; });
+      if (match && modSel) modSel.value = match.code;
+      var today = new Date();
+      var comp = today.toISOString().slice(0, 10);
+      var exp = new Date(today);
+      exp.setFullYear(exp.getFullYear() + 1);
+      document.getElementById('completion_date').value = comp;
+      document.getElementById('expiry_date').value = exp.toISOString().slice(0, 10);
+      void applyProfileToAddForm();
+      document.querySelector('.nhsuk-tabs button[data-tab="add"]').click();
+      var submitBtn = document.querySelector('#addForm button[type="submit"]');
+      if (submitBtn) submitBtn.textContent = 'Add renewal';
+      document.getElementById('addForm').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
+
+    document.getElementById('btnCancelRenew').addEventListener('click', clearRenewal);
 
     async function shareCred(credentialId) {
       try {
@@ -1754,8 +1955,9 @@
           return;
         }
         const issued = credsOut[0];
+        const renewFrom = (document.getElementById('addRenewFromId').value || '').trim();
         const list = getStored();
-        list.push({
+        var entry = {
           credential_id: issued.credential_id,
           verification_url: issued.verification_url,
           jwt: issued.jwt,
@@ -1765,12 +1967,19 @@
           revoked: false,
           certificate_base64: issued.certificate_base64 || null,
           certificate_filename: issued.certificate_filename || null
-        });
+        };
+        if (renewFrom) entry.supersedes_credential_id = renewFrom;
+        list.push(entry);
         setStored(list);
         renderList();
+        var doReshare = renewFrom && document.getElementById('addRenewReshare') && document.getElementById('addRenewReshare').checked;
+        clearRenewal();
         e.target.reset();
         lastAutoOdsSuggested = { name: '', ods: '' };
         void applyProfileToAddForm();
+        if (doReshare && isProfileComplete()) {
+          await shareCred(issued.credential_id);
+        }
         document.querySelector('.nhsuk-tabs button[data-tab="list"]').click();
       } catch (err) {
         alert(err.message);

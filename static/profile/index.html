@@ -133,10 +133,10 @@
 
       <div class="vis-radio-group" id="visRadioGroup">
         <label>
-          <input type="radio" name="vis_mode" value="all" checked>
+          <input type="radio" name="vis_mode" value="messaged" checked>
           <span>
-            <strong>All HR users</strong>
-            <span class="vis-radio-desc">Any approved NHS HR account on this system can find and view your verified training.</span>
+            <strong>Trusts I&rsquo;ve messaged</strong>
+            <span class="vis-radio-desc">Only HR at trusts where you have a DocPass message thread can view your verified training. Recommended.</span>
           </span>
         </label>
         <label>
@@ -153,7 +153,15 @@
             <span class="vis-radio-desc">Only HR at trusts you add below can view your records.</span>
           </span>
         </label>
+        <label>
+          <input type="radio" name="vis_mode" value="all">
+          <span>
+            <strong>All HR users</strong>
+            <span class="vis-radio-desc">Any approved NHS HR account on DocPass can find and view your verified training.</span>
+          </span>
+        </label>
       </div>
+      <p class="nhsuk-hint nhsuk-hint--secondary" id="visMessagedHint" hidden aria-live="polite"></p>
 
       <div id="allowlistSection" hidden>
         <h4>Allowed trusts</h4>
@@ -492,12 +500,20 @@
 
         // 2. Save visibility (only for non-premium / doctor accounts)
         if (!NHSAuth.user || !NHSAuth.user.premium) {
+          var newVisMode = getVisMode();
+          if (isVisModeWider(_visInitialMode, newVisMode) && !confirmWidenVisibility(newVisMode)) {
+            setSaveStatus('Visibility not saved.', 'err');
+            btn.disabled = false;
+            btn.classList.remove('is-loading');
+            btn.removeAttribute('aria-busy');
+            return;
+          }
           try {
             await fetch('/api/me/visibility', {
               method: 'PUT',
               credentials: 'include',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ mode: getVisMode(), allowlist: _visAllowlist }),
+              body: JSON.stringify({ mode: newVisMode, allowlist: _visAllowlist }),
             });
           } catch (err) { /* non-fatal */ }
         }
@@ -510,6 +526,36 @@
       var _visAllowlist = []; // [{trust_name, trust_ods}]
       var _visSuggestItems = [];
       var _visSuggestDebounce = null;
+      var _visInitialMode = 'messaged';
+      var _visLastMode = 'messaged';
+      var _visMessagedTrusts = [];
+
+      function isVisModeWider(fromMode, toMode) {
+        var rank = { messaged: 0, current: 1, allowlist: 1, all: 2 };
+        return (rank[toMode] || 0) > (rank[fromMode] || 0);
+      }
+
+      function confirmWidenVisibility(toMode) {
+        if (toMode !== 'all') return true;
+        return window.confirm(
+          'This lets any HR account on DocPass find and view your verified training. Only choose this if you are comfortable with wider access.\n\nContinue?'
+        );
+      }
+
+      function updateVisMessagedHint() {
+        var hint = document.getElementById('visMessagedHint');
+        if (!hint) return;
+        if (getVisMode() !== 'messaged') {
+          hint.hidden = true;
+          return;
+        }
+        hint.hidden = false;
+        if (!_visMessagedTrusts.length) {
+          hint.textContent = 'No message threads yet — HR can view your training after you message them (or they message you) in DocPass.';
+        } else {
+          hint.textContent = 'Trusts with a message thread: ' + _visMessagedTrusts.join(', ') + '.';
+        }
+      }
 
       function setVisStatus(msg, kind) {
         var el = document.getElementById('visibilityStatus');
@@ -539,6 +585,7 @@
         for (var i = 0; i < radios.length; i++) { radios[i].checked = (radios[i].value === mode); }
         var al = document.getElementById('allowlistSection');
         if (al) al.hidden = (mode !== 'allowlist');
+        updateVisMessagedHint();
       }
 
       function hideVisSuggest() {
@@ -590,7 +637,10 @@
           var r = await fetch('/api/me/visibility', { credentials: 'include' });
           if (!r.ok) return;
           var data = await r.json();
-          setVisMode(data.mode || 'all');
+          var mode = data.mode || 'messaged';
+          _visInitialMode = mode;
+          _visMessagedTrusts = Array.isArray(data.messaged_trusts) ? data.messaged_trusts : [];
+          setVisMode(mode);
           _visAllowlist = Array.isArray(data.allowlist) ? data.allowlist : [];
           renderAllowlistTags();
         } catch (e) { /* ignore */ }
@@ -603,8 +653,16 @@
 
         document.querySelectorAll('input[name="vis_mode"]').forEach(function (radio) {
           radio.addEventListener('change', function () {
+            var prev = _visLastMode;
+            var next = this.value;
+            if (this.checked && isVisModeWider(prev, next) && !confirmWidenVisibility(next)) {
+              setVisMode(prev);
+              return;
+            }
+            _visLastMode = next;
             var al = document.getElementById('allowlistSection');
-            if (al) al.hidden = (this.value !== 'allowlist');
+            if (al) al.hidden = (next !== 'allowlist');
+            updateVisMessagedHint();
           });
         });
 

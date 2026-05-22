@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Verifier links &mdash; DocPass</title>
+  <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260527-1">
+</head>
+<body>
+  <header class="nhsuk-header" role="banner">
+    <div class="nhsuk-header__container">
+      <div class="nhsuk-header__service">
+        <a class="nhsuk-header__service-logo nhsuk-header__service-logo--docpass" href="/static/dashboard/" aria-label="Dashboard">
+          <img class="docpass-header-logo" src="/static/shared/docpass-logo.png?v=20260519-1" alt="DocPass" width="420" height="146">
+        </a>
+      </div>
+      <nav class="nhsuk-topnav" aria-label="Account">
+        <div class="nhsuk-topnav__account" id="navAccount"><span class="nhsuk-topnav__name" id="navUserName">&nbsp;</span></div>
+        <div class="nhsuk-menu">
+          <button type="button" id="btnMenu" aria-haspopup="true" aria-expanded="false" aria-controls="menuPanel">Menu</button>
+          <div class="nhsuk-menu__panel" id="menuPanel" role="menu" hidden>
+            <a href="/static/dashboard/" role="menuitem">Dashboard</a>
+            <button type="button" id="btnSignOut" role="menuitem">Sign out</button>
+          </div>
+        </div>
+      </nav>
+    </div>
+  </header>
+  <main class="nhsuk-main hr-wrap" role="main">
+    <h1 class="nhsuk-page-heading">Read-only verifier links</h1>
+    <p class="nhsuk-lead">Create time-limited links for medical staffing to view HR-verified training without a DocPass login.</p>
+    <div class="hr-actions" style="margin-bottom:1rem;">
+      <a href="/static/dashboard/" class="nhsuk-button nhsuk-button--secondary">Dashboard</a>
+      <a href="/static/hr/search.html" class="nhsuk-button nhsuk-button--secondary">Search doctors</a>
+    </div>
+    <div class="hr-card">
+      <h2 style="margin-top:0;font-size:1.125rem;">Create link</h2>
+      <div class="nhsuk-form-group">
+        <label class="nhsuk-label" for="vlDoctorId">Doctor user ID</label>
+        <span class="nhsuk-hint">From search results, or leave blank and use cohort ID instead.</span>
+        <input class="nhsuk-input" type="number" id="vlDoctorId" min="1" placeholder="e.g. 42">
+      </div>
+      <div class="nhsuk-form-group">
+        <label class="nhsuk-label" for="vlCohortId">Cohort ID (optional)</label>
+        <input class="nhsuk-input" type="number" id="vlCohortId" min="1" placeholder="Cohort ID">
+      </div>
+      <div class="nhsuk-form-group">
+        <label class="nhsuk-label" for="vlLabel">Label (optional)</label>
+        <input class="nhsuk-input" type="text" id="vlLabel" maxlength="120" placeholder="e.g. March induction roster">
+      </div>
+      <div class="nhsuk-form-group">
+        <label class="nhsuk-label" for="vlDays">Expires in (days)</label>
+        <select class="nhsuk-select" id="vlDays">
+          <option value="7">7 days</option>
+          <option value="14" selected>14 days</option>
+          <option value="30">30 days</option>
+        </select>
+      </div>
+      <button type="button" class="nhsuk-button" id="btnCreateLink">Create link</button>
+      <p id="vlCreateResult" class="hr-muted" style="margin-top:0.75rem;" aria-live="polite"></p>
+    </div>
+    <div class="hr-card" style="margin-top:1.25rem;">
+      <h2 style="margin-top:0;font-size:1.125rem;">Recent links</h2>
+      <div class="hr-table-wrap">
+        <table class="hr-table" aria-label="Verifier links">
+          <thead><tr><th>Created</th><th>Scope</th><th>Expires</th><th></th></tr></thead>
+          <tbody id="vlLinksTbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+  <script src="/static/shared/auth.js"></script>
+  <script src="/static/shared/nav-account.js?v=20260527-1"></script>
+  <script>
+    (function () {
+      function esc(s) {
+        var d = document.createElement('div');
+        d.textContent = s == null ? '' : String(s);
+        return d.innerHTML;
+      }
+      async function apiJson(url, opts) {
+        var r = await fetch(url, Object.assign({ credentials: 'include' }, opts || {}));
+        var t = await r.text();
+        var data = null;
+        try { data = t ? JSON.parse(t) : null; } catch (e) {}
+        if (!r.ok) throw new Error((data && data.detail) || t || r.statusText);
+        return data;
+      }
+      async function loadLinks() {
+        var tbody = document.getElementById('vlLinksTbody');
+        tbody.innerHTML = '<tr><td colspan="4">Loading…</td></tr>';
+        var data = await apiJson('/api/hr/verifier-links');
+        var items = data.items || [];
+        if (!items.length) {
+          tbody.innerHTML = '<tr><td colspan="4" class="hr-muted">No links yet.</td></tr>';
+          return;
+        }
+        tbody.innerHTML = items.map(function (row) {
+          var scope = row.doctor_user_id ? ('Doctor #' + row.doctor_user_id) : ('Cohort #' + row.cohort_id);
+          var revoked = row.revoked_at ? ' <span class="hr-muted">(revoked)</span>' : '';
+          var url = window.location.origin + '/static/verifier/bundle.html?token=' + encodeURIComponent(row.token);
+          return '<tr><td>' + esc((row.created_at || '').slice(0, 10)) + '</td><td>' + esc(scope) + esc(row.label ? ' — ' + row.label : '') + revoked
+            + '</td><td>' + esc((row.expires_at || '').slice(0, 10)) + '</td><td class="hr-open-wrap">'
+            + (row.revoked_at ? '' : '<a class="hr-open-btn hr-open-btn--small" href="' + esc(url) + '" target="_blank" rel="noopener">Open</a> '
+            + '<button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" data-revoke="' + row.id + '">Revoke</button>')
+            + '</td></tr>';
+        }).join('');
+      }
+      document.getElementById('btnCreateLink').addEventListener('click', async function () {
+        var out = document.getElementById('vlCreateResult');
+        var doc = document.getElementById('vlDoctorId').value;
+        var cohort = document.getElementById('vlCohortId').value;
+        if (!doc && !cohort) {
+          out.textContent = 'Enter a doctor user ID or cohort ID.';
+          return;
+        }
+        try {
+          var body = {
+            label: document.getElementById('vlLabel').value,
+            expires_days: Number(document.getElementById('vlDays').value || 14),
+          };
+          if (doc) body.doctor_user_id = Number(doc);
+          if (cohort) body.cohort_id = Number(cohort);
+          var data = await apiJson('/api/hr/verifier-links', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          out.innerHTML = 'Link created: <a href="' + esc(data.url) + '" target="_blank" rel="noopener">' + esc(data.url) + '</a>';
+          await loadLinks();
+        } catch (e) {
+          out.textContent = e.message || 'Error';
+        }
+      });
+      document.getElementById('vlLinksTbody').addEventListener('click', async function (e) {
+        var btn = e.target.closest('[data-revoke]');
+        if (!btn) return;
+        if (!confirm('Revoke this link?')) return;
+        try {
+          await apiJson('/api/hr/verifier-links/' + btn.getAttribute('data-revoke') + '/revoke', { method: 'POST' });
+          await loadLinks();
+        } catch (err) {
+          alert(err.message || 'Could not revoke');
+        }
+      });
+      (async function () {
+        await NHSAuth.refresh();
+        if (!NHSAuth.user || !NHSAuth.user.premium) {
+          window.location.replace('/static/dashboard/');
+          return;
+        }
+        if (window.NHSNavAccount) void NHSNavAccount.refresh();
+        var p = new URLSearchParams(window.location.search);
+        if (p.get('doctor_user_id')) document.getElementById('vlDoctorId').value = p.get('doctor_user_id');
+        await loadLinks();
+      })();
+      document.getElementById('btnSignOut').addEventListener('click', async function () {
+        await NHSAuth.signOut();
+        window.location.replace('/');
+      });
+    })();
+  </script>
+</body>
+</html>

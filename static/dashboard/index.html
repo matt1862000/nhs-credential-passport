@@ -157,6 +157,27 @@
       color: #4c6272;
       line-height: 1.35;
     }
+    .dash-compliance-banner {
+      margin-top: 1.25rem;
+      padding: 0.85rem 1rem;
+      border-radius: 4px;
+      border: 1px solid #d8dde0;
+      border-left: 4px solid #005eb8;
+      background: #f0f7fb;
+      max-width: 46rem;
+    }
+    .dash-compliance-banner--warn {
+      border-left-color: #d5700a;
+      background: #fff8ee;
+    }
+    .dash-compliance-banner--bad {
+      border-left-color: #d5281b;
+      background: #fef7f7;
+    }
+    .dash-compliance-banner p { margin: 0; font-size: 0.9375rem; line-height: 1.45; }
+    .dash-compliance-banner a { font-weight: 600; }
+    #hrExpiringStats { margin-top: 1rem; max-width: 46rem; }
+    #hrExpiringStats .nhs-stat-grid { margin-top: 0.5rem; }
   </style>
 </head>
 <body>
@@ -212,6 +233,10 @@
         </div>
       </div>
     </section>
+
+    <div id="complianceBanner" class="dash-compliance-banner" hidden role="region" aria-label="Trust requirements summary">
+      <p id="complianceBannerText"></p>
+    </div>
 
     <div id="gettingStartedCard" class="nhs-gs" hidden aria-label="Getting started guide">
       <div class="nhs-gs__head">
@@ -294,11 +319,29 @@
           <p class="nhs-action-desc">Send and receive messages from your trust HR team.</p>
           <span class="nhs-action-cta">Open messages &rsaquo;</span>
         </a>
+        <a class="nhs-action-card" href="/static/notifications/" role="listitem" id="doctorAlertsCard">
+          <div class="nhs-action-title nhs-action-title--inline">
+            <span>Alerts</span>
+            <span id="doctorAlertsBadge" class="nhs-inbox-pending-badge" hidden aria-live="polite"></span>
+          </div>
+          <p class="nhs-action-desc">HR verification updates and training recorded on your behalf.</p>
+          <span class="nhs-action-cta">View alerts &rsaquo;</span>
+        </a>
       </div>
     </section>
 
     <section id="premiumTrustTools" style="margin-top:2.25rem;" hidden aria-labelledby="premiumToolsTitle">
       <h2 id="premiumToolsTitle" class="nhsuk-page-heading" style="font-size:1.5rem;">Trust tools</h2>
+      <section id="hrExpiringStats" aria-labelledby="hrExpiringStatsTitle" hidden>
+        <h3 id="hrExpiringStatsTitle" style="font-size:1.125rem;margin:0 0 0.25rem 0;">Expiring at your trust (90 days)</h3>
+        <p class="nhsuk-hint" style="margin:0 0 0.5rem 0;">Clinicians with wallet records expiring or expired soon.</p>
+        <div class="nhs-stat-grid">
+          <div class="nhs-stat nhs-stat--warn">
+            <div class="nhs-stat__num" id="hrStatExpiring">&mdash;</div>
+            <div class="nhs-stat__label">Clinicians affected</div>
+          </div>
+        </div>
+      </section>
       <div class="nhs-action-grid" role="list">
         <a class="nhs-action-card" href="/static/hr/mandatory/" role="listitem">
           <div class="nhs-action-title">Mandatory requirements</div>
@@ -336,13 +379,33 @@
           <p class="nhs-action-desc">Provision clinicians from personal emails, group by cohort, and message everyone at once.</p>
           <span class="nhs-action-cta">Manage cohorts &rsaquo;</span>
         </a>
+        <a class="nhs-action-card" href="/static/hr/expiring.html" role="listitem">
+          <div class="nhs-action-title">Expiring training</div>
+          <p class="nhs-action-desc">See who at your trust has records expiring in the next 7, 30, or 90 days.</p>
+          <span class="nhs-action-cta">View report &rsaquo;</span>
+        </a>
+        <a class="nhs-action-card" href="/static/hr/audit.html" role="listitem">
+          <div class="nhs-action-title">Audit log</div>
+          <p class="nhs-action-desc">Export a record of verify, decline, unverify, and training issued by HR.</p>
+          <span class="nhs-action-cta">View log &rsaquo;</span>
+        </a>
+        <a class="nhs-action-card" href="/static/hr/verifier-links.html" role="listitem">
+          <div class="nhs-action-title">Verifier links</div>
+          <p class="nhs-action-desc">Time-limited read-only links for staffing to check verified training.</p>
+          <span class="nhs-action-cta">Manage links &rsaquo;</span>
+        </a>
+        <a class="nhs-action-card" href="/static/hr/welcome-templates.html" role="listitem">
+          <div class="nhs-action-title">Welcome templates</div>
+          <p class="nhs-action-desc">Message library for cohort welcomes, tied to mandatory topics.</p>
+          <span class="nhs-action-cta">Manage templates &rsaquo;</span>
+        </a>
       </div>
     </section>
   </main>
 
   <script src="/static/wallet/wallet-store.js"></script>
   <script src="/static/shared/auth.js"></script>
-  <script src="/static/shared/nav-account.js?v=20260522-1"></script>
+  <script src="/static/shared/nav-account.js?v=20260527-1"></script>
   <script>
     (function () {
       function statusOf(c) {
@@ -411,6 +474,78 @@
           badge.hidden = n === 0;
           badge.setAttribute('data-empty', n === 0 ? '1' : '0');
           badge.setAttribute('aria-label', n === 0 ? 'No unread messages' : n + ' unread message' + (n === 1 ? '' : 's'));
+        } catch (e) {
+          badge.hidden = true;
+        }
+      }
+
+      async function loadComplianceBanner() {
+        var banner = document.getElementById('complianceBanner');
+        var text = document.getElementById('complianceBannerText');
+        if (!banner || !text) return;
+        try {
+          var r = await fetch('/api/me/compliance-snapshot', { credentials: 'include' });
+          if (!r.ok) { banner.hidden = true; return; }
+          var data = await r.json();
+          if (!data.snapshot) {
+            banner.hidden = false;
+            banner.className = 'dash-compliance-banner';
+            text.innerHTML = (data.message || 'Set your current trust in Profile to see mandatory requirements.')
+              + ' <a href="/static/profile/">Profile</a>';
+            return;
+          }
+          var snap = data.snapshot;
+          var sum = snap.summary || {};
+          var gaps = Number(sum.gap || 0);
+          var expiring = Number(sum.expiring || 0);
+          var met = Number(sum.met || 0);
+          var total = Number(sum.total_topics || 0);
+          banner.hidden = false;
+          banner.className = 'dash-compliance-banner';
+          if (gaps > 0) banner.classList.add('dash-compliance-banner--bad');
+          else if (expiring > 0) banner.classList.add('dash-compliance-banner--warn');
+          if (total === 0) {
+            text.innerHTML = 'No mandatory topics configured for your trust yet. <a href="/static/requirements/">Trust requirements</a>';
+          } else if (gaps === 0 && expiring === 0) {
+            text.innerHTML = 'You meet all <strong>' + met + '</strong> mandatory trust requirements. <a href="/static/requirements/">View checklist</a>';
+          } else {
+            var parts = [];
+            if (gaps > 0) parts.push('<strong>' + gaps + '</strong> gap' + (gaps === 1 ? '' : 's'));
+            if (expiring > 0) parts.push('<strong>' + expiring + '</strong> expiring soon');
+            text.innerHTML = 'Trust requirements: ' + parts.join(', ') + ' out of ' + total + '. '
+              + '<a href="/static/requirements/">View checklist</a>';
+          }
+        } catch (e) {
+          banner.hidden = true;
+        }
+      }
+
+      async function loadHrExpiringStats() {
+        var section = document.getElementById('hrExpiringStats');
+        var num = document.getElementById('hrStatExpiring');
+        if (!section || !num) return;
+        try {
+          var r = await fetch('/api/hr/compliance/expiring?window_days=90', { credentials: 'include' });
+          if (!r.ok) { section.hidden = true; return; }
+          var data = await r.json();
+          var n = Number(data.doctor_count || (data.items || []).length || 0);
+          num.textContent = String(n);
+          section.hidden = false;
+        } catch (e) {
+          section.hidden = true;
+        }
+      }
+
+      async function loadAlertsBadge() {
+        var badge = document.getElementById('doctorAlertsBadge');
+        if (!badge) return;
+        try {
+          var r = await fetch('/api/me/notifications/unread-count', { credentials: 'include' });
+          if (!r.ok) { badge.hidden = true; return; }
+          var data = await r.json();
+          var n = Number(data.count || 0);
+          badge.textContent = n > 0 ? String(n) : '';
+          badge.hidden = n === 0;
         } catch (e) {
           badge.hidden = true;
         }
@@ -544,8 +679,11 @@
         if (NHSAuth.user.premium) {
           void loadHrInboxPendingBadge();
           void loadMsgBadge(true);
+          void loadHrExpiringStats();
         } else {
           void loadMsgBadge(false);
+          void loadAlertsBadge();
+          void loadComplianceBanner();
         }
 
         var dashboardTrainingStats = document.getElementById('dashboardTrainingStats');

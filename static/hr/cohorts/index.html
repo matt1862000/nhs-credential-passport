@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#005eb8">
   <title>Cohorts &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
-  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260526-3">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260528-1">
   <link rel="stylesheet" href="/static/shared/training-add-form.css?v=20260526-2">
   <link rel="stylesheet" href="/static/shared/messages-compose.css?v=20260524-2">
 </head>
@@ -210,9 +210,14 @@
         <div class="hr-segment" role="tablist" aria-label="Cohort actions">
           <button type="button" class="active" id="tabCohortMessage" role="tab" aria-selected="true" aria-controls="panelCohortMessage" data-tab="message">Message cohort</button>
           <button type="button" id="tabCohortAdd" role="tab" aria-selected="false" aria-controls="panelCohortAdd" data-tab="add">Add clinicians</button>
+          <button type="button" id="tabCohortCompliance" role="tab" aria-selected="false" aria-controls="panelCohortCompliance" data-tab="compliance">Compliance</button>
         </div>
 
         <div id="panelCohortMessage" class="hr-bulk-panel hr-cohort-panel" role="tabpanel" aria-labelledby="tabCohortMessage">
+          <div id="cohortPendingVerifyBanner" class="cohort-pending-verify-banner" hidden role="region" aria-label="Pending HR verification">
+            <p class="cohort-pending-verify-banner__text" id="cohortPendingVerifyText"></p>
+            <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnCohortNudgePending">Nudge with in-app message</button>
+          </div>
           <p class="nhsuk-hint" style="margin-top:0;max-width:none;" id="messageHint">Each person receives the same text in a <strong>separate private</strong> conversation.</p>
           <button type="button" class="hr-cohort-recipient-toggle" id="btnToggleRecipients" aria-expanded="false" aria-controls="recipientList">View recipients</button>
           <ul id="recipientList" class="hr-cohort-recipient-list" hidden aria-label="Recipients"></ul>
@@ -335,6 +340,30 @@
           <div id="addProvisionResult" class="hr-provision-viz-wrap" aria-live="polite"></div>
           <p id="addStatus" class="hr-cohort-status-msg hr-muted" role="status" aria-live="polite" hidden></p>
         </div>
+
+        <div id="panelCohortCompliance" class="hr-bulk-panel hr-cohort-panel" role="tabpanel" aria-labelledby="tabCohortCompliance" hidden>
+          <p class="nhsuk-hint" style="margin-top:0;max-width:none;">Mandatory training topics for your trust, matched against each clinician&rsquo;s wallet.</p>
+          <div class="hr-comp-actions">
+            <a class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnComplianceExport" href="#">Download CSV matrix</a>
+            <a class="nhsuk-button nhsuk-button--secondary hr-btn-small" href="/static/hr/expiring.html">Trust-wide expiring</a>
+          </div>
+          <div id="cohortCompSummary" class="hr-comp-summary" aria-live="polite"></div>
+          <h4 class="hr-comp-subhead">By mandatory topic</h4>
+          <div class="hr-table-wrap">
+            <table class="hr-table hr-comp-table" aria-label="Topic compliance">
+              <thead><tr><th>Topic</th><th>Met</th><th>Expiring</th><th>Gaps</th></tr></thead>
+              <tbody id="cohortCompTopicsTbody"></tbody>
+            </table>
+          </div>
+          <h4 class="hr-comp-subhead">By clinician</h4>
+          <div class="hr-table-wrap">
+            <table class="hr-table hr-comp-table" aria-label="Member compliance">
+              <thead><tr><th>Name</th><th>Met</th><th>Expiring</th><th>Gaps</th><th></th></tr></thead>
+              <tbody id="cohortCompMembersTbody"></tbody>
+            </table>
+          </div>
+          <p id="cohortCompStatus" class="hr-muted" role="status" aria-live="polite"></p>
+        </div>
       </div>
     </div>
   </main>
@@ -351,6 +380,19 @@
         <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnWelcomeReviewEdit" style="margin-top:0.5rem;">Edit message</button>
       </div>
       <div id="welcomeReviewEditBlock" hidden>
+        <div id="welcomeReviewLibraryBlock" class="nhsuk-form-group" style="margin-top:0.75rem;" hidden>
+          <label class="nhsuk-label" for="welcomeReviewLibrarySelect">Saved welcome template</label>
+          <span class="nhsuk-hint nhsuk-hint--secondary" id="welcomeReviewLibraryHint"></span>
+          <div style="display:flex;flex-wrap:wrap;gap:0.5rem;align-items:flex-end;margin-top:0.25rem;">
+            <select class="nhsuk-select" id="welcomeReviewLibrarySelect" style="flex:1;min-width:12rem;">
+              <option value="">— Choose a template —</option>
+            </select>
+            <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnWelcomeReviewApplyTemplate">Use template</button>
+          </div>
+          <p class="nhsuk-hint nhsuk-hint--secondary" style="margin:0.5rem 0 0 0;">
+            <a href="/static/hr/welcome-templates.html">Manage welcome template library</a>
+          </p>
+        </div>
         <label class="nhsuk-label" for="welcomeReviewTemplate">Message text</label>
         <span class="nhsuk-hint nhsuk-hint--secondary">Use <strong>{name}</strong> and <strong>{trust}</strong>.</span>
         <textarea class="nhsuk-textarea" id="welcomeReviewTemplate" rows="5" maxlength="4000" aria-describedby="welcomeReviewEditPreview"></textarea>
@@ -402,7 +444,7 @@
   <script src="/static/shared/vendor/xlsx.full.min.js?v=20260522-1"></script>
   <script src="/static/shared/cohort-roster-parse.js?v=20260524-5"></script>
   <script src="/static/shared/auth.js"></script>
-  <script src="/static/shared/nav-account.js?v=20260522-1"></script>
+  <script src="/static/shared/nav-account.js?v=20260527-1"></script>
   <script src="/static/shared/messages-common.js?v=20260524-2"></script>
   <script>
     (function () {
@@ -491,6 +533,76 @@
         }
       }
 
+      var _welcomeLibraryTemplates = [];
+
+      async function loadWelcomeTemplateSuggestions(cohortId) {
+        var block = document.getElementById('welcomeReviewLibraryBlock');
+        var sel = document.getElementById('welcomeReviewLibrarySelect');
+        var hint = document.getElementById('welcomeReviewLibraryHint');
+        _welcomeLibraryTemplates = [];
+        if (!sel) return;
+        sel.innerHTML = '<option value="">— Choose a template —</option>';
+        if (hint) hint.textContent = '';
+        show(block, false);
+        if (!cohortId) return;
+        try {
+          var data = await apiJson(
+            '/api/hr/cohorts/' + encodeURIComponent(String(cohortId)) + '/welcome-template-suggestions'
+          );
+          var suggested = data.suggested_templates || [];
+          var all = data.all_templates || [];
+          var gapTopics = data.gap_topics || [];
+          _welcomeLibraryTemplates = all.slice();
+          if (!all.length) return;
+          show(block, true);
+          if (hint) {
+            if (gapTopics.length) {
+              hint.textContent = 'Suggested for mandatory gaps in this cohort'
+                + (gapTopics.length === 1 ? ': ' + (gapTopics[0].topic_name || 'topic') + '.' : ' (' + gapTopics.length + ' topics).');
+            } else {
+              hint.textContent = 'Pick a saved template from your library.';
+            }
+          }
+          var seen = {};
+          function addGroup(label, items) {
+            if (!items.length) return;
+            var og = document.createElement('optgroup');
+            og.label = label;
+            items.forEach(function (t) {
+              if (!t || seen[t.id]) return;
+              seen[t.id] = true;
+              var opt = document.createElement('option');
+              opt.value = String(t.id);
+              var meta = t.reason ? ' — ' + t.reason : (t.topic_name ? ' (' + t.topic_name + ')' : '');
+              opt.textContent = (t.name || 'Template') + meta;
+              og.appendChild(opt);
+            });
+            if (og.children.length) sel.appendChild(og);
+          }
+          addGroup('Suggested', suggested);
+          var rest = all.filter(function (t) { return !seen[t.id]; });
+          addGroup('All templates', rest);
+        } catch (e) {
+          /* library optional */
+        }
+      }
+
+      function applyWelcomeLibraryTemplate() {
+        var sel = document.getElementById('welcomeReviewLibrarySelect');
+        var ta = document.getElementById('welcomeReviewTemplate');
+        if (!sel || !ta || !sel.value) return;
+        var t = _welcomeLibraryTemplates.find(function (x) { return String(x.id) === sel.value; });
+        if (!t || !t.body) return;
+        ta.value = t.body;
+        renderWelcomePreview(ta.value, 'welcomeReviewEditPreview');
+        var preview = document.getElementById('welcomeReviewPreview');
+        if (preview) {
+          preview.innerHTML = '<strong>Preview:</strong> ' + esc(
+            renderWelcomeTemplate(ta.value, (_welcomeReviewState && _welcomeReviewState.previewName) || 'Jane Smith', trustLabelForWelcome())
+          );
+        }
+      }
+
       function openWelcomeReviewForPending() {
         if (!_activeCohortMeta) return;
         var pending = _detailMembers.filter(function (m) {
@@ -539,6 +651,7 @@
         }
         setWelcomeReviewEditMode(false);
         show(modal, true);
+        void loadWelcomeTemplateSuggestions(cohort.id);
       }
 
       function userIdsAwaitingWelcomeFromResults(results) {
@@ -1070,26 +1183,148 @@
         if (kind === 'error') el.classList.add('hr-cohort-status-msg--error');
       }
 
+      var _cohortComplianceCache = null;
+
+      function renderCohortCompliance(snap) {
+        _cohortComplianceCache = snap;
+        var summaryEl = document.getElementById('cohortCompSummary');
+        var topicsTb = document.getElementById('cohortCompTopicsTbody');
+        var membersTb = document.getElementById('cohortCompMembersTbody');
+        var statusEl = document.getElementById('cohortCompStatus');
+        var exportBtn = document.getElementById('btnComplianceExport');
+        if (!snap) {
+          if (summaryEl) summaryEl.innerHTML = '<p class="hr-muted">Could not load compliance data.</p>';
+          if (topicsTb) topicsTb.innerHTML = '';
+          if (membersTb) membersTb.innerHTML = '';
+          return;
+        }
+        var sum = snap.summary || {};
+        var topics = snap.topics || [];
+        var members = snap.members || [];
+        if (summaryEl) {
+          summaryEl.innerHTML =
+            '<div class="hr-comp-pill hr-comp-pill--ok"><span class="hr-comp-pill__n">' + esc(sum.fully_compliant || 0) + '</span><span class="hr-comp-pill__l">Fully compliant</span></div>'
+            + '<div class="hr-comp-pill hr-comp-pill--warn"><span class="hr-comp-pill__n">' + esc(sum.has_gaps || 0) + '</span><span class="hr-comp-pill__l">With gaps or expiring</span></div>'
+            + '<div class="hr-comp-pill"><span class="hr-comp-pill__n">' + esc(sum.total_members || members.length) + '</span><span class="hr-comp-pill__l">Members</span></div>';
+        }
+        if (!topics.length) {
+          if (topicsTb) topicsTb.innerHTML = '<tr><td colspan="4" class="hr-muted">No mandatory topics configured. <a href="/static/hr/mandatory/">Set requirements</a>.</td></tr>';
+        } else if (topicsTb) {
+          topicsTb.innerHTML = topics.map(function (t) {
+            return '<tr><td>' + esc(t.topic_name || 'Topic') + '</td><td>' + esc(t.met || 0)
+              + '</td><td>' + esc(t.expiring || 0) + '</td><td>' + esc(t.gap || 0) + '</td></tr>';
+          }).join('');
+        }
+        if (!members.length) {
+          if (membersTb) membersTb.innerHTML = '<tr><td colspan="5" class="hr-muted">No members in this cohort.</td></tr>';
+        } else if (membersTb) {
+          membersTb.innerHTML = members.map(function (m) {
+            var s = m.summary || {};
+            var searchUrl = '/static/hr/search.html?q=' + encodeURIComponent(m.email || m.display_name || '');
+            return '<tr><td>' + esc(memberDisplayLabel(m)) + '</td><td>' + esc(s.met || 0)
+              + '</td><td>' + esc(s.expiring || 0) + '</td><td>' + esc(s.gap || 0)
+              + '</td><td class="hr-open-wrap"><a class="hr-open-btn hr-open-btn--small" href="' + esc(searchUrl) + '">View</a></td></tr>';
+          }).join('');
+        }
+        if (statusEl) {
+          statusEl.textContent = topics.length
+            ? 'Updated ' + new Date().toLocaleString('en-GB', { hour: '2-digit', minute: '2-digit' }) + '.'
+            : '';
+        }
+        if (exportBtn && _activeCohortId) {
+          exportBtn.href = '/api/hr/cohorts/' + encodeURIComponent(String(_activeCohortId)) + '/compliance-export';
+        }
+      }
+
+      async function loadCohortCompliance() {
+        if (!_activeCohortId) return;
+        var statusEl = document.getElementById('cohortCompStatus');
+        if (statusEl) statusEl.textContent = 'Loading compliance…';
+        try {
+          var data = await apiJson('/api/hr/cohorts/' + encodeURIComponent(String(_activeCohortId)) + '/compliance-snapshot');
+          renderCohortCompliance(data.snapshot || null);
+        } catch (err) {
+          renderCohortCompliance(null);
+          if (statusEl) statusEl.textContent = err.message || 'Could not load compliance';
+        }
+      }
+
+      var LS_COHORT_TAB = 'hr_tab_cohort';
+      var _cohortPendingVerify = [];
+
+      function loadStoredCohortTab() {
+        try {
+          var v = localStorage.getItem(LS_COHORT_TAB);
+          if (v === 'add' || v === 'compliance' || v === 'message') return v;
+        } catch (e) { /* ignore */ }
+        return 'message';
+      }
+
+      function saveStoredCohortTab(tab) {
+        try {
+          localStorage.setItem(LS_COHORT_TAB, tab);
+        } catch (e) { /* ignore */ }
+      }
+
+      async function refreshCohortPendingVerifyBanner() {
+        var banner = document.getElementById('cohortPendingVerifyBanner');
+        var text = document.getElementById('cohortPendingVerifyText');
+        _cohortPendingVerify = [];
+        show(banner, false);
+        if (!_activeCohortId || !banner) return;
+        try {
+          var data = await apiJson(
+            '/api/hr/cohorts/' + encodeURIComponent(String(_activeCohortId)) + '/pending-verification'
+          );
+          _cohortPendingVerify = data.members || [];
+          if (!_cohortPendingVerify.length) return;
+          show(banner, true);
+          if (text) {
+            var n = _cohortPendingVerify.length;
+            text.textContent =
+              n === 1
+                ? '1 clinician in this cohort has training awaiting HR verification. Send them an in-app reminder.'
+                : String(n) + ' clinicians in this cohort have training awaiting HR verification. Send them an in-app reminder.';
+          }
+        } catch (e) {
+          /* optional */
+        }
+      }
+
+      var COHORT_NUDGE_DEFAULT =
+        'You have training shared with HR that still needs verification. Please check your DocPass messages or open My training to see anything outstanding.';
+
       function setCohortTab(tab) {
-        var isMsg = tab !== 'add';
+        saveStoredCohortTab(tab);
+        var isMsg = tab === 'message';
+        var isAdd = tab === 'add';
+        var isComp = tab === 'compliance';
         var tabMsg = document.getElementById('tabCohortMessage');
         var tabAdd = document.getElementById('tabCohortAdd');
+        var tabComp = document.getElementById('tabCohortCompliance');
         var panelMsg = document.getElementById('panelCohortMessage');
         var panelAdd = document.getElementById('panelCohortAdd');
+        var panelComp = document.getElementById('panelCohortCompliance');
         if (tabMsg) {
           tabMsg.classList.toggle('active', isMsg);
           tabMsg.setAttribute('aria-selected', isMsg ? 'true' : 'false');
         }
         if (tabAdd) {
-          tabAdd.classList.toggle('active', !isMsg);
-          tabAdd.setAttribute('aria-selected', !isMsg ? 'true' : 'false');
+          tabAdd.classList.toggle('active', isAdd);
+          tabAdd.setAttribute('aria-selected', isAdd ? 'true' : 'false');
+        }
+        if (tabComp) {
+          tabComp.classList.toggle('active', isComp);
+          tabComp.setAttribute('aria-selected', isComp ? 'true' : 'false');
         }
         show(panelMsg, isMsg);
-        show(panelAdd, !isMsg);
-        if (!isMsg) {
+        show(panelAdd, isAdd);
+        show(panelComp, isComp);
+        if (isAdd) {
           updateAddCohortNamePreviews();
           resetAddWizard();
         }
+        if (isComp) void loadCohortCompliance();
       }
 
       function addCohortDisplayName() {
@@ -1359,7 +1594,8 @@
         renderMembersTable();
         updateCohortActionUI();
         updateAddCohortNamePreviews();
-        setCohortTab('message');
+        setCohortTab(loadStoredCohortTab());
+        void refreshCohortPendingVerifyBanner();
         var recipList = document.getElementById('recipientList');
         var recipToggle = document.getElementById('btnToggleRecipients');
         if (recipList) recipList.hidden = true;
@@ -1381,6 +1617,11 @@
             opts.welcomeReview.userIds,
             opts.welcomeReview.results
           );
+        }
+        _cohortComplianceCache = null;
+        var exportBtn = document.getElementById('btnComplianceExport');
+        if (exportBtn) {
+          exportBtn.href = '/api/hr/cohorts/' + encodeURIComponent(String(id)) + '/compliance-export';
         }
       }
 
@@ -1618,6 +1859,10 @@
       document.getElementById('btnWelcomeReviewEdit').addEventListener('click', function () {
         setWelcomeReviewEditMode(true);
       });
+      document.getElementById('btnWelcomeReviewApplyTemplate').addEventListener('click', applyWelcomeLibraryTemplate);
+      document.getElementById('welcomeReviewLibrarySelect').addEventListener('change', function () {
+        if (this.value) applyWelcomeLibraryTemplate();
+      });
       document.getElementById('welcomeReviewTemplate').addEventListener('input', function () {
         renderWelcomePreview(this.value, 'welcomeReviewEditPreview');
       });
@@ -1719,6 +1964,48 @@
         list.hidden = !open;
         btn.setAttribute('aria-expanded', open ? 'true' : 'false');
         btn.textContent = (open ? 'Hide' : 'View') + ' recipients (' + _detailMembers.length + ')';
+      });
+
+      document.getElementById('btnCohortNudgePending').addEventListener('click', async function () {
+        if (!_activeCohortId || !_cohortPendingVerify.length) return;
+        var ids = _cohortPendingVerify.map(function (m) { return m.user_id; });
+        var body = COHORT_NUDGE_DEFAULT;
+        var custom = window.prompt(
+          'Message to send (' + ids.length + ' clinician' + (ids.length === 1 ? '' : 's') + ' with pending verification):',
+          body
+        );
+        if (custom === null) return;
+        body = String(custom).trim();
+        if (!body) return;
+        if (!confirm('Send this in-app message to ' + ids.length + ' clinician' + (ids.length === 1 ? '' : 's') + '?')) return;
+        var st = document.getElementById('msgStatus');
+        var msgViz = document.getElementById('msgProvisionResult');
+        show(st, false);
+        clearProvisionResult(msgViz);
+        if (viz()) viz().showLoading(msgViz, 'Sending reminders…');
+        try {
+          var out;
+          if (window.NHSMessages && typeof NHSMessages.sendBroadcast === 'function') {
+            out = await NHSMessages.sendBroadcast(
+              '/api/hr/cohorts/' + encodeURIComponent(String(_activeCohortId)) + '/message',
+              ids,
+              body,
+              [],
+              msgViz
+            );
+          } else {
+            out = await apiJson('/api/hr/cohorts/' + encodeURIComponent(String(_activeCohortId)) + '/message', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ body: body, doctor_user_ids: ids }),
+            });
+          }
+          if (viz()) viz().cohortMessage(msgViz, out);
+        } catch (err) {
+          clearProvisionResult(msgViz);
+          show(st, true);
+          setStatusEl(st, err.message || 'Nudge failed', 'error');
+        }
       });
 
       document.getElementById('formCohortMessage').addEventListener('submit', async function (e) {

@@ -7,7 +7,7 @@ import os
 import re
 import sqlite3
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Callable, Optional
 import secrets
 
@@ -90,6 +90,11 @@ def init_db():
         _ensure_hr_attestations_table(conn)
         _ensure_users_provision_columns(conn)
         _ensure_hr_cohorts_tables(conn)
+        _ensure_notifications_table(conn)
+        _ensure_hr_audit_log_table(conn)
+        _ensure_hr_bulk_templates_table(conn)
+        _ensure_hr_verifier_links_table(conn)
+        _ensure_hr_welcome_templates_table(conn)
         _ensure_seed_privileged_user(conn)
         _ensure_seed_rotherham_user(conn)
         _backfill_sheffield_partnership_trust_labels(conn)
@@ -135,7 +140,7 @@ def _ensure_visibility_tables(conn: sqlite3.Connection) -> None:
 # ── Visibility helpers ────────────────────────────────────────────────────────
 
 def visibility_get(doctor_user_id: int) -> dict:
-    """Return { mode, allowlist: [{trust_name, trust_ods}] } for a doctor."""
+    """Return { mode, allowlist, messaged_trusts } for a doctor."""
     with sqlite3.connect(DB_PATH) as conn:
         _ensure_visibility_tables(conn)
         conn.row_factory = sqlite3.Row
@@ -143,20 +148,22 @@ def visibility_get(doctor_user_id: int) -> dict:
             "SELECT mode FROM doctor_visibility WHERE doctor_user_id = ?",
             (int(doctor_user_id),),
         ).fetchone()
-        mode = str(row["mode"]) if row else "all"
+        mode = str(row["mode"]) if row else "messaged"
         al_rows = conn.execute(
             "SELECT trust_name, trust_ods FROM doctor_visibility_allowlist WHERE doctor_user_id = ? ORDER BY trust_name",
             (int(doctor_user_id),),
         ).fetchall()
+        messaged = sorted(_doctor_messaged_trust_names(int(doctor_user_id), conn))
     return {
         "mode": mode,
         "allowlist": [{"trust_name": r["trust_name"], "trust_ods": r["trust_ods"]} for r in al_rows],
+        "messaged_trusts": messaged,
     }
 
 
 def visibility_set(doctor_user_id: int, mode: str, allowlist: list[dict]) -> None:
     """Upsert visibility mode and replace allowlist."""
-    valid_modes = {"all", "current", "allowlist"}
+    valid_modes = {"all", "current", "allowlist", "messaged"}
     mode = mode if mode in valid_modes else "all"
     with sqlite3.connect(DB_PATH) as conn:
         _ensure_visibility_tables(conn)
@@ -176,6 +183,57 @@ def visibility_set(doctor_user_id: int, mode: str, allowlist: list[dict]) -> Non
         conn.commit()
 
 
+def _doctor_messaged_trust_names(doctor_user_id: int, conn: sqlite3.Connection) -> set[str]:
+    """Trust names where doctor has a DocPass message thread with HR."""
+    _ensure_messaging_tables(conn)
+    rows = conn.execute(
+        """
+        SELECT DISTINCT TRIM(hr_trust) AS t
+        FROM conversations
+        WHERE doctor_user_id = ? AND TRIM(COALESCE(hr_trust, '')) != ''
+        """,
+        (int(doctor_user_id),),
+    ).fetchall()
+    return {str(r["t"]).strip().lower() for r in rows if r["t"]}
+
+
+def share_credential_was_declined(
+    doctor_user_id: int,
+    credential_id: str,
+    hr_trust: Optional[str] = None,
+) -> bool:
+    """True if this credential was previously DECLINED for the doctor (optionally at a trust)."""
+    cid = (credential_id or "").strip()
+    if not cid:
+        return False
+    trust = (hr_trust or "").strip().lower()
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_share_tables(conn)
+        if trust:
+            row = conn.execute(
+                """
+                SELECT 1 FROM share_items i
+                JOIN share_sessions s ON s.id = i.session_id
+                WHERE s.doctor_user_id = ? AND i.credential_id = ?
+                  AND i.status = 'DECLINED'
+                  AND LOWER(TRIM(COALESCE(s.target_trust, ''))) = ?
+                LIMIT 1
+                """,
+                (int(doctor_user_id), cid, trust),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                """
+                SELECT 1 FROM share_items i
+                JOIN share_sessions s ON s.id = i.session_id
+                WHERE s.doctor_user_id = ? AND i.credential_id = ? AND i.status = 'DECLINED'
+                LIMIT 1
+                """,
+                (int(doctor_user_id), cid),
+            ).fetchone()
+    return row is not None
+
+
 def _doctor_visible_to_trust(doctor_user_id: int, hr_trust: str, conn: sqlite3.Connection) -> bool:
     """Check if a doctor has permitted this HR trust to view their training."""
     conn.row_factory = sqlite3.Row
@@ -183,7 +241,7 @@ def _doctor_visible_to_trust(doctor_user_id: int, hr_trust: str, conn: sqlite3.C
         "SELECT mode FROM doctor_visibility WHERE doctor_user_id = ?",
         (int(doctor_user_id),),
     ).fetchone()
-    mode = str(row["mode"]) if row else "all"
+    mode = str(row["mode"]) if row else "messaged"
     if mode == "all":
         return True
     if mode == "current":
@@ -196,6 +254,8 @@ def _doctor_visible_to_trust(doctor_user_id: int, hr_trust: str, conn: sqlite3.C
             (int(doctor_user_id), hr_trust.strip().lower()),
         ).fetchone()
         return match is not None
+    if mode == "messaged":
+        return hr_trust.strip().lower() in _doctor_messaged_trust_names(int(doctor_user_id), conn)
     return False
 
 
@@ -1420,6 +1480,8 @@ def _ensure_share_tables(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE share_items ADD COLUMN decision_by_user_id INTEGER REFERENCES users(id)")
     if "decline_reason" not in cols:
         conn.execute("ALTER TABLE share_items ADD COLUMN decline_reason TEXT")
+    if "is_resubmission" not in cols:
+        conn.execute("ALTER TABLE share_items ADD COLUMN is_resubmission INTEGER NOT NULL DEFAULT 0")
     if "certificate_base64" not in cols:
         conn.execute("ALTER TABLE share_items ADD COLUMN certificate_base64 TEXT")
     if "certificate_filename" not in cols:
@@ -1547,13 +1609,16 @@ def share_session_create(
                     ),
                 )
             else:
+                resub = 1 if share_credential_was_declined(
+                    doctor_user_id, cid, target_trust
+                ) else 0
                 conn.execute(
                     """
                     INSERT OR IGNORE INTO share_items (
                         session_id, credential_id, module_name, expiry_date, status,
                         certificate_base64, certificate_filename,
-                        issuing_trust_name
-                    ) VALUES (?, ?, ?, ?, 'PENDING', ?, ?, ?)
+                        issuing_trust_name, is_resubmission
+                    ) VALUES (?, ?, ?, ?, 'PENDING', ?, ?, ?, ?)
                     """,
                     (
                         session_id,
@@ -1563,6 +1628,7 @@ def share_session_create(
                         it.get("certificate_base64"),
                         it.get("certificate_filename"),
                         (it.get("issuing_trust_name") or "").strip() or None,
+                        resub,
                     ),
                 )
         conn.commit()
@@ -1591,7 +1657,10 @@ def share_inbox_list(limit: int = 50, hr_trust: Optional[str] = None) -> list[di
                   COUNT(i.credential_id) as total_count,
                   SUM(CASE WHEN i.status = 'VERIFIED' THEN 1 ELSE 0 END) as verified_count,
                   SUM(CASE WHEN i.status = 'DECLINED' THEN 1 ELSE 0 END) as declined_count,
-                  SUM(CASE WHEN i.status = 'PENDING' THEN 1 ELSE 0 END) as pending_count
+                  SUM(CASE WHEN i.status = 'PENDING' THEN 1 ELSE 0 END) as pending_count,
+                  GROUP_CONCAT(DISTINCT NULLIF(TRIM(i.module_name), '')) as module_names_raw,
+                  GROUP_CONCAT(DISTINCT CASE WHEN i.status = 'PENDING'
+                    THEN NULLIF(TRIM(i.module_name), '') END) as pending_module_names_raw
                 FROM share_sessions s
                 JOIN users u ON u.id = s.doctor_user_id
                 LEFT JOIN share_items i ON i.session_id = s.id
@@ -1619,7 +1688,10 @@ def share_inbox_list(limit: int = 50, hr_trust: Optional[str] = None) -> list[di
                   COUNT(i.credential_id) as total_count,
                   SUM(CASE WHEN i.status = 'VERIFIED' THEN 1 ELSE 0 END) as verified_count,
                   SUM(CASE WHEN i.status = 'DECLINED' THEN 1 ELSE 0 END) as declined_count,
-                  SUM(CASE WHEN i.status = 'PENDING' THEN 1 ELSE 0 END) as pending_count
+                  SUM(CASE WHEN i.status = 'PENDING' THEN 1 ELSE 0 END) as pending_count,
+                  GROUP_CONCAT(DISTINCT NULLIF(TRIM(i.module_name), '')) as module_names_raw,
+                  GROUP_CONCAT(DISTINCT CASE WHEN i.status = 'PENDING'
+                    THEN NULLIF(TRIM(i.module_name), '') END) as pending_module_names_raw
                 FROM share_sessions s
                 JOIN users u ON u.id = s.doctor_user_id
                 LEFT JOIN share_items i ON i.session_id = s.id
@@ -1647,9 +1719,64 @@ def share_inbox_list(limit: int = 50, hr_trust: Optional[str] = None) -> list[di
                 "verified_count": int(r["verified_count"] or 0),
                 "declined_count": int(r["declined_count"] or 0),
                 "pending_count": int(r["pending_count"] or 0),
+                "module_names": _split_group_concat(r["module_names_raw"]),
+                "pending_module_names": _split_group_concat(r["pending_module_names_raw"]),
             }
         )
     return out
+
+
+def _split_group_concat(raw: Optional[str]) -> list[str]:
+    if not raw:
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for part in str(raw).split(","):
+        name = part.strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        out.append(name)
+    return sorted(out, key=lambda x: x.lower())
+
+
+def cohort_members_pending_verification(cohort_id: int, hr_trust: str) -> list[dict]:
+    """Cohort members with at least one PENDING HR share item at this trust (excludes portfolio)."""
+    trust = (hr_trust or "").strip().lower()
+    member_ids = cohort_member_user_ids(int(cohort_id), hr_trust)
+    if not member_ids or not trust:
+        return []
+    placeholders = ",".join("?" * len(member_ids))
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_share_tables(conn)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            f"""
+            SELECT DISTINCT
+              s.doctor_user_id AS user_id,
+              u.display_name AS display_name,
+              u.email AS email,
+              COUNT(i.credential_id) AS pending_items
+            FROM share_sessions s
+            JOIN share_items i ON i.session_id = s.id AND i.status = 'PENDING'
+            JOIN users u ON u.id = s.doctor_user_id
+            WHERE s.doctor_user_id IN ({placeholders})
+              AND LOWER(TRIM(COALESCE(s.target_trust, ''))) = ?
+              AND LOWER(TRIM(COALESCE(s.share_kind, 'review'))) != 'portfolio'
+            GROUP BY s.doctor_user_id
+            ORDER BY u.display_name COLLATE NOCASE, u.email
+            """,
+            (*member_ids, trust),
+        ).fetchall()
+    return [
+        {
+            "user_id": int(r["user_id"]),
+            "display_name": r["display_name"],
+            "email": r["email"],
+            "pending_items": int(r["pending_items"] or 0),
+        }
+        for r in rows
+    ]
 
 
 def share_doctor_queue(doctor_user_id: int, hr_trust: Optional[str] = None) -> Optional[dict]:
@@ -1682,7 +1809,8 @@ def share_doctor_queue(doctor_user_id: int, hr_trust: Optional[str] = None) -> O
               IFNULL(s.share_kind, 'review') as session_share_kind,
               i.credential_id, i.module_name, i.expiry_date, i.status, i.decision_at,
               i.decline_reason, i.certificate_base64, i.certificate_filename,
-              i.issuing_trust_name, i.verified_by_trust_name
+              i.issuing_trust_name, i.verified_by_trust_name,
+              IFNULL(i.is_resubmission, 0) as is_resubmission
             FROM share_sessions s
             JOIN share_items i ON i.session_id = s.id
             WHERE s.doctor_user_id = ?
@@ -1705,6 +1833,7 @@ def share_doctor_queue(doctor_user_id: int, hr_trust: Optional[str] = None) -> O
             "certificate_filename": r["certificate_filename"],
             "issuing_trust_name": r["issuing_trust_name"],
             "verified_by_trust_name": r["verified_by_trust_name"],
+            "is_resubmission": bool(r["is_resubmission"]),
         }
         for r in rows
     ]
@@ -1743,7 +1872,8 @@ def share_session_get(session_id: int) -> Optional[dict]:
             """
             SELECT credential_id, module_name, expiry_date, status, decision_at, decision_by_user_id, decline_reason,
                    certificate_base64, certificate_filename,
-                   issuing_trust_name, verified_by_trust_name
+                   issuing_trust_name, verified_by_trust_name,
+                   IFNULL(is_resubmission, 0) as is_resubmission
             FROM share_items
             WHERE session_id = ?
             ORDER BY credential_id
@@ -1775,6 +1905,7 @@ def share_session_get(session_id: int) -> Optional[dict]:
                 "certificate_filename": r["certificate_filename"],
                 "issuing_trust_name": r["issuing_trust_name"],
                 "verified_by_trust_name": r["verified_by_trust_name"],
+                "is_resubmission": bool(r["is_resubmission"]),
             }
             for r in items
         ],
@@ -2092,6 +2223,258 @@ def _backfill_onboarding_completed(conn: sqlite3.Connection) -> None:
           AND TRIM(COALESCE(current_trust, '')) != ''
         """
     )
+
+
+def _ensure_notifications_table(conn: sqlite3.Connection) -> None:
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS user_notifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            kind TEXT NOT NULL,
+            title TEXT NOT NULL,
+            body TEXT NOT NULL,
+            link_path TEXT,
+            meta_json TEXT,
+            read_at TEXT,
+            created_at TEXT NOT NULL
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_notifications_user ON user_notifications(user_id, created_at DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_notifications_unread ON user_notifications(user_id, read_at)"
+    )
+
+
+def _ensure_hr_audit_log_table(conn: sqlite3.Connection) -> None:
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS hr_audit_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            hr_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            action TEXT NOT NULL,
+            trust_name TEXT,
+            doctor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            credential_id TEXT,
+            session_id INTEGER,
+            detail TEXT,
+            meta_json TEXT,
+            created_at TEXT NOT NULL
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_hr_audit_trust ON hr_audit_log(trust_name, created_at DESC)"
+    )
+
+
+def notification_create(
+    user_id: int,
+    *,
+    kind: str,
+    title: str,
+    body: str,
+    link_path: Optional[str] = None,
+    meta: Optional[dict] = None,
+) -> int:
+    now = datetime.utcnow().isoformat()
+    meta_json = json.dumps(meta) if meta else None
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_notifications_table(conn)
+        cur = conn.execute(
+            """
+            INSERT INTO user_notifications (user_id, kind, title, body, link_path, meta_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                int(user_id),
+                str(kind).strip(),
+                str(title).strip(),
+                str(body).strip(),
+                (link_path or "").strip() or None,
+                meta_json,
+                now,
+            ),
+        )
+        conn.commit()
+        return int(cur.lastrowid)
+
+
+def notifications_list(
+    user_id: int,
+    *,
+    limit: int = 50,
+    unread_only: bool = False,
+) -> list[dict]:
+    lim = max(1, min(int(limit), 200))
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_notifications_table(conn)
+        conn.row_factory = sqlite3.Row
+        q = """
+            SELECT id, kind, title, body, link_path, meta_json, read_at, created_at
+            FROM user_notifications
+            WHERE user_id = ?
+        """
+        params: list = [int(user_id)]
+        if unread_only:
+            q += " AND read_at IS NULL"
+        q += " ORDER BY datetime(created_at) DESC LIMIT ?"
+        params.append(lim)
+        rows = conn.execute(q, params).fetchall()
+    out = []
+    for r in rows:
+        meta = None
+        if r["meta_json"]:
+            try:
+                meta = json.loads(r["meta_json"])
+            except Exception:
+                meta = None
+        out.append(
+            {
+                "id": int(r["id"]),
+                "kind": r["kind"],
+                "title": r["title"],
+                "body": r["body"],
+                "link_path": r["link_path"],
+                "meta": meta,
+                "read_at": r["read_at"],
+                "created_at": r["created_at"],
+                "unread": r["read_at"] is None,
+            }
+        )
+    return out
+
+
+def notifications_unread_count(user_id: int) -> int:
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_notifications_table(conn)
+        row = conn.execute(
+            "SELECT COUNT(*) FROM user_notifications WHERE user_id = ? AND read_at IS NULL",
+            (int(user_id),),
+        ).fetchone()
+    return int(row[0] or 0)
+
+
+def notification_mark_read(notification_id: int, user_id: int) -> bool:
+    now = datetime.utcnow().isoformat()
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_notifications_table(conn)
+        cur = conn.execute(
+            """
+            UPDATE user_notifications SET read_at = ?
+            WHERE id = ? AND user_id = ? AND read_at IS NULL
+            """,
+            (now, int(notification_id), int(user_id)),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def notifications_mark_all_read(user_id: int) -> int:
+    now = datetime.utcnow().isoformat()
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_notifications_table(conn)
+        cur = conn.execute(
+            """
+            UPDATE user_notifications SET read_at = ?
+            WHERE user_id = ? AND read_at IS NULL
+            """,
+            (now, int(user_id)),
+        )
+        conn.commit()
+        return cur.rowcount
+
+
+def hr_audit_log_append(
+    hr_user_id: int,
+    action: str,
+    *,
+    trust_name: Optional[str] = None,
+    doctor_user_id: Optional[int] = None,
+    credential_id: Optional[str] = None,
+    session_id: Optional[int] = None,
+    detail: Optional[str] = None,
+    meta: Optional[dict] = None,
+) -> int:
+    now = datetime.utcnow().isoformat()
+    meta_json = json.dumps(meta) if meta else None
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_hr_audit_log_table(conn)
+        cur = conn.execute(
+            """
+            INSERT INTO hr_audit_log (
+                hr_user_id, action, trust_name, doctor_user_id, credential_id,
+                session_id, detail, meta_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                int(hr_user_id),
+                str(action).strip(),
+                (trust_name or "").strip() or None,
+                int(doctor_user_id) if doctor_user_id is not None else None,
+                str(credential_id).strip() if credential_id else None,
+                int(session_id) if session_id is not None else None,
+                (detail or "").strip() or None,
+                meta_json,
+                now,
+            ),
+        )
+        conn.commit()
+        return int(cur.lastrowid)
+
+
+def hr_audit_log_list(
+    hr_trust: str,
+    *,
+    limit: int = 100,
+    offset: int = 0,
+    action: Optional[str] = None,
+) -> list[dict]:
+    t = (hr_trust or "").strip().lower()
+    lim = max(1, min(int(limit), 500))
+    off = max(0, int(offset))
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_hr_audit_log_table(conn)
+        conn.row_factory = sqlite3.Row
+        q = """
+            SELECT a.id, a.hr_user_id, a.action, a.trust_name, a.doctor_user_id,
+                   a.credential_id, a.session_id, a.detail, a.meta_json, a.created_at,
+                   u.email as hr_email, u.display_name as hr_display_name
+            FROM hr_audit_log a
+            JOIN users u ON u.id = a.hr_user_id
+            WHERE LOWER(TRIM(COALESCE(a.trust_name, ''))) = ?
+        """
+        params: list = [t]
+        if action:
+            q += " AND a.action = ?"
+            params.append(str(action).strip())
+        q += " ORDER BY datetime(a.created_at) DESC LIMIT ? OFFSET ?"
+        params.extend([lim, off])
+        rows = conn.execute(q, params).fetchall()
+    out = []
+    for r in rows:
+        meta = None
+        if r["meta_json"]:
+            try:
+                meta = json.loads(r["meta_json"])
+            except Exception:
+                meta = None
+        out.append(
+            {
+                "id": int(r["id"]),
+                "hr_user_id": int(r["hr_user_id"]),
+                "hr_email": r["hr_email"],
+                "hr_display_name": r["hr_display_name"],
+                "action": r["action"],
+                "trust_name": r["trust_name"],
+                "doctor_user_id": r["doctor_user_id"],
+                "credential_id": r["credential_id"],
+                "session_id": r["session_id"],
+                "detail": r["detail"],
+                "meta": meta,
+                "created_at": r["created_at"],
+            }
+        )
+    return out
 
 
 def _ensure_hr_cohorts_tables(conn: sqlite3.Connection) -> None:
@@ -3045,3 +3428,488 @@ def cohort_add_members(
             )
         )
     return results
+
+
+# ── Phase 3: bulk templates, verifier links, welcome templates ───────────────
+
+
+def _ensure_hr_bulk_templates_table(conn: sqlite3.Connection) -> None:
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS hr_bulk_templates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            hr_trust TEXT NOT NULL,
+            created_by_user_id INTEGER NOT NULL REFERENCES users(id),
+            name TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+
+
+def _ensure_hr_verifier_links_table(conn: sqlite3.Connection) -> None:
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS hr_verifier_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            token TEXT NOT NULL UNIQUE,
+            hr_trust TEXT NOT NULL,
+            created_by_user_id INTEGER NOT NULL REFERENCES users(id),
+            doctor_user_id INTEGER REFERENCES users(id),
+            cohort_id INTEGER REFERENCES hr_cohorts(id),
+            label TEXT,
+            expires_at TEXT NOT NULL,
+            revoked_at TEXT,
+            created_at TEXT NOT NULL
+        )
+    """)
+
+
+def _ensure_hr_welcome_templates_table(conn: sqlite3.Connection) -> None:
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS hr_welcome_templates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            hr_trust TEXT NOT NULL,
+            name TEXT NOT NULL,
+            topic_id INTEGER,
+            body TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+
+
+def hr_bulk_templates_list(hr_trust: str) -> list[dict]:
+    t = (hr_trust or "").strip().lower()
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_hr_bulk_templates_table(conn)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT id, name, payload_json, created_at, updated_at, created_by_user_id
+            FROM hr_bulk_templates
+            WHERE LOWER(TRIM(hr_trust)) = ?
+            ORDER BY datetime(updated_at) DESC
+            """,
+            (t,),
+        ).fetchall()
+    out = []
+    for r in rows:
+        try:
+            payload = json.loads(r["payload_json"] or "{}")
+        except Exception:
+            payload = {}
+        out.append(
+            {
+                "id": int(r["id"]),
+                "name": r["name"],
+                "payload": payload,
+                "created_at": r["created_at"],
+                "updated_at": r["updated_at"],
+                "created_by_user_id": int(r["created_by_user_id"]),
+            }
+        )
+    return out
+
+
+def hr_bulk_template_get(template_id: int, hr_trust: str) -> Optional[dict]:
+    t = (hr_trust or "").strip().lower()
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_hr_bulk_templates_table(conn)
+        conn.row_factory = sqlite3.Row
+        r = conn.execute(
+            """
+            SELECT id, name, payload_json, created_at, updated_at
+            FROM hr_bulk_templates
+            WHERE id = ? AND LOWER(TRIM(hr_trust)) = ?
+            """,
+            (int(template_id), t),
+        ).fetchone()
+    if not r:
+        return None
+    try:
+        payload = json.loads(r["payload_json"] or "{}")
+    except Exception:
+        payload = {}
+    return {
+        "id": int(r["id"]),
+        "name": r["name"],
+        "payload": payload,
+        "created_at": r["created_at"],
+        "updated_at": r["updated_at"],
+    }
+
+
+def hr_bulk_template_save(
+    hr_trust: str,
+    created_by_user_id: int,
+    name: str,
+    payload: dict,
+    *,
+    template_id: Optional[int] = None,
+) -> dict:
+    now = datetime.utcnow().isoformat()
+    name = (name or "").strip() or "Untitled template"
+    payload_json = json.dumps(payload if isinstance(payload, dict) else {})
+    t = (hr_trust or "").strip()
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_hr_bulk_templates_table(conn)
+        if template_id is not None:
+            conn.execute(
+                """
+                UPDATE hr_bulk_templates
+                SET name = ?, payload_json = ?, updated_at = ?
+                WHERE id = ? AND LOWER(TRIM(hr_trust)) = ?
+                """,
+                (name, payload_json, now, int(template_id), t.lower()),
+            )
+            tid = int(template_id)
+        else:
+            cur = conn.execute(
+                """
+                INSERT INTO hr_bulk_templates (hr_trust, created_by_user_id, name, payload_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (t, int(created_by_user_id), name, payload_json, now, now),
+            )
+            tid = int(cur.lastrowid)
+        conn.commit()
+    return hr_bulk_template_get(tid, hr_trust) or {"id": tid, "name": name, "payload": payload}
+
+
+def hr_bulk_template_delete(template_id: int, hr_trust: str) -> bool:
+    t = (hr_trust or "").strip().lower()
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_hr_bulk_templates_table(conn)
+        cur = conn.execute(
+            "DELETE FROM hr_bulk_templates WHERE id = ? AND LOWER(TRIM(hr_trust)) = ?",
+            (int(template_id), t),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def hr_welcome_templates_list(hr_trust: str) -> list[dict]:
+    t = (hr_trust or "").strip().lower()
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_hr_welcome_templates_table(conn)
+        _ensure_mandatory_topics_table(conn)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT w.id, w.name, w.topic_id, w.body, w.created_at, w.updated_at,
+                   m.topic_name
+            FROM hr_welcome_templates w
+            LEFT JOIN mandatory_topics m ON m.id = w.topic_id
+            WHERE LOWER(TRIM(w.hr_trust)) = ?
+            ORDER BY w.name
+            """,
+            (t,),
+        ).fetchall()
+    return [
+        {
+            "id": int(r["id"]),
+            "name": r["name"],
+            "topic_id": r["topic_id"],
+            "topic_name": r["topic_name"],
+            "body": r["body"],
+            "created_at": r["created_at"],
+            "updated_at": r["updated_at"],
+        }
+        for r in rows
+    ]
+
+
+def hr_welcome_template_save(
+    hr_trust: str,
+    name: str,
+    body: str,
+    *,
+    topic_id: Optional[int] = None,
+    template_id: Optional[int] = None,
+) -> dict:
+    now = datetime.utcnow().isoformat()
+    name = (name or "").strip() or "Template"
+    body = (body or "").strip()
+    t = (hr_trust or "").strip()
+    tid_topic = int(topic_id) if topic_id is not None else None
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_hr_welcome_templates_table(conn)
+        if template_id is not None:
+            conn.execute(
+                """
+                UPDATE hr_welcome_templates
+                SET name = ?, topic_id = ?, body = ?, updated_at = ?
+                WHERE id = ? AND LOWER(TRIM(hr_trust)) = ?
+                """,
+                (name, tid_topic, body, now, int(template_id), t.lower()),
+            )
+            tid = int(template_id)
+        else:
+            cur = conn.execute(
+                """
+                INSERT INTO hr_welcome_templates (hr_trust, name, topic_id, body, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (t, name, tid_topic, body, now, now),
+            )
+            tid = int(cur.lastrowid)
+        conn.commit()
+    rows = hr_welcome_templates_list(hr_trust)
+    return next((x for x in rows if x["id"] == tid), {"id": tid, "name": name, "body": body})
+
+
+def hr_welcome_template_delete(template_id: int, hr_trust: str) -> bool:
+    t = (hr_trust or "").strip().lower()
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_hr_welcome_templates_table(conn)
+        cur = conn.execute(
+            "DELETE FROM hr_welcome_templates WHERE id = ? AND LOWER(TRIM(hr_trust)) = ?",
+            (int(template_id), t),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def doctor_verified_bundle_items(doctor_user_id: int) -> list[dict]:
+    """Wallet rows verified by HR (for portfolio / read-only verifier links)."""
+    try:
+        wallet = json.loads(user_wallet_get(int(doctor_user_id)) or "[]")
+    except Exception:
+        wallet = []
+    if not isinstance(wallet, list):
+        wallet = []
+    vmap = doctor_verified_map(int(doctor_user_id))
+    items: list[dict] = []
+    for c in wallet:
+        if not isinstance(c, dict) or c.get("revoked"):
+            continue
+        cid = str(c.get("credential_id") or "").strip()
+        if not cid:
+            continue
+        vm = vmap.get(cid) or {}
+        if str(vm.get("status") or "").upper() != "VERIFIED":
+            continue
+        if not c.get("jwt"):
+            continue
+        items.append(
+            {
+                "credential_id": cid,
+                "jwt": c.get("jwt"),
+                "module_name": c.get("module_name"),
+                "expiry_date": c.get("expiry_date"),
+                "issuing_trust_name": c.get("issuing_trust_name"),
+            }
+        )
+    return items
+
+
+def verifier_link_create(
+    *,
+    hr_trust: str,
+    created_by_user_id: int,
+    doctor_user_id: Optional[int] = None,
+    cohort_id: Optional[int] = None,
+    label: Optional[str] = None,
+    expires_days: int = 14,
+) -> dict:
+    import secrets
+
+    if not doctor_user_id and not cohort_id:
+        raise ValueError("doctor_user_id or cohort_id required")
+    if doctor_user_id and cohort_id:
+        raise ValueError("Specify doctor_user_id or cohort_id, not both")
+    if cohort_id and not cohort_get(int(cohort_id), hr_trust):
+        raise ValueError("Cohort not found")
+    days = max(1, min(int(expires_days), 90))
+    token = secrets.token_urlsafe(32)
+    now = datetime.utcnow().isoformat()
+    exp = (datetime.utcnow() + timedelta(days=days)).isoformat()
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_hr_verifier_links_table(conn)
+        cur = conn.execute(
+            """
+            INSERT INTO hr_verifier_links (
+                token, hr_trust, created_by_user_id, doctor_user_id, cohort_id,
+                label, expires_at, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                token,
+                (hr_trust or "").strip(),
+                int(created_by_user_id),
+                int(doctor_user_id) if doctor_user_id else None,
+                int(cohort_id) if cohort_id else None,
+                (label or "").strip() or None,
+                exp,
+                now,
+            ),
+        )
+        conn.commit()
+        link_id = int(cur.lastrowid)
+    return verifier_link_get_by_id(link_id, hr_trust) or {"id": link_id, "token": token}
+
+
+def verifier_link_get_by_token(token: str) -> Optional[dict]:
+    tok = (token or "").strip()
+    if not tok:
+        return None
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_hr_verifier_links_table(conn)
+        conn.row_factory = sqlite3.Row
+        r = conn.execute(
+            "SELECT * FROM hr_verifier_links WHERE token = ?",
+            (tok,),
+        ).fetchone()
+    if not r:
+        return None
+    return dict(r)
+
+
+def verifier_link_get_by_id(link_id: int, hr_trust: str) -> Optional[dict]:
+    t = (hr_trust or "").strip().lower()
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_hr_verifier_links_table(conn)
+        conn.row_factory = sqlite3.Row
+        r = conn.execute(
+            """
+            SELECT id, token, hr_trust, doctor_user_id, cohort_id, label,
+                   expires_at, revoked_at, created_at, created_by_user_id
+            FROM hr_verifier_links
+            WHERE id = ? AND LOWER(TRIM(hr_trust)) = ?
+            """,
+            (int(link_id), t),
+        ).fetchone()
+    if not r:
+        return None
+    return {
+        "id": int(r["id"]),
+        "token": r["token"],
+        "hr_trust": r["hr_trust"],
+        "doctor_user_id": r["doctor_user_id"],
+        "cohort_id": r["cohort_id"],
+        "label": r["label"],
+        "expires_at": r["expires_at"],
+        "revoked_at": r["revoked_at"],
+        "created_at": r["created_at"],
+        "created_by_user_id": int(r["created_by_user_id"]),
+    }
+
+
+def verifier_links_list(hr_trust: str, *, limit: int = 50) -> list[dict]:
+    t = (hr_trust or "").strip().lower()
+    lim = max(1, min(int(limit), 100))
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_hr_verifier_links_table(conn)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT id, token, doctor_user_id, cohort_id, label, expires_at, revoked_at, created_at
+            FROM hr_verifier_links
+            WHERE LOWER(TRIM(hr_trust)) = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (t, lim),
+        ).fetchall()
+    return [
+        {
+            "id": int(r["id"]),
+            "token": r["token"],
+            "doctor_user_id": r["doctor_user_id"],
+            "cohort_id": r["cohort_id"],
+            "label": r["label"],
+            "expires_at": r["expires_at"],
+            "revoked_at": r["revoked_at"],
+            "created_at": r["created_at"],
+        }
+        for r in rows
+    ]
+
+
+def verifier_link_revoke(link_id: int, hr_trust: str) -> bool:
+    t = (hr_trust or "").strip().lower()
+    now = datetime.utcnow().isoformat()
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_hr_verifier_links_table(conn)
+        cur = conn.execute(
+            """
+            UPDATE hr_verifier_links SET revoked_at = ?
+            WHERE id = ? AND LOWER(TRIM(hr_trust)) = ? AND revoked_at IS NULL
+            """,
+            (now, int(link_id), t),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def verifier_link_bundle_payload(link_row: dict) -> Optional[dict]:
+    """Build read-only bundle JSON for a valid verifier link."""
+    if not link_row or link_row.get("revoked_at"):
+        return None
+    exp = link_row.get("expires_at")
+    if exp:
+        try:
+            if datetime.fromisoformat(str(exp)[:19]) < datetime.utcnow():
+                return None
+        except ValueError:
+            pass
+    trust = (link_row.get("hr_trust") or "").strip()
+    title = (link_row.get("label") or "").strip() or "Verified training"
+    credentials: list[dict] = []
+    doctors: list[dict] = []
+    if link_row.get("doctor_user_id"):
+        uid = int(link_row["doctor_user_id"])
+        u = user_get_by_id(uid)
+        doctors.append(
+            {
+                "user_id": uid,
+                "display_name": (u or {}).get("display_name"),
+                "gmc_number": (u or {}).get("gmc_number"),
+            }
+        )
+        for it in doctor_verified_bundle_items(uid):
+            credentials.append(
+                {
+                    "id": it["credential_id"],
+                    "credential_id": it["credential_id"],
+                    "jwt": it["jwt"],
+                    "module_name": it.get("module_name"),
+                    "expiry_date": it.get("expiry_date"),
+                }
+            )
+        if title == "Verified training":
+            title = ((u or {}).get("display_name") or "Clinician") + " — verified training"
+    elif link_row.get("cohort_id"):
+        cohort = cohort_get(int(link_row["cohort_id"]), trust)
+        if not cohort:
+            return None
+        title = title if title != "Verified training" else (cohort.get("name") or "Cohort") + " — verified training"
+        for m in cohort_members_list(int(link_row["cohort_id"]), trust):
+            uid = int(m["user_id"])
+            items = doctor_verified_bundle_items(uid)
+            if not items:
+                continue
+            doctors.append(
+                {
+                    "user_id": uid,
+                    "display_name": m.get("display_name"),
+                    "gmc_number": m.get("gmc_number"),
+                }
+            )
+            for it in items:
+                credentials.append(
+                    {
+                        "id": it["credential_id"],
+                        "credential_id": it["credential_id"],
+                        "jwt": it["jwt"],
+                        "module_name": it.get("module_name"),
+                        "expiry_date": it.get("expiry_date"),
+                        "doctor_user_id": uid,
+                    }
+                )
+    return {
+        "title": title,
+        "trust": trust,
+        "doctors": doctors,
+        "credentials": credentials,
+    }

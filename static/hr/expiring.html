@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Expiring training &mdash; DocPass</title>
+  <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260527-1">
+  <style>
+    .exp-wrap { max-width: 56rem; }
+    .exp-filters { display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-end; margin-bottom: 1.25rem; }
+    .exp-filters .nhsuk-form-group { margin-bottom: 0; }
+    .exp-cred-list { margin: 0; padding: 0; list-style: none; font-size: 0.875rem; }
+    .exp-cred-list li { margin: 0.25rem 0; }
+    .exp-cred-list .expired { color: var(--nhsuk-error); font-weight: 600; }
+    .exp-cred-list .expiring { color: #7a4700; }
+  </style>
+</head>
+<body>
+  <header class="nhsuk-header" role="banner">
+    <div class="nhsuk-header__container">
+      <div class="nhsuk-header__service">
+        <a class="nhsuk-header__service-logo nhsuk-header__service-logo--docpass" href="/static/dashboard/" aria-label="Dashboard">
+          <img class="docpass-header-logo" src="/static/shared/docpass-logo.png?v=20260519-1" alt="DocPass" width="420" height="146">
+        </a>
+      </div>
+      <nav class="nhsuk-topnav" aria-label="Account">
+        <div class="nhsuk-topnav__account" id="navAccount">
+          <span class="nhsuk-topnav__name" id="navUserName">&nbsp;</span>
+        </div>
+        <div class="nhsuk-menu">
+          <button type="button" id="btnMenu" aria-haspopup="true" aria-expanded="false" aria-controls="menuPanel">Menu</button>
+          <div class="nhsuk-menu__panel" id="menuPanel" role="menu" hidden>
+            <a href="/static/dashboard/" role="menuitem">Dashboard</a>
+            <a href="/static/profile/" role="menuitem">Profile</a>
+            <button type="button" id="btnSignOut" role="menuitem">Sign out</button>
+          </div>
+        </div>
+      </nav>
+    </div>
+  </header>
+
+  <main class="nhsuk-main exp-wrap hr-wrap" role="main">
+    <h1 class="nhsuk-page-heading">Expiring training</h1>
+    <p class="nhsuk-lead">Clinicians at your trust with wallet records expiring or already expired within the window you choose.</p>
+    <div class="hr-actions" style="margin-bottom:1rem;">
+      <a href="/static/dashboard/" class="nhsuk-button nhsuk-button--secondary">Dashboard</a>
+      <a href="/static/hr/cohorts/" class="nhsuk-button nhsuk-button--secondary">Cohorts</a>
+    </div>
+
+    <div class="exp-filters">
+      <div class="nhsuk-form-group">
+        <label class="nhsuk-label" for="filterWindow">Expiry window</label>
+        <select class="nhsuk-select" id="filterWindow">
+          <option value="7">Next 7 days</option>
+          <option value="30">Next 30 days</option>
+          <option value="90" selected>Next 90 days</option>
+        </select>
+      </div>
+      <div class="nhsuk-form-group">
+        <label class="nhsuk-label" for="filterCohort">Cohort (optional)</label>
+        <select class="nhsuk-select" id="filterCohort">
+          <option value="">All clinicians at trust</option>
+        </select>
+      </div>
+      <button type="button" class="nhsuk-button" id="btnRefresh">Refresh</button>
+    </div>
+
+    <p id="expSummary" class="hr-muted" aria-live="polite"></p>
+    <div class="hr-table-wrap">
+      <table class="hr-table" aria-label="Expiring training by clinician">
+        <thead>
+          <tr>
+            <th>Clinician</th>
+            <th>Records</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="expTbody"></tbody>
+      </table>
+    </div>
+  </main>
+
+  <script src="/static/shared/auth.js"></script>
+  <script src="/static/shared/nav-account.js?v=20260527-1"></script>
+  <script>
+    (function () {
+      function esc(s) {
+        var d = document.createElement('div');
+        d.textContent = s == null ? '' : String(s);
+        return d.innerHTML;
+      }
+      function doctorLabel(item) {
+        return (item.display_name && item.display_name.trim())
+          ? item.display_name.trim()
+          : (item.email || 'Clinician');
+      }
+      function renderItems(data) {
+        var tbody = document.getElementById('expTbody');
+        var summary = document.getElementById('expSummary');
+        var items = (data && data.items) ? data.items : [];
+        var windowDays = Number(data.window_days || 90);
+        if (summary) {
+          summary.textContent = items.length
+            ? items.length + ' clinician' + (items.length === 1 ? '' : 's') + ' with training expiring within ' + windowDays + ' days (or already expired).'
+            : 'No clinicians with expiring training in this window.';
+        }
+        if (!items.length) {
+          tbody.innerHTML = '<tr><td colspan="3" class="hr-muted">Nothing to show for these filters.</td></tr>';
+          return;
+        }
+        tbody.innerHTML = items.map(function (item) {
+          var creds = item.expiring_credentials || [];
+          var credHtml = '<ul class="exp-cred-list">' + creds.map(function (c) {
+            var cls = c.status === 'expired' ? 'expired' : 'expiring';
+            var days = c.days_until;
+            var when = c.expiry_date || '';
+            var extra = days != null
+              ? (days < 0 ? ' (expired)' : ' (' + days + 'd)')
+              : '';
+            return '<li class="' + cls + '">' + esc(c.module_name || 'Training') + ' — ' + esc(when) + esc(extra) + '</li>';
+          }).join('') + '</ul>';
+          var q = encodeURIComponent(item.email || item.gmc_number || item.display_name || '');
+          return (
+            '<tr><td><span class="hr-doctor-name">' + esc(doctorLabel(item)) + '</span>'
+            + '<div class="hr-doctor-meta">' + esc(item.email || '') + (item.gmc_number ? ' · GMC ' + esc(item.gmc_number) : '') + '</div></td>'
+            + '<td>' + credHtml + '</td>'
+            + '<td class="hr-open-wrap"><a class="hr-open-btn hr-open-btn--small" href="/static/hr/search.html?q=' + q + '">Open</a></td></tr>'
+          );
+        }).join('');
+      }
+      async function loadCohorts() {
+        var sel = document.getElementById('filterCohort');
+        if (!sel) return;
+        try {
+          var data = await fetch('/api/hr/cohorts', { credentials: 'include' }).then(function (r) {
+            if (!r.ok) return { cohorts: [] };
+            return r.json();
+          });
+          var cohorts = (data.cohorts || []).slice().sort(function (a, b) {
+            return String(a.name || '').localeCompare(String(b.name || ''));
+          });
+          sel.innerHTML = '<option value="">All clinicians at trust</option>'
+            + cohorts.map(function (c) {
+              return '<option value="' + esc(String(c.id)) + '">' + esc(c.name) + '</option>';
+            }).join('');
+        } catch (e) { /* keep default */ }
+      }
+      async function loadReport() {
+        var tbody = document.getElementById('expTbody');
+        tbody.innerHTML = '<tr><td colspan="3">Loading…</td></tr>';
+        var windowDays = document.getElementById('filterWindow').value || '90';
+        var cohortId = document.getElementById('filterCohort').value || '';
+        var url = '/api/hr/compliance/expiring?window_days=' + encodeURIComponent(windowDays);
+        if (cohortId) url += '&cohort_id=' + encodeURIComponent(cohortId);
+        var data = await fetch(url, { credentials: 'include' }).then(function (r) {
+          if (!r.ok) throw new Error('Could not load report');
+          return r.json();
+        });
+        renderItems(data);
+      }
+      document.getElementById('btnRefresh').addEventListener('click', function () { void loadReport(); });
+      document.getElementById('filterWindow').addEventListener('change', function () { void loadReport(); });
+      document.getElementById('filterCohort').addEventListener('change', function () { void loadReport(); });
+      document.getElementById('btnSignOut').addEventListener('click', async function () {
+        await NHSAuth.signOut();
+        window.location.replace('/');
+      });
+      (async function () {
+        await NHSAuth.refresh();
+        if (!NHSAuth.requireAuth()) return;
+        if (!NHSAuth.user.premium) {
+          window.location.replace('/static/dashboard/');
+          return;
+        }
+        if (window.NHSNavAccount) void NHSNavAccount.refresh();
+        await loadCohorts();
+        await loadReport();
+      })();
+    })();
+  </script>
+</body>
+</html>

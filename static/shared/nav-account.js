@@ -37,6 +37,8 @@
   var _unreadPollWired = false;
   var _lastUnreadCount = 0;
   var _lastVerifyPendingCount = 0;
+  var _lastAlertsCount = 0;
+  var ALERTS_PATH = '/static/notifications/';
   var _newMsgFlashTimer = null;
   var _newVerifyFlashTimer = null;
 
@@ -64,6 +66,17 @@
     );
   }
 
+  function alertsBellInnerHtml() {
+    return (
+      '<a href="' +
+      ALERTS_PATH +
+      '" class="nhsuk-topnav__messages nhsuk-topnav__alerts" id="navAlertsLink" aria-label="Alerts">' +
+      BELL_SVG +
+      '<span class="nhsuk-topnav__msg-badge" id="navAlertsBadge" hidden aria-live="polite"></span>' +
+      '</a>'
+    );
+  }
+
   function accountMarkup() {
     return (
       '<div class="nhsuk-topnav__account" id="navAccount">' +
@@ -71,6 +84,9 @@
       '<div class="nhsuk-topnav__account-tools" id="navAccountTools">' +
       '<div class="nhsuk-topnav__verify-wrap" id="navVerifyWrap" hidden>' +
       verifyBellInnerHtml() +
+      '</div>' +
+      '<div class="nhsuk-topnav__alerts-wrap" id="navAlertsWrap">' +
+      alertsBellInnerHtml() +
       '</div>' +
       '<div class="nhsuk-topnav__messages-wrap" id="navMessagesWrap">' +
       '<a href="/static/messages/" class="nhsuk-topnav__messages" id="navMessagesLink" aria-label="Messages">' +
@@ -102,6 +118,19 @@
     });
     if (nameEl) account.insertBefore(tools, nameEl.nextSibling);
     else account.appendChild(tools);
+  }
+
+  function ensureAlertsBellUi() {
+    ensureAccountToolsLayout();
+    var tools = document.getElementById('navAccountTools');
+    if (!tools || document.getElementById('navAlertsWrap')) return;
+    var wrap = document.createElement('div');
+    wrap.className = 'nhsuk-topnav__alerts-wrap';
+    wrap.id = 'navAlertsWrap';
+    wrap.innerHTML = alertsBellInnerHtml();
+    var msgWrap = document.getElementById('navMessagesWrap');
+    if (msgWrap) tools.insertBefore(wrap, msgWrap);
+    else tools.appendChild(wrap);
   }
 
   function ensureVerifyBellUi() {
@@ -668,6 +697,39 @@
     } catch (e) {}
   }
 
+  async function refreshAlertsBadge() {
+    var link = document.getElementById('navAlertsLink');
+    if (!link || !global.NHSAuth || !NHSAuth.user) return;
+    try {
+      var r = await fetch('/api/me/notifications/unread-count', { credentials: 'include' });
+      if (!r.ok) return;
+      var data = await r.json();
+      var n = Number(data.count || 0);
+      var badge = document.getElementById('navAlertsBadge');
+      if (n > 0) {
+        link.classList.add('nhsuk-topnav__messages--unread');
+        if (badge) {
+          badge.textContent = n > 99 ? '99+' : String(n);
+          badge.hidden = false;
+        }
+        link.setAttribute('aria-label', 'Alerts, ' + n + ' unread');
+      } else {
+        link.classList.remove('nhsuk-topnav__messages--unread');
+        if (badge) {
+          badge.textContent = '';
+          badge.hidden = true;
+        }
+        link.setAttribute('aria-label', 'Alerts');
+      }
+      _lastAlertsCount = n;
+    } catch (e) {}
+  }
+
+  function notifyAlertsChanged() {
+    document.dispatchEvent(new CustomEvent('nhs-alerts-changed'));
+    void refreshAlertsBadge();
+  }
+
   async function refreshUnreadBadge() {
     if (!global.NHSAuth || !NHSAuth.user) return;
     var link = document.getElementById('navMessagesLink');
@@ -718,12 +780,16 @@
       _verifyPreviewCache.at = 0;
       void refreshVerifyBadge();
     });
+    document.addEventListener('nhs-alerts-changed', function () {
+      void refreshAlertsBadge();
+    });
 
     if (_unreadPollTimer) clearInterval(_unreadPollTimer);
     _unreadPollTimer = setInterval(function () {
       if (document.hidden) return;
       if (!global.NHSAuth || !NHSAuth.user) return;
       void refreshUnreadBadge();
+      void refreshAlertsBadge();
       if (NHSAuth.user.premium) void refreshVerifyBadge();
     }, UNREAD_POLL_MS);
   }
@@ -736,6 +802,7 @@
     upgradeLegacyNavEmail();
     ensureAccountToolsLayout();
     ensureVerifyBellUi();
+    ensureAlertsBellUi();
     ensureMessagesPreviewUi();
     wireVerifyPreview();
     wireMessagesPreview();
@@ -769,11 +836,22 @@
       profileLink.title = NHSAuth.user.email;
     }
 
+    var alertsLink = document.getElementById('navAlertsLink');
+    if (alertsLink) {
+      if (window.location.pathname.indexOf('/static/notifications') === 0) {
+        alertsLink.setAttribute('aria-current', 'page');
+      } else {
+        alertsLink.removeAttribute('aria-current');
+      }
+    }
+
     await refreshUnreadBadge();
+    await refreshAlertsBadge();
   }
 
   function init() {
     upgradeLegacyNavEmail();
+    ensureAlertsBellUi();
     ensureMessagesPreviewUi();
     wireMessagesPreview();
     wireUnreadPolling();
@@ -789,8 +867,10 @@
   global.NHSNavAccount = {
     refresh: refreshNavAccount,
     refreshUnreadBadge: refreshUnreadBadge,
+    refreshAlertsBadge: refreshAlertsBadge,
     refreshVerifyBadge: refreshVerifyBadge,
     notifyMessagesChanged: notifyMessagesChanged,
     notifyVerifyInboxChanged: notifyVerifyInboxChanged,
+    notifyAlertsChanged: notifyAlertsChanged,
   };
 })(typeof window !== 'undefined' ? window : globalThis);
