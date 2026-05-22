@@ -18,6 +18,23 @@
       resize: vertical;
       line-height: 1.5;
     }
+    .wt-message-cell {
+      color: var(--nhsuk-secondary-text);
+      font-size: 0.9375rem;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .hr-template-editor__actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      align-items: center;
+    }
+    .wt-actions-cell {
+      white-space: nowrap;
+      width: 1%;
+    }
   </style>
 </head>
 <body>
@@ -53,7 +70,10 @@
         <label class="nhsuk-label" for="wtBody">Message</label>
         <textarea class="nhsuk-textarea" id="wtBody" rows="10" maxlength="4000" placeholder="Hi {name}, welcome to {trust}. Please complete Fire Safety and share evidence with HR."></textarea>
       </div>
-      <button type="button" class="nhsuk-button" id="btnSaveTemplate">Save template</button>
+      <div class="hr-template-editor__actions">
+        <button type="button" class="nhsuk-button" id="btnSaveTemplate">Save template</button>
+        <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnCancelEdit" hidden>Cancel edit</button>
+      </div>
       <input type="hidden" id="wtEditId" value="">
       <p id="wtStatus" class="hr-muted" aria-live="polite"></p>
     </div>
@@ -61,7 +81,7 @@
       <h2 style="margin-top:0;font-size:1.125rem;">Library</h2>
       <div class="hr-table-wrap">
         <table class="hr-table">
-          <thead><tr><th>Name</th><th></th></tr></thead>
+          <thead><tr><th>Name</th><th>Message</th><th></th></tr></thead>
           <tbody id="wtTbody"></tbody>
         </table>
       </div>
@@ -71,11 +91,43 @@
   <script src="/static/shared/nav-account.js?v=20260527-1"></script>
   <script>
     (function () {
+      var _templatesCache = [];
+
       function esc(s) {
         var d = document.createElement('div');
         d.textContent = s == null ? '' : String(s);
         return d.innerHTML;
       }
+
+      function setEditorMode(editing) {
+        var h2 = document.querySelector('.hr-template-editor h2');
+        var btn = document.getElementById('btnSaveTemplate');
+        var cancel = document.getElementById('btnCancelEdit');
+        if (h2) h2.textContent = editing ? 'Edit template' : 'New template';
+        if (btn) btn.textContent = editing ? 'Update template' : 'Save template';
+        if (cancel) cancel.hidden = !editing;
+      }
+
+      function clearEditor() {
+        document.getElementById('wtEditId').value = '';
+        document.getElementById('wtName').value = '';
+        document.getElementById('wtBody').value = '';
+        setEditorMode(false);
+      }
+
+      function startEdit(t) {
+        if (!t) return;
+        document.getElementById('wtEditId').value = String(t.id);
+        document.getElementById('wtName').value = t.name || '';
+        document.getElementById('wtBody').value = t.body || '';
+        setEditorMode(true);
+        var st = document.getElementById('wtStatus');
+        st.textContent = 'Editing “' + (t.name || 'template') + '”. Change the fields above, then update.';
+        var card = document.querySelector('.hr-template-editor');
+        if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        document.getElementById('wtName').focus();
+      }
+
       async function apiJson(url, opts) {
         var r = await fetch(url, Object.assign({ credentials: 'include' }, opts || {}));
         var t = await r.text();
@@ -84,20 +136,22 @@
         if (!r.ok) throw new Error((data && data.detail) || t || r.statusText);
         return data;
       }
+
       async function loadList() {
         var data = await apiJson('/api/hr/welcome-templates');
-        var rows = data.templates || [];
+        _templatesCache = data.templates || [];
         var tb = document.getElementById('wtTbody');
-        if (!rows.length) {
-          tb.innerHTML = '<tr><td colspan="2" class="hr-muted">No templates yet.</td></tr>';
+        if (!_templatesCache.length) {
+          tb.innerHTML = '<tr><td colspan="3" class="hr-muted">No templates yet.</td></tr>';
           return;
         }
-        tb.innerHTML = rows.map(function (t) {
-          return '<tr><td>' + esc(t.name) + '</td><td>'
+        tb.innerHTML = _templatesCache.map(function (t) {
+          return '<tr><td>' + esc(t.name) + '</td><td class="wt-message-cell">' + esc(t.body || '—') + '</td><td class="wt-actions-cell">'
             + '<button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" data-edit="' + t.id + '">Edit</button> '
             + '<button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" data-del="' + t.id + '">Delete</button></td></tr>';
         }).join('');
       }
+
       document.getElementById('btnSaveTemplate').addEventListener('click', async function () {
         var st = document.getElementById('wtStatus');
         try {
@@ -112,35 +166,36 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
           });
-          st.textContent = 'Saved.';
-          document.getElementById('wtEditId').value = '';
-          document.getElementById('wtName').value = '';
-          document.getElementById('wtBody').value = '';
+          st.textContent = eid ? 'Template updated.' : 'Template saved.';
+          clearEditor();
           await loadList();
         } catch (e) {
           st.textContent = e.message || 'Error';
         }
       });
+
+      document.getElementById('btnCancelEdit').addEventListener('click', function () {
+        clearEditor();
+        document.getElementById('wtStatus').textContent = '';
+      });
+
       document.getElementById('wtTbody').addEventListener('click', async function (e) {
         var edit = e.target.closest('[data-edit]');
         var del = e.target.closest('[data-del]');
         if (edit) {
           var id = Number(edit.getAttribute('data-edit'));
-          var data = await apiJson('/api/hr/welcome-templates');
-          var t = (data.templates || []).find(function (x) { return x.id === id; });
-          if (t) {
-            document.getElementById('wtEditId').value = String(t.id);
-            document.getElementById('wtName').value = t.name || '';
-            document.getElementById('wtBody').value = t.body || '';
-          }
+          startEdit(_templatesCache.find(function (x) { return Number(x.id) === id; }));
           return;
         }
         if (del) {
           if (!confirm('Delete this template?')) return;
+          var delId = Number(del.getAttribute('data-del'));
+          if (Number(document.getElementById('wtEditId').value) === delId) clearEditor();
           await apiJson('/api/hr/welcome-templates/' + del.getAttribute('data-del'), { method: 'DELETE' });
           await loadList();
         }
       });
+
       (async function () {
         await NHSAuth.refresh();
         if (!NHSAuth.user || !NHSAuth.user.premium) {
