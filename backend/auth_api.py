@@ -1622,7 +1622,7 @@ def _hr_bulk_training_run(ctx: dict, *, emit_progress: bool = True) -> Iterator[
             yield chunk
         yield_lines.clear()
 
-        if (_hr_wallet_size_would_exceed_after_append(
+        if _hr_wallet_size_would_exceed_after_append(
             p["wallet_raw"],
             module_name=module_name,
             expiry_date=ed,
