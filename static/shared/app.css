@@ -885,6 +885,20 @@ a:hover {
     width: 20px;
     height: 20px;
   }
+  /* Message/verify previews: anchor to viewport so wide panel is not clipped left */
+  .nhsuk-header {
+    overflow: visible;
+  }
+  .nhsuk-topnav__messages-wrap .nhsuk-topnav__msg-preview,
+  .nhsuk-topnav__verify-wrap .nhsuk-topnav__msg-preview {
+    position: fixed;
+    z-index: 300;
+    top: calc(0.5rem + 3.25rem + 0.45rem);
+    left: 0.75rem;
+    right: 0.75rem;
+    width: auto;
+    max-width: none;
+  }
   .nhsuk-menu {
     flex-shrink: 0;
   }
