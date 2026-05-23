@@ -8,7 +8,7 @@
 
   <meta name="description" content="DocPass (docpass.co.uk) — portable, HR-verified mandatory training records for NHS doctors.">
   <title>DocPass</title>
-  <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
+  <link rel="stylesheet" href="/static/shared/app.css?v=20260523-2">
   <style>
     .nhs-landing-band {
       max-width: 1040px;
@@ -60,6 +60,16 @@
     .nhs-landing-panel li { margin: 0.35rem 0; }
     .nhs-landing-panel--muted h3 { color: var(--nhsuk-secondary-text); }
     .nhs-landing-cta-row { margin-top: 0.95rem; display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; }
+    .nhs-hero .lead {
+      max-width: 52rem;
+    }
+    .nhs-hero__context {
+      margin: 1rem 0 0;
+      font-size: 1rem;
+      color: var(--nhsuk-secondary-text);
+      max-width: 52rem;
+      line-height: 1.55;
+    }
     .nhs-landing-note {
       margin: 1.25rem 0 0;
       font-size: 0.8125rem;
@@ -78,7 +88,8 @@
         </a>
       </div>
       <nav class="nhsuk-topnav" aria-label="Top">
-        <a href="/static/auth/">Sign in</a>
+        <a href="/static/auth/?mode=signin">Sign in</a>
+        <a href="/static/auth/?mode=register">Create account</a>
       </nav>
     </div>
   </header>
@@ -88,16 +99,17 @@
     <div class="nhs-hero__inner">
       <div>
         <h1 id="heroTitle">Portable, HR‑verified mandatory training records for NHS doctors.</h1>
-        <p class="lead">DocPass is a focused solution for mandatory/statutory training evidence: store records in one place, capture HR verification, control visibility, and map completions to destination trust requirements.</p>
+        <p class="lead">DocPass is a proof-of-concept demonstrating how mandatory training evidence could be stored in one place, reviewed through an HR-style verification process, and compared against destination trust requirements. The concept is designed in line with the direction of NHS England&rsquo;s Statutory and Mandatory Training (StatMand) programme, which aims to reduce duplication and enable greater portability of training across organisations.</p>
+        <p class="nhs-hero__context">Across the NHS, there is increasing focus on reducing repeated mandatory training and enabling staff to move more easily between organisations. National frameworks such as the Core Skills Training Framework (CSTF) aim to standardise training so it can be recognised across employers. DocPass explores how a clinician-held training passport, combined with HR verification, could support this model in practice.</p>
         <div class="nhs-hero__ctas">
-          <a class="nhsuk-button" href="/static/auth/">Sign in</a>
+          <a class="nhsuk-button" href="/static/auth/?mode=register">Create an account</a>
+          <a class="nhsuk-button nhsuk-button--ghost" href="/static/auth/?mode=signin">Sign in</a>
         </div>
-        <p class="lead" style="margin-top:0.75rem;font-size:0.9375rem;max-width:36rem;">Accounts are created by your HR team. Sign in with your personal email and the password HR sent you.</p>
       </div>
       <aside class="nhs-hero__steps" aria-labelledby="heroStepsTitle">
         <h2 id="heroStepsTitle">How it works</h2>
         <ol>
-          <li>Sign in with your personal email (from HR), then complete your profile</li>
+          <li>Sign in or create an account, then complete your profile</li>
           <li>Add training manually or import from ESR (with supporting evidence)</li>
           <li>HR verifies your records; you choose visibility, plan a trust move against checklist packs, and message HR when needed</li>
         </ol>
@@ -115,6 +127,7 @@
           <li>Get HR to confirm what they&rsquo;ve checked, so your record is clearer when you move</li>
           <li>Let permitted HR find your <strong>verified</strong> training, without you chasing email threads</li>
           <li>See what your next trust might ask for, before your start date</li>
+          <li>Align with emerging NHS approaches to standardising mandatory training (e.g. CSTF) and reducing duplication</li>
           <li>Contact HR directly when you need a decision or clarification</li>
         </ul>
       </div>
@@ -130,11 +143,11 @@
         </ul>
       </div>
     </div>
-    <p class="nhs-landing-note"><a href="https://docpass.co.uk" rel="noopener">docpass.co.uk</a> — pilot demonstration service; not an official NHS national passport. Acceptance policies remain those of each employer.</p>
+    <p class="nhs-landing-note"><a href="https://docpass.co.uk" rel="noopener">docpass.co.uk</a> — a proof-of-concept pilot demonstration; illustrative only, not an official NHS or NHS England system, and not connected to NHS national systems. Acceptance policies remain those of each employer.</p>
   </section>
   </main>
 
-  <script src="/static/shared/auth.js?v=20260523-1"></script>
+  <script src="/static/shared/auth.js"></script>
   <script>
     /* If already signed in, jump straight to the dashboard. */
     (async function () {
