@@ -7,8 +7,9 @@
   <meta name="theme-color" content="#005eb8">
 
   <title>Search doctors &mdash; DocPass</title>
-  <link rel="stylesheet" href="/static/shared/app.css?v=20260523-2">
-  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260516-1">
+  <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260526-3">
+  <link rel="stylesheet" href="/static/shared/training-add-form.css?v=20260526-2">
 
 </head>
 <body>
@@ -16,11 +17,17 @@
     <div class="nhsuk-header__container">
       <div class="nhsuk-header__service">
         <a class="nhsuk-header__service-logo nhsuk-header__service-logo--docpass" href="/static/dashboard/" aria-label="Dashboard">
-          <img class="docpass-header-logo" src="/static/shared/docpass-logo.svg?v=20260516" alt="DocPass — professional credential wallet" width="420" height="120">
+          <img class="docpass-header-logo" src="/static/shared/docpass-logo.png?v=20260519-1" alt="DocPass — professional credential wallet" width="420" height="146">
         </a>
       </div>
       <nav class="nhsuk-topnav" aria-label="Account">
-        <span class="nhsuk-topnav__email" id="navEmail">&nbsp;</span>
+                <div class="nhsuk-topnav__account" id="navAccount">
+          <span class="nhsuk-topnav__name" id="navUserName">&nbsp;</span>
+          <a href="/static/messages/" class="nhsuk-topnav__messages" id="navMessagesLink" aria-label="Messages">
+            <svg class="nhsuk-topnav__envelope" width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/></svg>
+            <span class="nhsuk-topnav__msg-badge" id="navMsgBadge" hidden aria-live="polite"></span>
+          </a>
+        </div>
         <div class="nhsuk-menu">
           <button type="button" id="btnMenu" aria-haspopup="true" aria-expanded="false" aria-controls="menuPanel">Menu</button>
           <div class="nhsuk-menu__panel" id="menuPanel" role="menu" hidden>
@@ -93,61 +100,61 @@
     <div id="hrAddTrainingModal" class="hr-modal" hidden role="dialog" aria-modal="true" aria-labelledby="hrAddTrainingTitle">
       <div class="hr-modal__panel hr-modal__panel--narrow">
         <h3 id="hrAddTrainingTitle" class="hr-modal__title">Add training</h3>
-        <form id="addTrainingForm" class="hr-bulk-form" novalidate>
-          <div class="nhsuk-form-group">
-            <label class="nhsuk-label" for="addTrainingEvidence">Evidence (optional)</label>
-            <span class="nhsuk-hint" id="addTrainingEvidenceHint">PDF or image (PNG, JPEG, WebP) of the class or completion record, if you have one.</span>
-            <div class="hr-bulk-file">
-              <input class="nhsuk-input" type="file" id="addTrainingEvidence" accept=".pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/*" aria-describedby="addTrainingEvidenceHint">
-            </div>
-            <span class="hr-bulk-file-name" id="addTrainingEvidenceName" aria-live="polite">No file chosen</span>
-          </div>
+        <form id="addTrainingForm" class="hr-bulk-form training-add-form" novalidate>
           <div class="nhsuk-form-group">
             <label class="nhsuk-label" for="addTrainingModule">Module</label>
-            <span class="nhsuk-hint">Applied to this clinician only.</span>
             <select class="nhsuk-select" id="addTrainingModule" name="module_code" required></select>
           </div>
           <div class="nhsuk-form-group">
-            <span class="nhsuk-label">Completion and expiry</span>
-            <div class="hr-bulk-dates">
-              <div>
-                <label class="nhsuk-label nhsuk-label--s" for="addTrainingCompletion">Completion date</label>
-                <input class="nhsuk-input" type="date" id="addTrainingCompletion" name="completion_date" required>
-              </div>
-              <div>
-                <label class="nhsuk-label nhsuk-label--s" for="addTrainingExpiry">Expiry date</label>
-                <input class="nhsuk-input" type="date" id="addTrainingExpiry" name="expiry_date" required>
-              </div>
+            <label class="nhsuk-label" for="addTrainingCompletion">Completion date</label>
+            <input class="nhsuk-input" type="date" id="addTrainingCompletion" name="completion_date" required>
+          </div>
+          <div class="nhsuk-form-group">
+            <label class="nhsuk-label" for="addTrainingExpiry">Expiry date</label>
+            <input class="nhsuk-input" type="date" id="addTrainingExpiry" name="expiry_date" required>
+          </div>
+          <div class="nhsuk-form-group">
+            <label class="nhsuk-label" for="addTrainingIssuingName">Issuing Trust name</label>
+            <div class="nhs-ac-wrap" id="hrAddTrainingTrustAcWrap">
+              <input class="nhsuk-input" type="text" id="addTrainingIssuingName" placeholder="e.g. Sheffield Teaching Hospitals" autocomplete="off" spellcheck="false" aria-describedby="addTrainingIssuingTrustHint" role="combobox" aria-autocomplete="list" aria-controls="hrAddTrainingTrustSuggestList" aria-expanded="false">
+              <ul id="hrAddTrainingTrustSuggestList" class="nhs-suggest-list" role="listbox" hidden aria-label="Matching NHS trusts"></ul>
+            </div>
+            <span class="nhsuk-hint" id="addTrainingIssuingTrustHint">Start typing to see suggestions from the NHS Organisation Directory.</span>
+          </div>
+          <div class="nhsuk-form-group">
+            <label class="nhsuk-label" for="addTrainingOds">Issuing Trust ODS code</label>
+            <input class="nhsuk-input" type="text" id="addTrainingOds" placeholder="e.g. RHQ" autocomplete="off" maxlength="16" spellcheck="false" aria-describedby="addTrainingOdsHint">
+            <span class="nhsuk-hint" id="addTrainingOdsHint">Filled automatically from the trust name when possible.</span>
+          </div>
+          <div class="nhsuk-form-group nhsuk-file-upload">
+            <label class="nhsuk-label" for="addTrainingEvidence">Evidence (class or completion record)</label>
+            <div class="nhsuk-file-upload__stack">
+              <p class="nhsuk-hint" id="addTrainingEvidenceHint" style="margin:0;">PDF or image (PNG, JPEG, WebP). Required to issue a credential.</p>
+              <label for="addTrainingEvidence" class="nhsuk-file-upload__trigger">Choose file</label>
+              <input type="file" id="addTrainingEvidence" accept=".pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/*" aria-describedby="addTrainingEvidenceHint">
+              <span class="nhsuk-file-upload__name" id="addTrainingEvidenceName" aria-live="polite"></span>
             </div>
           </div>
-          <fieldset class="hr-bulk-fieldset">
-            <legend class="nhsuk-label">Issuing trust on the credential</legend>
-            <span class="nhsuk-hint">Pre-filled from your signed-in HR account. Edit if anything is wrong.</span>
-            <div class="nhsuk-form-group" style="margin-bottom:0.75rem;">
-              <label class="nhsuk-label nhsuk-label--s" for="addTrainingOds">ODS code</label>
-              <input class="nhsuk-input" type="text" id="addTrainingOds" placeholder="e.g. RHQ" autocomplete="off" maxlength="16" spellcheck="false">
-            </div>
-            <div class="nhsuk-form-group" style="margin-bottom:0;">
-              <label class="nhsuk-label nhsuk-label--s" for="addTrainingIssuingName">Trust display name</label>
-              <input class="nhsuk-input" type="text" id="addTrainingIssuingName" placeholder="Shown on the credential" autocomplete="organization">
-            </div>
-          </fieldset>
           <div class="hr-bulk-actions">
             <button type="submit" class="nhsuk-button" id="addTrainingSubmit">Submit</button>
             <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="addTrainingCancel">Cancel</button>
           </div>
         </form>
         <div class="hr-bulk-status-wrap" style="margin-top:1rem;">
-          <p id="addTrainingStatus" class="hr-muted hr-bulk-status--muted" role="status" aria-live="polite"></p>
+          <div id="addTrainingProvisionResult" class="hr-provision-viz-wrap" aria-live="polite"></div>
+          <p id="addTrainingStatus" class="hr-muted hr-bulk-status--muted" role="status" aria-live="polite" hidden></p>
         </div>
       </div>
     </div>
 
   </main>
 
-  <script src="/static/shared/auth.js"></script>
+  <script src="/static/shared/import-result-viz.js?v=20260524-4"></script>
+  <script src="/static/shared/ods-trust-suggest.js"></script>
+  <script src="/static/shared/auth.js?v=20260523-1"></script>
+  <script src="/static/shared/nav-account.js?v=20260522-1"></script>
   <script>window.__HR_PAGE__ = 'search';</script>
-  <script src="/static/hr/hr-app.js?v=20260516-1"></script>
+  <script src="/static/hr/hr-app.js?v=20260528-1"></script>
 </body>
 </html>
 
