@@ -854,9 +854,9 @@
                 return item.count > 0 || item.label === 'Recipients';
               }),
               successHtml: 'Welcome message saved and delivery started.',
-              notesHtml: (out.welcome_queued
-                ? '<p>Anyone who has not finished their profile will receive this welcome after they complete onboarding.</p>'
-                : ''),
+              notesHtml: out.welcome_queued
+                ? ['Anyone who has not finished their profile will receive this welcome after they complete onboarding.']
+                : [],
             });
           }
           await openCohort(_welcomeReviewState.cohortId);

@@ -292,7 +292,10 @@
     if (opts.successHtml) {
       parts.push('<p class="csv-import-viz__success">' + opts.successHtml + '</p>');
     }
-    (opts.notesHtml || []).forEach(function (html) {
+    var notes = opts.notesHtml;
+    if (typeof notes === 'string' && notes) notes = [notes];
+    if (!Array.isArray(notes)) notes = [];
+    notes.forEach(function (html) {
       parts.push('<p class="csv-import-viz__note">' + html + '</p>');
     });
     if (opts.detailsHtml) parts.push(opts.detailsHtml);
