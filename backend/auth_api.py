@@ -1587,29 +1587,27 @@ def _hr_bulk_training_run(ctx: dict, *, emit_progress: bool = True) -> Iterator[
         yield chunk
     yield_lines.clear()
 
-    if evidence_upload is None or not (evidence_upload.get("filename") or "").strip():
-        raise HTTPException(
-            status_code=400,
-            detail="Evidence file is required when at least one clinician would receive a new credential.",
-        )
-    progress("evidence", "Reading and validating evidence file…", 0, len(issue_plans))
-    for chunk in yield_lines:
-        yield chunk
-    yield_lines.clear()
+    ev_b64: Optional[str] = None
+    ev_name: Optional[str] = None
+    if evidence_upload is not None and (evidence_upload.get("filename") or "").strip():
+        progress("evidence", "Reading and validating evidence file…", 0, len(issue_plans))
+        for chunk in yield_lines:
+            yield chunk
+        yield_lines.clear()
 
-    ev_raw = evidence_upload["raw"]
-    if len(ev_raw) > MAX_HR_BULK_EVIDENCE_BYTES:
-        raise HTTPException(status_code=413, detail="Evidence file too large (max 10 MB).")
-    ev_ct = _hr_evidence_content_type(
-        evidence_upload.get("content_type"), evidence_upload.get("filename")
-    )
-    if not ev_ct:
-        raise HTTPException(
-            status_code=400,
-            detail="Evidence must be a PDF or image (JPEG, PNG, or WebP).",
+        ev_raw = evidence_upload["raw"]
+        if len(ev_raw) > MAX_HR_BULK_EVIDENCE_BYTES:
+            raise HTTPException(status_code=413, detail="Evidence file too large (max 10 MB).")
+        ev_ct = _hr_evidence_content_type(
+            evidence_upload.get("content_type"), evidence_upload.get("filename")
         )
-    ev_name = (evidence_upload.get("filename") or "evidence").strip()
-    ev_b64 = base64.b64encode(ev_raw).decode("ascii")
+        if not ev_ct:
+            raise HTTPException(
+                status_code=400,
+                detail="Evidence must be a PDF or image (JPEG, PNG, or WebP).",
+            )
+        ev_name = (evidence_upload.get("filename") or "evidence").strip()
+        ev_b64 = base64.b64encode(ev_raw).decode("ascii")
 
     wallet_bad: set[str] = set()
     wallet_total = len(issue_plans)
@@ -1624,13 +1622,13 @@ def _hr_bulk_training_run(ctx: dict, *, emit_progress: bool = True) -> Iterator[
             yield chunk
         yield_lines.clear()
 
-        if _hr_wallet_size_would_exceed_after_append(
+        if (_hr_wallet_size_would_exceed_after_append(
             p["wallet_raw"],
             module_name=module_name,
             expiry_date=ed,
             base=base,
-            evidence_b64=ev_b64,
-            evidence_filename=ev_name,
+            evidence_b64=ev_b64 or "",
+            evidence_filename=ev_name or "",
         ):
             wallet_bad.add(p["line"])
 

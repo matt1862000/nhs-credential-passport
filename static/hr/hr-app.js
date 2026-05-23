@@ -1580,12 +1580,6 @@
           var bulkNextEvidence = document.getElementById('bulkNextEvidence');
           if (bulkNextEvidence) {
             bulkNextEvidence.addEventListener('click', function () {
-              var evEl = document.getElementById('bulkEvidence');
-              if (!evEl || !evEl.files || !evEl.files[0]) {
-                setBulkStepError('bulkStepEvidenceError', 'Choose a class evidence file to continue.');
-                if (evEl) evEl.focus();
-                return;
-              }
               setBulkStepError('bulkStepEvidenceError', '');
               setBulkWizardStep(4);
               var mod = document.getElementById('bulkModule');
@@ -1846,11 +1840,6 @@
             if (!hasCohorts && !hasRoster) {
               setBulkStatusMessage('Complete the recipient steps: select at least one cohort or upload a roster file.', 'error');
               setBulkWizardStep(bulkRecipientMethod === 'roster' ? 2 : 2);
-              return;
-            }
-            if (!evEl || !evEl.files || !evEl.files[0]) {
-              setBulkStatusMessage('Choose a class evidence file.', 'error');
-              setBulkWizardStep(3);
               return;
             }
             bulkSubmitBusy = true;
