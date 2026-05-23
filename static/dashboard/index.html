@@ -176,8 +176,6 @@
     }
     .dash-compliance-banner p { margin: 0; font-size: 0.9375rem; line-height: 1.45; }
     .dash-compliance-banner a { font-weight: 600; }
-    #hrExpiringStats { margin-top: 1rem; max-width: 46rem; }
-    #hrExpiringStats .nhs-stat-grid { margin-top: 0.5rem; }
   </style>
 </head>
 <body>
@@ -326,18 +324,7 @@
       </div>
     </section>
 
-    <section id="premiumTrustTools" style="margin-top:2.25rem;" hidden aria-labelledby="premiumToolsTitle">
-      <h2 id="premiumToolsTitle" class="nhsuk-page-heading" style="font-size:1.5rem;">Trust tools</h2>
-      <section id="hrExpiringStats" aria-labelledby="hrExpiringStatsTitle" hidden>
-        <h3 id="hrExpiringStatsTitle" style="font-size:1.125rem;margin:0 0 0.25rem 0;">Expiring at your trust (90 days)</h3>
-        <p class="nhsuk-hint" style="margin:0 0 0.5rem 0;">Clinicians with wallet records expiring or expired soon.</p>
-        <div class="nhs-stat-grid">
-          <div class="nhs-stat nhs-stat--warn">
-            <div class="nhs-stat__num" id="hrStatExpiring">&mdash;</div>
-            <div class="nhs-stat__label">Clinicians affected</div>
-          </div>
-        </div>
-      </section>
+    <section id="premiumTrustTools" style="margin-top:2.25rem;" hidden aria-label="HR tools">
       <div class="nhs-action-grid" role="list">
         <a class="nhs-action-card" href="/static/hr/mandatory/" role="listitem">
           <div class="nhs-action-title">Mandatory requirements</div>
@@ -508,22 +495,6 @@
         }
       }
 
-      async function loadHrExpiringStats() {
-        var section = document.getElementById('hrExpiringStats');
-        var num = document.getElementById('hrStatExpiring');
-        if (!section || !num) return;
-        try {
-          var r = await fetch('/api/hr/compliance/expiring?window_days=90', { credentials: 'include' });
-          if (!r.ok) { section.hidden = true; return; }
-          var data = await r.json();
-          var n = Number(data.doctor_count || (data.items || []).length || 0);
-          num.textContent = String(n);
-          section.hidden = false;
-        } catch (e) {
-          section.hidden = true;
-        }
-      }
-
       async function loadAlertsBadge() {
         var badge = document.getElementById('doctorAlertsBadge');
         if (!badge) return;
@@ -670,7 +641,6 @@
         if (NHSAuth.user.premium) {
           void loadHrInboxPendingBadge();
           void loadMsgBadge(true);
-          void loadHrExpiringStats();
         } else {
           void loadMsgBadge(false);
           void loadAlertsBadge();
