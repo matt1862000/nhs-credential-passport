@@ -576,15 +576,26 @@
     if (link) link.setAttribute('aria-describedby', 'navAlertsPreview');
   }
 
+  function alertsPreviewHasContent(body) {
+    if (!body) return false;
+    return (
+      !!body.querySelector('.nhsuk-topnav__msg-preview-section, .nhsuk-topnav__msg-preview-empty') &&
+      !body.querySelector('.nhsuk-topnav__msg-preview-loading')
+    );
+  }
+
   async function openNotificationsPreview() {
     if (!global.NHSAuth || !NHSAuth.user) return;
+    var popEl = document.getElementById('navAlertsPreview');
     var body = document.getElementById('navAlertsPreviewBody');
     var feet = document.getElementById('navAlertsPreviewFeet');
+    var alreadyOpen = popEl && !popEl.hidden && alertsPreviewHasContent(body);
+    showAlertsPreview();
+    if (alreadyOpen) return;
     if (body) {
       body.innerHTML = '<p class="nhsuk-topnav__msg-preview-loading">Loading…</p>';
     }
     if (feet) feet.innerHTML = '';
-    showAlertsPreview();
     var isHr = !!NHSAuth.user.premium;
     try {
       var alertItems = await fetchAlertsPreviewItems();
@@ -603,6 +614,8 @@
       clearTimeout(_alertsPreviewHideTimer);
       _alertsPreviewHideTimer = null;
     }
+    var pop = document.getElementById('navAlertsPreview');
+    if (pop && !pop.hidden) return;
     if (_alertsPreviewShowTimer) clearTimeout(_alertsPreviewShowTimer);
     _alertsPreviewShowTimer = setTimeout(function () {
       _alertsPreviewShowTimer = null;
@@ -628,11 +641,7 @@
     if (!wrap) return;
     _alertsPreviewWired = true;
 
-    wrap.addEventListener('mouseenter', function () {
-      _alertsPreviewCache.at = 0;
-      _verifyPreviewCache.at = 0;
-      scheduleShowAlertsPreview();
-    });
+    wrap.addEventListener('mouseenter', scheduleShowAlertsPreview);
     wrap.addEventListener('mouseleave', scheduleHideAlertsPreview);
     wrap.addEventListener('focusin', scheduleShowAlertsPreview);
     wrap.addEventListener('focusout', function (e) {

@@ -235,6 +235,15 @@ a:hover {
   text-align: left;
   pointer-events: auto;
 }
+/* Invisible bridge so moving from icon to panel does not drop hover */
+.nhsuk-topnav__msg-preview::before {
+  content: '';
+  position: absolute;
+  top: -0.55rem;
+  left: 0;
+  right: 0;
+  height: 0.55rem;
+}
 .nhsuk-topnav__msg-preview[hidden] {
   display: none !important;
 }
