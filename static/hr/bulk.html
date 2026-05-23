@@ -8,7 +8,7 @@
 
   <title>Add training for doctor(s) &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
-  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260528-2">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260529-1">
   <link rel="stylesheet" href="/static/shared/training-add-form.css?v=20260526-2">
 
 </head>
@@ -89,7 +89,10 @@
               <label class="nhsuk-label" for="bulkDoctorSearchInput">Search clinicians</label>
               <span class="nhsuk-hint" id="bulkDoctorSearchHint">Search by name, email, or GMC number. Only people who have permitted your trust appear.</span>
               <div class="hr-search-box-wrap">
-                <input class="nhsuk-input" type="search" id="bulkDoctorSearchInput" placeholder="Name, email or GMC number…" autocomplete="off" aria-describedby="bulkDoctorSearchHint bulkStepDoctorsError">
+                <div class="nhs-ac-wrap hr-doctor-search-ac" id="bulkDoctorSearchAcWrap">
+                  <input class="nhsuk-input" type="search" id="bulkDoctorSearchInput" placeholder="Name, email or GMC number…" autocomplete="off" aria-describedby="bulkDoctorSearchHint bulkStepDoctorsError" role="combobox" aria-autocomplete="list" aria-controls="bulkDoctorSearchSuggestList" aria-expanded="false">
+                  <ul id="bulkDoctorSearchSuggestList" class="nhs-suggest-list" role="listbox" hidden aria-label="Matching clinicians"></ul>
+                </div>
                 <button type="button" class="nhsuk-button hr-btn-small" id="bulkDoctorSearchBtn">Search</button>
               </div>
               <p id="bulkDoctorSearchStatus" class="hr-muted" aria-live="polite" style="min-height:1.25rem;margin-top:0.5rem;"></p>
@@ -223,7 +226,7 @@
   <script src="/static/shared/auth.js?v=20260523-1"></script>
   <script src="/static/shared/nav-account.js?v=20260522-1"></script>
   <script>window.__HR_PAGE__ = 'bulk';</script>
-  <script src="/static/hr/hr-app.js?v=20260523-4"></script>
+  <script src="/static/hr/hr-app.js?v=20260529-1"></script>
 </body>
 </html>
 

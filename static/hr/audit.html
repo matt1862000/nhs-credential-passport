@@ -11,6 +11,7 @@
     .audit-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
     .audit-table th, .audit-table td { padding: 0.5rem 0.65rem; border-bottom: 1px solid var(--nhsuk-border); text-align: left; vertical-align: top; }
     .audit-table th { font-weight: 700; background: #f0f4f5; }
+    .audit-export { margin-top: 1rem; }
   </style>
 </head>
 <body>
@@ -40,10 +41,6 @@
   <main class="nhsuk-main audit-wrap hr-wrap" role="main">
     <h1 class="nhsuk-page-heading">HR audit log</h1>
     <p class="nhsuk-lead">Record of verification and training actions at your trust.</p>
-    <div class="hr-actions" style="margin-bottom:1rem;">
-      <a href="/static/dashboard/" class="nhsuk-button nhsuk-button--secondary">Dashboard</a>
-      <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnExportCsv">Download CSV</button>
-    </div>
     <div class="nhsuk-form-group" style="max-width:20rem;margin-bottom:1rem;">
       <label class="nhsuk-label" for="filterAction">Filter by action</label>
       <select class="nhsuk-select" id="filterAction">
@@ -67,6 +64,9 @@
         </thead>
         <tbody id="auditTbody"></tbody>
       </table>
+    </div>
+    <div class="audit-export">
+      <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnExportCsv">Download CSV</button>
     </div>
   </main>
 

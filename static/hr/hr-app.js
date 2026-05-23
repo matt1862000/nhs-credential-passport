@@ -350,6 +350,168 @@
         });
       }
 
+      var hrDoctorSuggestWired = Object.create(null);
+
+      function doctorSuggestMeta(doc) {
+        var parts = [];
+        if (doc.gmc_number) parts.push('GMC ' + doc.gmc_number);
+        if (doc.email) parts.push(doc.email);
+        var trust = doc.current_trust_display || doc.current_trust;
+        if (trust) parts.push(trust);
+        return parts.join(' · ');
+      }
+
+      function wireHrDoctorSearchSuggest(opts) {
+        var inputId = opts.inputId;
+        var listId = opts.listId;
+        var wrapId = opts.wrapId;
+        if (hrDoctorSuggestWired[inputId]) return;
+        var inputEl = document.getElementById(inputId);
+        var listEl = document.getElementById(listId);
+        var wrapEl = document.getElementById(wrapId);
+        if (!inputEl || !listEl || !wrapEl) return;
+        hrDoctorSuggestWired[inputId] = true;
+
+        var items = [];
+        var active = -1;
+        var debSuggest = null;
+        var minLen = opts.minLength != null ? opts.minLength : 2;
+        var limit = opts.limit != null ? opts.limit : 8;
+
+        function hideList() {
+          listEl.innerHTML = '';
+          listEl.hidden = true;
+          active = -1;
+          items = [];
+          inputEl.setAttribute('aria-expanded', 'false');
+          inputEl.removeAttribute('aria-activedescendant');
+        }
+
+        function updateHighlight() {
+          var lis = listEl.querySelectorAll('li[role="option"]');
+          for (var j = 0; j < lis.length; j++) {
+            lis[j].setAttribute('aria-selected', j === active ? 'true' : 'false');
+          }
+          if (active >= 0 && lis[active]) {
+            inputEl.setAttribute('aria-activedescendant', lis[active].id);
+            try {
+              lis[active].scrollIntoView({ block: 'nearest' });
+            } catch (eSc) {}
+          } else {
+            inputEl.removeAttribute('aria-activedescendant');
+          }
+        }
+
+        function applyIndex(idx) {
+          if (idx < 0 || idx >= items.length) return;
+          var doc = items[idx];
+          hideList();
+          if (typeof opts.onSelect === 'function') opts.onSelect(doc);
+        }
+
+        function renderList(docs) {
+          items = docs || [];
+          listEl.innerHTML = '';
+          active = -1;
+          if (!items.length) {
+            hideList();
+            return;
+          }
+          for (var i = 0; i < items.length; i++) {
+            var doc = items[i];
+            var li = document.createElement('li');
+            li.setAttribute('role', 'option');
+            li.id = listId + '-opt-' + i;
+            li.dataset.index = String(i);
+            var nameSpan = document.createElement('span');
+            nameSpan.textContent = doc.display_name || doc.email || 'Clinician';
+            li.appendChild(nameSpan);
+            var metaText = doctorSuggestMeta(doc);
+            if (metaText) {
+              var meta = document.createElement('span');
+              meta.className = 'nhs-suggest-meta';
+              meta.textContent = metaText;
+              li.appendChild(meta);
+            }
+            listEl.appendChild(li);
+          }
+          listEl.hidden = false;
+          inputEl.setAttribute('aria-expanded', 'true');
+        }
+
+        async function runSuggest() {
+          var q = String(inputEl.value || '').trim();
+          if (q.length < minLen) {
+            hideList();
+            return;
+          }
+          try {
+            var data = await apiJson('/api/hr/doctors/search?q=' + encodeURIComponent(q) + '&limit=' + limit);
+            renderList(data.results || []);
+          } catch (e) {
+            hideList();
+          }
+        }
+
+        inputEl.addEventListener('input', function () {
+          if (debSuggest) clearTimeout(debSuggest);
+          debSuggest = setTimeout(function () {
+            debSuggest = null;
+            void runSuggest();
+          }, 280);
+        });
+        listEl.addEventListener('mousedown', function (ev) {
+          if (ev.target.closest('li[role="option"]')) ev.preventDefault();
+        });
+        listEl.addEventListener('click', function (ev) {
+          var li = ev.target.closest('li[role="option"]');
+          if (!li) return;
+          applyIndex(parseInt(li.dataset.index, 10));
+        });
+        inputEl.addEventListener('keydown', function (e) {
+          if (!listEl.hidden && items.length) {
+            if (e.key === 'Escape') {
+              e.preventDefault();
+              hideList();
+              return;
+            }
+            if (e.key === 'ArrowDown') {
+              e.preventDefault();
+              active = Math.min(active + 1, items.length - 1);
+              if (active < 0) active = 0;
+              updateHighlight();
+              return;
+            }
+            if (e.key === 'ArrowUp') {
+              e.preventDefault();
+              active = Math.max(active - 1, 0);
+              updateHighlight();
+              return;
+            }
+            if (e.key === 'Enter' && active >= 0) {
+              e.preventDefault();
+              applyIndex(active);
+              return;
+            }
+          }
+          if (e.key === 'Enter' && typeof opts.onEnter === 'function') {
+            e.preventDefault();
+            hideList();
+            opts.onEnter();
+          }
+        });
+        inputEl.addEventListener('blur', function () {
+          window.setTimeout(hideList, 200);
+        });
+        document.addEventListener(
+          'click',
+          function (e) {
+            if (!wrapEl.contains(e.target)) hideList();
+          },
+          true
+        );
+      }
+
       async function fillHrIssuingOdsFromOrdIfBlank(nameId, odsId) {
         var nameEl = document.getElementById(nameId);
         var odsEl = document.getElementById(odsId);
@@ -1665,15 +1827,17 @@
           if (bulkDoctorSearchBtn) {
             bulkDoctorSearchBtn.addEventListener('click', function () { void runBulkDoctorSearch(); });
           }
-          var bulkDoctorSearchInput = document.getElementById('bulkDoctorSearchInput');
-          if (bulkDoctorSearchInput) {
-            bulkDoctorSearchInput.addEventListener('keydown', function (e) {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                void runBulkDoctorSearch();
-              }
-            });
-          }
+          wireHrDoctorSearchSuggest({
+            inputId: 'bulkDoctorSearchInput',
+            listId: 'bulkDoctorSearchSuggestList',
+            wrapId: 'bulkDoctorSearchAcWrap',
+            onSelect: function (doc) {
+              var inp = document.getElementById('bulkDoctorSearchInput');
+              if (inp) inp.value = '';
+              addBulkDoctor(doc);
+            },
+            onEnter: function () { void runBulkDoctorSearch(); },
+          });
           var bulkDoctorSearchResults = document.getElementById('bulkDoctorSearchResults');
           if (bulkDoctorSearchResults) {
             bulkDoctorSearchResults.addEventListener('click', function (e) {
@@ -2252,12 +2416,17 @@
         if (btnDoctorSearch) {
           btnDoctorSearch.addEventListener('click', runDoctorSearch);
         }
-        var doctorSearchInput = document.getElementById('doctorSearchInput');
-        if (doctorSearchInput) {
-          doctorSearchInput.addEventListener('keydown', function (e) {
-            if (e.key === 'Enter') { e.preventDefault(); runDoctorSearch(); }
-          });
-        }
+        wireHrDoctorSearchSuggest({
+          inputId: 'doctorSearchInput',
+          listId: 'doctorSearchSuggestList',
+          wrapId: 'doctorSearchAcWrap',
+          onSelect: function (doc) {
+            var inp = document.getElementById('doctorSearchInput');
+            if (inp) inp.value = doc.display_name || doc.email || '';
+            void openSearchDoctorView(doc.id, doc.display_name || doc.email || '');
+          },
+          onEnter: function () { void runDoctorSearch(); },
+        });
 
         if (HR_PAGE === 'inbox') {
           var legQ = qs();
