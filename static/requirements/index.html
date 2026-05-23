@@ -38,10 +38,22 @@
       font-size: 0.8125rem; font-weight: 700; white-space: nowrap;
     }
     .req-tag--met { background: #d1f2e1; color: #005a24; }
+    .req-tag--possible { background: #e3f5ea; color: #006837; border: 1px solid #8fd4a8; }
+    .req-tag--review { background: #fef3da; color: #7a4700; }
     .req-tag--expiring { background: #fef3da; color: #7a4700; }
     .req-tag--expired { background: #fde8e8; color: #a30000; }
     .req-tag--gap { background: #fde8e8; color: #a30000; }
     .req-detail { font-size: 0.875rem; color: var(--nhsuk-secondary-text); margin-top: 0.2rem; }
+    .req-reason { font-size: 0.8125rem; color: var(--nhsuk-secondary-text); margin-top: 0.35rem; line-height: 1.4; }
+    .req-meta { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.35rem; }
+    .req-badge {
+      display: inline-block; font-size: 0.6875rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.03em; padding: 0.12rem 0.4rem; border-radius: 3px;
+      background: #eef0f2; color: var(--nhsuk-secondary-text);
+    }
+    .req-badge--portable { background: #e8f4fd; color: #005eb8; }
+    .req-badge--local { background: #f3eef8; color: #4c2c6a; }
+    .req-summary-pill--review .req-summary-pill__count { color: #7a4700; }
     .req-card { background: #fff; border: 1px solid var(--nhsuk-border); border-radius: 6px; padding: 1.25rem 1.5rem; margin-top: 1.25rem; }
     .req-empty { color: var(--nhsuk-secondary-text); padding: 0.75rem 0; font-style: italic; }
     .req-no-trust { margin-top: 1.5rem; }
@@ -118,7 +130,7 @@
             <tbody id="reqTbody"></tbody>
           </table>
         </div>
-        <p class="req-footnote">Matches are made by comparing topic names to your training record titles. <a href="/static/staff/#list">View and manage your training records.</a></p>
+        <p class="req-footnote">Matching uses topic names, HR hints, and common aliases — hover or read the reason under each status for detail. <a href="/static/staff/#list">View and manage your training records.</a></p>
       </div>
 
       <div id="noWalletMsg" class="req-add-link" hidden>
@@ -131,7 +143,6 @@
 
   <script src="/static/shared/auth.js?v=20260523-1"></script>
   <script src="/static/shared/nav-account.js?v=20260529-4"></script>
-  <script src="/static/shared/mandatory-match.js"></script>
   <script src="/static/shared/onboarding-nudge.js"></script>
   <script>
     (function () {
@@ -153,54 +164,34 @@
         document.addEventListener('keydown', function (e) { if (e.key === 'Escape') close(); });
       }
 
-      async function apiJson(url) {
-        var res = await fetch(url, { credentials: 'include' });
-        if (!res.ok) {
-          var data = null;
-          try { data = await res.json(); } catch (e) {}
-          throw new Error((data && data.detail) || res.statusText);
+      function statusTagClass(topic) {
+        if (topic.status === 'expiring') return 'req-tag--expiring';
+        var label = topic.status_label || '';
+        if (label === 'Met (exact match)') return 'req-tag--met';
+        if (label === 'Met (possible match)') return 'req-tag--possible';
+        if (label === 'Needs review') return 'req-tag--review';
+        if (label === 'Expired') return 'req-tag--expired';
+        if (topic.status === 'expiring') return 'req-tag--expiring';
+        return 'req-tag--gap';
+      }
+
+      function portabilityBadge(portability) {
+        if (portability === 'portable') {
+          return '<span class="req-badge req-badge--portable">Portable</span>';
         }
-        return res.json();
-      }
-
-      function todayIso() {
-        var d = new Date();
-        return d.getFullYear() + '-' +
-          String(d.getMonth() + 1).padStart(2, '0') + '-' +
-          String(d.getDate()).padStart(2, '0');
-      }
-
-      function expiryStatus(expiryDate) {
-        if (!expiryDate) return 'met';
-        var today = todayIso();
-        if (expiryDate < today) return 'expired';
-        // warn if expiring within ~90 days
-        var warn = new Date();
-        warn.setDate(warn.getDate() + 90);
-        var warnIso = warn.getFullYear() + '-' +
-          String(warn.getMonth() + 1).padStart(2, '0') + '-' +
-          String(warn.getDate()).padStart(2, '0');
-        if (expiryDate <= warnIso) return 'expiring';
-        return 'met';
-      }
-
-      function findBestMatch(topic, wallet) {
-        if (window.NHSMandatoryMatch && typeof NHSMandatoryMatch.findBestMatch === 'function') {
-          return NHSMandatoryMatch.findBestMatch(topic, wallet);
+        if (portability === 'local_only') {
+          return '<span class="req-badge req-badge--local">Local only</span>';
         }
-        var tNorm = (topic.topic_name || topic).toLowerCase().trim();
-        var matches = wallet.filter(function (c) {
-          if (c.revoked) return false;
-          var mNorm = (c.module_name || '').toLowerCase().trim();
-          return mNorm.indexOf(tNorm) !== -1 || tNorm.indexOf(mNorm) !== -1;
-        });
-        if (!matches.length) return null;
-        matches.sort(function (a, b) {
-          var ae = a.expiry_date || '9999-99-99';
-          var be = b.expiry_date || '9999-99-99';
-          return be > ae ? 1 : be < ae ? -1 : 0;
-        });
-        return matches[0];
+        if (portability === 'conditional') {
+          return '<span class="req-badge">Conditional</span>';
+        }
+        return '';
+      }
+
+      function confidenceHint(topic) {
+        if (!topic.confidence_label || topic.match_type === 'none') return '';
+        var label = topic.confidence_label.charAt(0).toUpperCase() + topic.confidence_label.slice(1);
+        return '<span class="req-badge">' + esc(label + ' confidence') + '</span>';
       }
 
       function completeTrainingCell(topic) {
@@ -221,74 +212,65 @@
         return '<a class="req-complete-link" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">Open link</a>';
       }
 
-      function renderTable(topics, wallet) {
+      function renderTable(snap) {
         var tbody = document.getElementById('reqTbody');
         if (!tbody) return;
+        var topics = snap.topics || [];
+        var sum = snap.summary || {};
 
-        var nMet = 0, nExpiring = 0, nGap = 0;
-
-        var rows = topics.map(function (t) {
-          var match = findBestMatch(t, wallet);
-          var statusKey, tagClass, tagLabel, detailHtml;
-
-          if (match) {
-            statusKey = expiryStatus(match.expiry_date);
-            if (statusKey === 'met') {
-              tagClass = 'req-tag--met';
-              tagLabel = 'Met';
-              nMet++;
-            } else if (statusKey === 'expiring') {
-              tagClass = 'req-tag--expiring';
-              tagLabel = 'Expiring soon';
-              nExpiring++;
-            } else {
-              tagClass = 'req-tag--expired';
-              tagLabel = 'Expired';
-              nGap++;
-            }
-            detailHtml =
-              '<div>' + esc(match.module_name || '') + '</div>' +
+        tbody.innerHTML = topics.map(function (t) {
+          var tagClass = statusTagClass(t);
+          var tagLabel = t.status_label || t.status || '—';
+          var recordHtml;
+          if (t.module_name) {
+            recordHtml =
+              '<div>' + esc(t.module_name) + '</div>' +
               '<div class="req-detail">' +
-              (match.expiry_date ? 'Expires ' + esc(match.expiry_date) : 'No expiry') +
-              (match.issuing_trust_name ? ' &middot; ' + esc(match.issuing_trust_name) : '') +
+              (t.expiry_date ? 'Expires ' + esc(t.expiry_date) : 'No expiry') +
+              (t.hr_status ? ' &middot; HR ' + esc(t.hr_status) : '') +
               '</div>';
           } else {
-            tagClass = 'req-tag--gap';
-            tagLabel = 'Not found';
-            nGap++;
-            detailHtml = '<span style="color:var(--nhsuk-secondary-text);">—</span>';
+            recordHtml = '<span style="color:var(--nhsuk-secondary-text);">—</span>';
           }
-
-          return '<tr>' +
+          var reasonHtml = t.reason
+            ? '<p class="req-reason">' + esc(t.reason) + '</p>'
+            : '';
+          var metaHtml =
+            '<div class="req-meta">' +
+            portabilityBadge(t.portability) +
+            confidenceHint(t) +
+            '</div>';
+          return (
+            '<tr>' +
             '<td>' + esc(t.topic_name) + '</td>' +
             '<td>' + esc(t.category || '—') + '</td>' +
             '<td>' + completeTrainingCell(t) + '</td>' +
-            '<td><span class="req-tag ' + tagClass + '">' + tagLabel + '</span></td>' +
-            '<td>' + detailHtml + '</td>' +
-            '</tr>';
-        });
+            '<td><span class="req-tag ' + tagClass + '">' + esc(tagLabel) + '</span>' + reasonHtml + metaHtml + '</td>' +
+            '<td>' + recordHtml + '</td>' +
+            '</tr>'
+          );
+        }).join('');
 
-        tbody.innerHTML = rows.join('');
-
-        // Summary pills
         var summaryEl = document.getElementById('reqSummary');
         if (summaryEl) {
-          summaryEl.innerHTML =
-            '<div class="req-summary-pill req-summary-pill--met">' +
-              '<span class="req-summary-pill__count">' + nMet + '</span>' +
-              '<span class="req-summary-pill__label">Met</span>' +
-            '</div>' +
-            '<div class="req-summary-pill req-summary-pill--expiring">' +
-              '<span class="req-summary-pill__count">' + nExpiring + '</span>' +
-              '<span class="req-summary-pill__label">Expiring&nbsp;soon</span>' +
-            '</div>' +
-            '<div class="req-summary-pill req-summary-pill--gap">' +
-              '<span class="req-summary-pill__count">' + nGap + '</span>' +
-              '<span class="req-summary-pill__label">Gap&nbsp;/&nbsp;Expired</span>' +
-            '</div>';
+          var pills = [
+            { cls: 'req-summary-pill--met', count: sum.met || 0, label: 'Met' },
+            { cls: 'req-summary-pill--expiring', count: sum.expiring || 0, label: 'Expiring soon' },
+            { cls: 'req-summary-pill--review', count: sum.needs_review || 0, label: 'Needs review' },
+            { cls: 'req-summary-pill--gap', count: sum.gap || 0, label: 'Gap / expired' },
+          ];
+          summaryEl.innerHTML = pills
+            .filter(function (p) { return p.count > 0 || p.label === 'Met'; })
+            .map(function (p) {
+              return (
+                '<div class="req-summary-pill ' + p.cls + '">' +
+                '<span class="req-summary-pill__count">' + p.count + '</span>' +
+                '<span class="req-summary-pill__label">' + p.label + '</span>' +
+                '</div>'
+              );
+            })
+            .join('');
         }
-
-        show(document.getElementById('noWalletMsg'), wallet.length === 0);
       }
 
       (async function boot() {
@@ -314,7 +296,6 @@
         var trustLabel = document.getElementById('trustLabel');
         if (trustLabel) trustLabel.textContent = trust;
 
-        // Mark as visited so the onboarding checklist progresses past this step (user-scoped key)
         try {
           var _uid = NHSAuth.user && (NHSAuth.user.id || NHSAuth.user.email);
           var _reqsKey = _uid ? 'nhs_gs_reqs_visited_' + _uid : 'nhs_gs_reqs_visited';
@@ -322,7 +303,13 @@
         } catch (e) {}
 
         var _walletForNudge = 0;
-        try { _walletForNudge = (JSON.parse(localStorage.getItem('nhs_credentials') || '[]') || []).length; } catch (e) {}
+        try {
+          var wr = await fetch('/api/me/wallet', { credentials: 'include' });
+          if (wr.ok) {
+            var w = await wr.json();
+            _walletForNudge = Array.isArray(w) ? w.length : 0;
+          }
+        } catch (e) {}
         if (_walletForNudge === 0) {
           NHSOnboardingNudge.show({
             insertAfterId: 'reqPageHeading',
@@ -334,28 +321,40 @@
         }
 
         try {
-          var [reqData, wallet] = await Promise.all([
-            apiJson('/api/me/trust-requirements'),
-            apiJson('/api/me/wallet'),
-          ]);
+          var data = await fetch('/api/me/compliance-snapshot', { credentials: 'include' }).then(function (r) {
+            if (!r.ok) throw new Error('Could not load compliance data');
+            return r.json();
+          });
 
-          var topics = (reqData && reqData.topics) || [];
+          if (!data.snapshot) {
+            document.getElementById('pageLeadText').textContent = '';
+            show(document.getElementById('noTrustMsg'), true);
+            return;
+          }
 
-          if (!topics.length) {
+          var snap = data.snapshot;
+          if (!(snap.topics || []).length) {
             var noTopics = document.getElementById('noTopicsMsg');
             var noTopicsText = document.getElementById('noTopicsText');
-            if (noTopicsText) noTopicsText.textContent =
-              trust + ' has not yet added any mandatory training requirements to this system. Contact your HR or Medical Education team.';
+            if (noTopicsText) {
+              noTopicsText.textContent =
+                trust + ' has not yet added any mandatory training requirements to this system. Contact your HR or Medical Education team.';
+            }
             document.getElementById('pageLeadText').textContent = '';
             show(noTopics, true);
             return;
           }
 
-          if (!Array.isArray(wallet)) wallet = [];
-
           show(document.getElementById('mainContent'), true);
-          renderTable(topics, wallet);
+          renderTable(snap);
 
+          var walletRes = await fetch('/api/me/wallet', { credentials: 'include' }).catch(function () { return null; });
+          if (walletRes && walletRes.ok) {
+            var wallet = await walletRes.json();
+            show(document.getElementById('noWalletMsg'), !Array.isArray(wallet) || wallet.length === 0);
+          } else {
+            show(document.getElementById('noWalletMsg'), false);
+          }
         } catch (err) {
           var errEl = document.getElementById('loadError');
           if (errEl) {

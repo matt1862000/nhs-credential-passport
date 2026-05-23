@@ -14,6 +14,7 @@ from typing import Any, Optional
 from jose import jwt as jose_jwt
 
 from . import db
+from . import mandatory_matching
 
 
 def _parse_wallet(raw: str) -> list[dict]:
@@ -45,66 +46,21 @@ def _cred_payload(c: dict) -> Optional[dict]:
         "credential_id": c.get("credential_id"),
         "module_name_display": c.get("module_name"),
         "issuing_trust_name": c.get("issuing_trust_name"),
+        "_raw": c,
     }
 
 
-def _hints_from_topic(topic: dict) -> dict:
-    h = topic.get("match_hints")
-    if isinstance(h, dict):
-        return h
-    return {
-        "match_module_codes": [],
-        "match_name_substrings": [topic.get("topic_name") or ""],
-    }
-
-
-def _cred_matches_requirement(req: dict, pl: dict) -> bool:
-    code = pl.get("module_code") or ""
-    name = pl.get("module_name") or ""
-    for mc in req.get("match_module_codes") or []:
-        if code == str(mc).strip().lower():
-            return True
-    for sub in req.get("match_name_substrings") or []:
-        s = str(sub).strip().lower()
-        if s and s in name:
-            return True
-    return False
-
-
-def _find_best_match(topic: dict, wallet: list[dict]) -> Optional[dict]:
-    req = _hints_from_topic(topic)
-    label = (topic.get("topic_name") or "").strip().lower()
-    matches: list[tuple[str, dict]] = []
+def _wallet_payloads(wallet: list[dict]) -> list[dict]:
+    out: list[dict] = []
     for c in wallet:
         pl = _cred_payload(c)
-        if not pl:
-            continue
-        if _cred_matches_requirement(req, pl):
-            matches.append((pl.get("expiry_date") or "9999-99-99", c))
-            continue
-        name = pl.get("module_name") or ""
-        if label and (label in name or name in label):
-            matches.append((pl.get("expiry_date") or "9999-99-99", c))
-    if not matches:
-        return None
-    matches.sort(key=lambda x: x[0], reverse=True)
-    return matches[0][1]
+        if pl:
+            out.append(pl)
+    return out
 
 
 def _expiry_status(expiry_date: Optional[str], *, warn_days: int = 90) -> str:
-    if not expiry_date:
-        return "met"
-    try:
-        exp = date.fromisoformat(str(expiry_date)[:10])
-    except ValueError:
-        return "met"
-    today = date.today()
-    if exp < today:
-        return "expired"
-    warn = today + timedelta(days=warn_days)
-    if exp <= warn:
-        return "expiring"
-    return "met"
+    return mandatory_matching._expiry_bucket(expiry_date, warn_days=warn_days)
 
 
 def _days_until(expiry_date: Optional[str]) -> Optional[int]:
@@ -126,45 +82,68 @@ def _hr_status_for_credential(verified_map: dict, credential_id: Optional[str]) 
     return (ent.get("status") or "").upper() or None
 
 
+def _summary_counts(topic_rows: list[dict]) -> dict[str, int]:
+    n_met = n_expiring = n_gap = n_needs_review = n_possible = 0
+    for tr in topic_rows:
+        legacy = tr.get("status") or "gap"
+        label = tr.get("status_label") or ""
+        if legacy == "met":
+            n_met += 1
+            if label == "Met (possible match)":
+                n_possible += 1
+        elif legacy == "expiring":
+            n_expiring += 1
+        else:
+            n_gap += 1
+            if label == "Needs review":
+                n_needs_review += 1
+    return {
+        "met": n_met,
+        "expiring": n_expiring,
+        "gap": n_gap,
+        "needs_review": n_needs_review,
+        "possible_match": n_possible,
+    }
+
+
 def doctor_compliance_snapshot(doctor_user_id: int, trust_name: str) -> dict:
     """Mandatory topics vs wallet for one clinician at a trust."""
     trust = (trust_name or "").strip()
     topics = db.mandatory_topics_list(trust) if trust else []
     wallet = _parse_wallet(db.user_wallet_get(int(doctor_user_id)))
+    payloads = _wallet_payloads(wallet)
     verified_map = db.doctor_verified_map(int(doctor_user_id))
 
     topic_rows: list[dict] = []
-    n_met = n_expiring = n_gap = 0
     for t in topics:
-        match = _find_best_match(t, wallet)
-        if match:
-            pl = _cred_payload(match) or {}
-            st = _expiry_status(pl.get("expiry_date"))
-            cid = match.get("credential_id")
-            hr_st = _hr_status_for_credential(verified_map, cid)
-        else:
-            st = "gap"
-            pl = {}
-            cid = None
-            hr_st = None
-        if st == "met":
-            n_met += 1
-        elif st == "expiring":
-            n_expiring += 1
-        else:
-            n_gap += 1
+        result = mandatory_matching.match_topic_to_wallet(t, payloads)
+        cid = result.get("credential_id")
+        hr_st = _hr_status_for_credential(verified_map, cid)
         topic_rows.append(
             {
                 "topic_id": t.get("id"),
                 "topic_name": t.get("topic_name"),
                 "category": t.get("category"),
-                "status": st,
+                "delivery_channel": t.get("delivery_channel"),
+                "resource_url": t.get("resource_url"),
+                "status": result.get("status"),
+                "status_label": result.get("status_label"),
+                "match_type": result.get("match_type"),
+                "confidence_score": result.get("confidence_score"),
+                "confidence_label": result.get("confidence_label"),
+                "reason": result.get("reason"),
+                "portability": result.get("portability"),
+                "partial_hint": result.get("partial_hint"),
                 "credential_id": cid,
-                "module_name": (match or {}).get("module_name"),
-                "expiry_date": pl.get("expiry_date"),
+                "module_name": result.get("module_name"),
+                "expiry_date": result.get("expiry_date"),
+                "expiry_status": result.get("expiry_status"),
                 "hr_status": hr_st,
             }
         )
+
+    summary = _summary_counts(topic_rows)
+    summary["total_topics"] = len(topics)
 
     expiring_creds: list[dict] = []
     seen: set[str] = set()
@@ -204,12 +183,7 @@ def doctor_compliance_snapshot(doctor_user_id: int, trust_name: str) -> dict:
     return {
         "trust": trust or None,
         "topics": topic_rows,
-        "summary": {
-            "total_topics": len(topics),
-            "met": n_met,
-            "expiring": n_expiring,
-            "gap": n_gap,
-        },
+        "summary": summary,
         "expiring_credentials": expiring_creds,
         "hr_verification": vm_counts,
     }
@@ -234,6 +208,7 @@ def cohort_compliance_snapshot(cohort_id: int, hr_trust: str) -> Optional[dict]:
             "met": 0,
             "gap": 0,
             "expiring": 0,
+            "needs_review": 0,
         }
 
     fully_compliant = 0
@@ -266,6 +241,8 @@ def cohort_compliance_snapshot(cohort_id: int, hr_trust: str) -> Optional[dict]:
                 topic_agg[tkey]["expiring"] += 1
             else:
                 topic_agg[tkey]["gap"] += 1
+                if tr.get("status_label") == "Needs review":
+                    topic_agg[tkey]["needs_review"] += 1
         member_rows.append(
             {
                 "user_id": m["user_id"],
@@ -320,14 +297,14 @@ def cohort_compliance_matrix(cohort_id: int, hr_trust: str) -> Optional[dict]:
     for m in snap.get("members") or []:
         uid = int(m["user_id"])
         doc = doctor_compliance_snapshot(uid, trust)
-        by_key = {_topic_row_key(tr): tr.get("status") or "gap" for tr in doc.get("topics") or []}
+        by_key = {_topic_row_key(tr): tr.get("status_label") or tr.get("status") or "gap" for tr in doc.get("topics") or []}
         rows.append(
             {
                 "user_id": uid,
                 "display_name": m.get("display_name"),
                 "email": m.get("email"),
                 "gmc_number": m.get("gmc_number"),
-                "topic_statuses": {k: by_key.get(k, "gap") for k in topic_keys},
+                "topic_statuses": {k: by_key.get(k, "No match") for k in topic_keys},
                 "summary": m.get("summary") or {},
                 "expiring_count": m.get("expiring_count") or 0,
             }
@@ -365,7 +342,7 @@ def cohort_compliance_csv(cohort_id: int, hr_trust: str) -> Optional[tuple[str, 
             row.get("gmc_number") or "",
         ]
         for t in topics:
-            cells.append(statuses.get(_topic_row_key(t), "gap"))
+            cells.append(statuses.get(_topic_row_key(t), "No match"))
         cells.extend([gaps, expiring, "yes" if fully else "no"])
         writer.writerow(cells)
     slug = re.sub(r"[^a-z0-9]+", "-", (matrix.get("cohort_name") or "cohort").lower()).strip("-") or "cohort"

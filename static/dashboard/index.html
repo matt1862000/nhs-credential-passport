@@ -484,19 +484,21 @@
           var sum = snap.summary || {};
           var gaps = Number(sum.gap || 0);
           var expiring = Number(sum.expiring || 0);
+          var needsReview = Number(sum.needs_review || 0);
           var met = Number(sum.met || 0);
           var total = Number(sum.total_topics || 0);
           banner.hidden = false;
           banner.className = 'dash-compliance-banner';
           if (gaps > 0) banner.classList.add('dash-compliance-banner--bad');
-          else if (expiring > 0) banner.classList.add('dash-compliance-banner--warn');
+          else if (expiring > 0 || needsReview > 0) banner.classList.add('dash-compliance-banner--warn');
           if (total === 0) {
             text.innerHTML = 'No mandatory topics configured for your trust yet. <a href="/static/requirements/">Trust requirements</a>';
-          } else if (gaps === 0 && expiring === 0) {
+          } else if (gaps === 0 && expiring === 0 && needsReview === 0) {
             text.innerHTML = 'You meet all <strong>' + met + '</strong> mandatory trust requirements. <a href="/static/requirements/">View checklist</a>';
           } else {
             var parts = [];
             if (gaps > 0) parts.push('<strong>' + gaps + '</strong> gap' + (gaps === 1 ? '' : 's'));
+            if (needsReview > 0) parts.push('<strong>' + needsReview + '</strong> need review');
             if (expiring > 0) parts.push('<strong>' + expiring + '</strong> expiring soon');
             text.innerHTML = 'Trust requirements: ' + parts.join(', ') + ' out of ' + total + '. '
               + '<a href="/static/requirements/">View checklist</a>';
