@@ -253,6 +253,32 @@ a:hover {
   max-height: 14rem;
   overflow-y: auto;
 }
+.nhsuk-topnav__msg-preview-section {
+  border-bottom: 1px solid var(--nhsuk-border);
+}
+.nhsuk-topnav__msg-preview-section:last-child {
+  border-bottom: none;
+}
+.nhsuk-topnav__msg-preview-subhead {
+  margin: 0;
+  padding: 0.45rem 0.85rem 0.35rem;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--nhsuk-secondary-text);
+  background: #fafbfc;
+}
+.nhsuk-topnav__msg-preview-section .nhsuk-topnav__msg-preview-empty {
+  padding-top: 0.5rem;
+  padding-bottom: 0.65rem;
+}
+.nhsuk-topnav__msg-preview-feet {
+  border-top: 1px solid var(--nhsuk-border);
+}
+.nhsuk-topnav__msg-preview-feet .nhsuk-topnav__msg-preview-foot + .nhsuk-topnav__msg-preview-foot {
+  border-top: 1px solid var(--nhsuk-border);
+}
 .nhsuk-topnav__msg-preview-item {
   display: block;
   padding: 0.65rem 0.85rem;
