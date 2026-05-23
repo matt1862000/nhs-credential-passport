@@ -88,6 +88,25 @@
     );
   }
 
+  function messagesBellInnerHtml(msgPath) {
+    var path = msgPath || '/static/messages/';
+    return (
+      '<a href="' +
+      path +
+      '" class="nhsuk-topnav__messages" id="navMessagesLink" aria-label="Messages">' +
+      ENVELOPE_SVG +
+      '<span class="nhsuk-topnav__msg-badge" id="navMsgBadge" hidden aria-live="polite"></span>' +
+      '</a>' +
+      '<div class="nhsuk-topnav__msg-preview" id="navMessagesPreview" role="tooltip" hidden>' +
+      '<p class="nhsuk-topnav__msg-preview-head">Messages</p>' +
+      '<div class="nhsuk-topnav__msg-preview-body" id="navMessagesPreviewBody"></div>' +
+      '<a class="nhsuk-topnav__msg-preview-foot" id="navMessagesPreviewAll" href="' +
+      path +
+      '">View all messages</a>' +
+      '</div>'
+    );
+  }
+
   function accountMarkup() {
     return (
       '<div class="nhsuk-topnav__account" id="navAccount">' +
@@ -100,15 +119,8 @@
       alertsBellInnerHtml() +
       '</div>' +
       '<div class="nhsuk-topnav__messages-wrap" id="navMessagesWrap">' +
-      '<a href="/static/messages/" class="nhsuk-topnav__messages" id="navMessagesLink" aria-label="Messages">' +
-      ENVELOPE_SVG +
-      '<span class="nhsuk-topnav__msg-badge" id="navMsgBadge" hidden aria-live="polite"></span>' +
-      '</a>' +
-      '<div class="nhsuk-topnav__msg-preview" id="navMessagesPreview" role="tooltip" hidden>' +
-      '<p class="nhsuk-topnav__msg-preview-head">Messages</p>' +
-      '<div class="nhsuk-topnav__msg-preview-body" id="navMessagesPreviewBody"></div>' +
-      '<a class="nhsuk-topnav__msg-preview-foot" id="navMessagesPreviewAll" href="/static/messages/">View all messages</a>' +
-      '</div></div></div></div>'
+      messagesBellInnerHtml() +
+      '</div></div></div>'
     );
   }
 
@@ -142,6 +154,17 @@
     var msgWrap = document.getElementById('navMessagesWrap');
     if (msgWrap) tools.insertBefore(wrap, msgWrap);
     else tools.appendChild(wrap);
+  }
+
+  function ensureMessagesBellUi() {
+    ensureAccountToolsLayout();
+    var tools = document.getElementById('navAccountTools');
+    if (!tools || document.getElementById('navMessagesWrap') || document.getElementById('navMessagesLink')) return;
+    var wrap = document.createElement('div');
+    wrap.className = 'nhsuk-topnav__messages-wrap';
+    wrap.id = 'navMessagesWrap';
+    wrap.innerHTML = messagesBellInnerHtml();
+    tools.appendChild(wrap);
   }
 
   function ensureAlertsPreviewUi() {
@@ -195,6 +218,7 @@
 
   function ensureMessagesPreviewUi() {
     ensureAccountToolsLayout();
+    ensureMessagesBellUi();
     var link = document.getElementById('navMessagesLink');
     if (!link || document.getElementById('navMessagesPreview')) return;
 
