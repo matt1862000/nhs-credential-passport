@@ -1,10 +1,6 @@
 (function () {
   var HR_PAGE = typeof window.__HR_PAGE__ === 'string' ? window.__HR_PAGE__ : 'inbox';
 
-  function batchViz() {
-    return window.NHSBatchResultViz;
-  }
-
       function wireHamburgerMenu() {
         var btn = document.getElementById('btnMenu');
         var panel = document.getElementById('menuPanel');
@@ -92,8 +88,6 @@
             created_at: latest,
             _session_count: sess.length,
             sessions: sess,
-            module_names: mergeModuleNameLists(sess.map(function (x) { return x.module_names; })),
-            pending_module_names: mergeModuleNameLists(sess.map(function (x) { return x.pending_module_names; })),
           };
         }).sort(function (a, b) {
           return String(b.created_at || '').localeCompare(String(a.created_at || ''));
@@ -135,544 +129,17 @@
         if (String(el.value || '').trim() !== '') return;
         el.value = String(val);
       }
-
-      var hrTrustSuggestSyncFns = [];
-      function syncHrTrustSuggestLastAutoFromDom() {
-        hrTrustSuggestSyncFns.forEach(function (fn) {
-          try {
-            fn();
-          } catch (e) {}
-        });
-      }
-
-      var hrTrustAutocompleteInited = false;
-      function wireHrIssuingTrustAutocomplete(opts) {
-        var nameId = opts.nameId;
-        var odsId = opts.odsId;
-        var listId = opts.listId;
-        var wrapId = opts.wrapId;
-        var nameEl = document.getElementById(nameId);
-        var odsEl = document.getElementById(odsId);
-        var listEl = document.getElementById(listId);
-        var wrapEl = document.getElementById(wrapId);
-        if (!nameEl || !odsEl || !listEl || !wrapEl || !window.NHSOdsTrustSuggest) return;
-
-        var items = [];
-        var active = -1;
-        var debSuggest = null;
-        var debOds = null;
-        var lastAuto = { name: '', ods: '' };
-
-        hrTrustSuggestSyncFns.push(function () {
-          lastAuto.name = String(nameEl.value || '').trim();
-          lastAuto.ods = String(odsEl.value || '').trim();
-        });
-
-        function hideList() {
-          listEl.innerHTML = '';
-          listEl.hidden = true;
-          active = -1;
-          items = [];
-          nameEl.setAttribute('aria-expanded', 'false');
-          nameEl.removeAttribute('aria-activedescendant');
-        }
-
-        function updateHighlight() {
-          var lis = listEl.querySelectorAll('li[role="option"]');
-          for (var j = 0; j < lis.length; j++) {
-            lis[j].setAttribute('aria-selected', j === active ? 'true' : 'false');
-          }
-          if (active >= 0 && lis[active]) {
-            nameEl.setAttribute('aria-activedescendant', lis[active].id);
-            try {
-              lis[active].scrollIntoView({ block: 'nearest' });
-            } catch (eSc) {}
-          } else {
-            nameEl.removeAttribute('aria-activedescendant');
-          }
-        }
-
-        function applyIndex(idx) {
-          if (idx < 0 || idx >= items.length) return;
-          var it = items[idx];
-          nameEl.value = it.name || nameEl.value;
-          if (it.ods) {
-            var curOds = String(odsEl.value || '').trim();
-            var shouldReplace = !curOds || curOds === lastAuto.ods;
-            if (shouldReplace) odsEl.value = it.ods;
-            lastAuto.name = String(nameEl.value || '').trim();
-            lastAuto.ods = it.ods;
-          }
-          hideList();
-        }
-
-        function renderList(rows) {
-          items = rows || [];
-          listEl.innerHTML = '';
-          active = -1;
-          if (!items.length) {
-            hideList();
-            return;
-          }
-          for (var i = 0; i < items.length; i++) {
-            var it = items[i];
-            var li = document.createElement('li');
-            li.setAttribute('role', 'option');
-            li.id = listId + '-opt-' + i;
-            li.dataset.index = String(i);
-            var nameSpan = document.createElement('span');
-            nameSpan.textContent = it.name;
-            li.appendChild(nameSpan);
-            if (it.ods) {
-              var meta = document.createElement('span');
-              meta.className = 'nhs-suggest-meta';
-              meta.textContent = 'ODS ' + it.ods;
-              li.appendChild(meta);
-            }
-            listEl.appendChild(li);
-          }
-          listEl.hidden = false;
-          nameEl.setAttribute('aria-expanded', 'true');
-        }
-
-        async function runSuggest() {
-          var q = String(nameEl.value || '').trim();
-          if (q.length < 2) {
-            hideList();
-            return;
-          }
-          try {
-            var res = await NHSOdsTrustSuggest.search(q, { minLength: 2, limit: 8 });
-            renderList(res);
-          } catch (e) {
-            hideList();
-          }
-        }
-
-        async function runPickBestOds() {
-          var t = nameEl.value.trim();
-          if (t.length < 3) return;
-          var curOds = odsEl.value.trim();
-          if (curOds && curOds !== lastAuto.ods) return;
-          try {
-            var org = await NHSOdsTrustSuggest.pickBestOrg(t, { minLength: 3 });
-            if (!org || !org.OrgId) return;
-            lastAuto.name = t;
-            lastAuto.ods = org.OrgId;
-            odsEl.value = org.OrgId;
-          } catch (e2) {}
-        }
-
-        nameEl.addEventListener('input', function () {
-          if (!String(nameEl.value || '').trim()) {
-            lastAuto.name = '';
-            lastAuto.ods = '';
-          }
-          if (debSuggest) clearTimeout(debSuggest);
-          debSuggest = setTimeout(function () {
-            debSuggest = null;
-            void runSuggest();
-          }, 320);
-          if (debOds) clearTimeout(debOds);
-          debOds = setTimeout(function () {
-            debOds = null;
-            void runPickBestOds();
-          }, 480);
-        });
-        nameEl.addEventListener('change', function () {
-          void runPickBestOds();
-        });
-        odsEl.addEventListener('input', function () {
-          var v = String(odsEl.value || '').trim();
-          if (!v) {
-            lastAuto.name = '';
-            lastAuto.ods = '';
-          } else if (v !== lastAuto.ods) {
-            lastAuto.name = '';
-            lastAuto.ods = '';
-          }
-        });
-        listEl.addEventListener('mousedown', function (ev) {
-          if (ev.target.closest('li[role="option"]')) ev.preventDefault();
-        });
-        listEl.addEventListener('click', function (ev) {
-          var li = ev.target.closest('li[role="option"]');
-          if (!li) return;
-          applyIndex(parseInt(li.dataset.index, 10));
-        });
-        nameEl.addEventListener('keydown', function (e) {
-          if (listEl.hidden || !items.length) return;
-          if (e.key === 'Escape') {
-            e.preventDefault();
-            hideList();
-            return;
-          }
-          if (e.key === 'ArrowDown') {
-            e.preventDefault();
-            active = Math.min(active + 1, items.length - 1);
-            if (active < 0) active = 0;
-            updateHighlight();
-          } else if (e.key === 'ArrowUp') {
-            e.preventDefault();
-            active = Math.max(active - 1, 0);
-            updateHighlight();
-          } else if (e.key === 'Enter' && active >= 0) {
-            e.preventDefault();
-            applyIndex(active);
-          }
-        });
-        nameEl.addEventListener('blur', function () {
-          window.setTimeout(hideList, 200);
-        });
-        document.addEventListener(
-          'click',
-          function (e) {
-            if (!wrapEl.contains(e.target)) hideList();
-          },
-          true
-        );
-      }
-
-      function initHrIssuingTrustAutocomplete() {
-        if (hrTrustAutocompleteInited) return;
-        hrTrustAutocompleteInited = true;
-        wireHrIssuingTrustAutocomplete({
-          nameId: 'bulkIssuingName',
-          odsId: 'bulkOds',
-          listId: 'hrBulkTrustSuggestList',
-          wrapId: 'hrBulkTrustAcWrap',
-        });
-        wireHrIssuingTrustAutocomplete({
-          nameId: 'addTrainingIssuingName',
-          odsId: 'addTrainingOds',
-          listId: 'hrAddTrainingTrustSuggestList',
-          wrapId: 'hrAddTrainingTrustAcWrap',
-        });
-      }
-
-      async function fillHrIssuingOdsFromOrdIfBlank(nameId, odsId) {
-        var nameEl = document.getElementById(nameId);
-        var odsEl = document.getElementById(odsId);
-        if (!nameEl || !odsEl || !window.NHSOdsTrustSuggest) return;
-        var nm = String(nameEl.value || '').trim();
-        if (nm.length < 3 || String(odsEl.value || '').trim()) return;
-        try {
-          var org = await NHSOdsTrustSuggest.pickBestOrg(nm, { minLength: 3 });
-          if (org && org.OrgId) odsEl.value = String(org.OrgId).trim().toUpperCase();
-        } catch (e) {}
-      }
-
       async function fillHrIssuingTrustFieldsIfEmpty() {
         var d = await fetchHrIssuingDefaults();
-        setInputIfEmpty('bulkIssuingName', d.issuing_trust_name);
         setInputIfEmpty('bulkOds', d.issuing_trust_ods_code);
-        setInputIfEmpty('addTrainingIssuingName', d.issuing_trust_name);
+        setInputIfEmpty('bulkIssuingName', d.issuing_trust_name);
         setInputIfEmpty('addTrainingOds', d.issuing_trust_ods_code);
-        await fillHrIssuingOdsFromOrdIfBlank('bulkIssuingName', 'bulkOds');
-        await fillHrIssuingOdsFromOrdIfBlank('addTrainingIssuingName', 'addTrainingOds');
-        syncHrTrustSuggestLastAutoFromDom();
+        setInputIfEmpty('addTrainingIssuingName', d.issuing_trust_name);
       }
 
-      var LS_INBOX_TAB = 'hr_tab_inbox';
-      var LS_ITEMS_TAB = 'hr_tab_items';
       var inboxTab = 'new';
       var itemsTab = 'new';
-      var inboxFilterModule = '';
-      var inboxFilterStatus = '';
-      var itemsFilterModule = '';
-      var itemsFilterStatus = '';
-      var lastInboxGroups = [];
       var lastSessionPayload = null;
-      var lastItemsFixedSessionId = null;
-
-      function itemsTableColspan(showSelectCol) {
-        return showSelectCol ? 5 : 4;
-      }
-
-      function isItemActionable(it, merged, portfolioSession) {
-        var st = String(it.status || '').toUpperCase();
-        if (st === 'VERIFIED' || st === 'DECLINED') return false;
-        var portfolioRow = merged
-          ? String(it.session_share_kind || '').toLowerCase() === 'portfolio'
-          : portfolioSession;
-        return !portfolioRow;
-      }
-
-      function syncItemsBulkBarCounts() {
-        var tbody = document.getElementById('itemsTbody');
-        var bulkBar = document.getElementById('itemsBulkBar');
-        if (!tbody || !bulkBar || bulkBar.hidden) return;
-        var all = tbody.querySelectorAll('.hr-item-select-cb[data-cid]');
-        var checked = tbody.querySelectorAll('.hr-item-select-cb[data-cid]:checked');
-        var n = checked.length;
-        var countEl = document.getElementById('itemsBulkCount');
-        var btnV = document.getElementById('btnItemsVerifySelected');
-        var btnD = document.getElementById('btnItemsDeclineSelected');
-        var selectAll = document.getElementById('itemsSelectAll');
-        if (countEl) {
-          countEl.textContent = n === 0 ? '0 selected' : (n === 1 ? '1 selected' : n + ' selected');
-        }
-        if (btnV) btnV.disabled = n === 0;
-        if (btnD) btnD.disabled = n === 0;
-        if (selectAll) {
-          selectAll.indeterminate = n > 0 && n < all.length;
-          selectAll.checked = all.length > 0 && n === all.length;
-        }
-      }
-
-      function updateItemsBulkControls(showSelectCol) {
-        var bulkBar = document.getElementById('itemsBulkBar');
-        var th = document.getElementById('itemsSelectAllTh');
-        var selectAll = document.getElementById('itemsSelectAll');
-        if (th) th.hidden = !showSelectCol;
-        if (bulkBar) bulkBar.hidden = !showSelectCol;
-        if (selectAll) {
-          selectAll.checked = false;
-          selectAll.indeterminate = false;
-        }
-        syncItemsBulkBarCounts();
-      }
-
-      function selectedItemEntries() {
-        var tbody = document.getElementById('itemsTbody');
-        if (!tbody) return [];
-        return Array.from(tbody.querySelectorAll('.hr-item-select-cb[data-cid]:checked')).map(function (cb) {
-          return {
-            sid: cb.getAttribute('data-sid'),
-            cid: cb.getAttribute('data-cid'),
-          };
-        }).filter(function (e) {
-          return e.sid && e.cid;
-        });
-      }
-
-      function notifyHrInboxChanged() {
-        if (window.NHSNavAccount && typeof NHSNavAccount.notifyVerifyInboxChanged === 'function') {
-          NHSNavAccount.notifyVerifyInboxChanged();
-        }
-        if (window.NHSNavAccount && typeof NHSNavAccount.notifyAlertsChanged === 'function') {
-          NHSNavAccount.notifyAlertsChanged();
-        }
-      }
-
-      async function runBulkVerify(entries) {
-        if (!entries.length) return;
-        if (!confirm('Verify ' + entries.length + ' selected record' + (entries.length === 1 ? '' : 's') + '?')) return;
-        var btn = document.getElementById('btnItemsVerifySelected');
-        if (btn) {
-          btn.disabled = true;
-          btn.textContent = 'Verifying…';
-        }
-        var failed = 0;
-        try {
-          for (var i = 0; i < entries.length; i++) {
-            try {
-              await apiJson(
-                '/api/hr/shares/' +
-                  encodeURIComponent(entries[i].sid) +
-                  '/items/' +
-                  encodeURIComponent(entries[i].cid) +
-                  '/verify',
-                { method: 'POST' }
-              );
-            } catch (err) {
-              failed++;
-            }
-          }
-          await refreshPayloadAfterAction(lastItemsFixedSessionId);
-          notifyHrInboxChanged();
-          if (failed) alert('Could not verify ' + failed + ' record(s). The rest were updated.');
-        } finally {
-          if (btn) btn.textContent = 'Verify selected';
-          syncItemsBulkBarCounts();
-        }
-      }
-
-      async function runBulkDecline(entries) {
-        if (!entries.length) return;
-        var reason = (prompt('Why are you declining these records? (Sent back to the clinician)') || '').trim();
-        if (!reason) return;
-        var btn = document.getElementById('btnItemsDeclineSelected');
-        if (btn) {
-          btn.disabled = true;
-          btn.textContent = 'Declining…';
-        }
-        var failed = 0;
-        try {
-          for (var i = 0; i < entries.length; i++) {
-            try {
-              await apiJson(
-                '/api/hr/shares/' +
-                  encodeURIComponent(entries[i].sid) +
-                  '/items/' +
-                  encodeURIComponent(entries[i].cid) +
-                  '/decline',
-                {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ reason: reason }),
-                }
-              );
-            } catch (err) {
-              failed++;
-            }
-          }
-          await refreshPayloadAfterAction(lastItemsFixedSessionId);
-          notifyHrInboxChanged();
-          if (failed) alert('Could not decline ' + failed + ' record(s). The rest were updated.');
-        } finally {
-          if (btn) btn.textContent = 'Decline selected';
-          syncItemsBulkBarCounts();
-        }
-      }
-
-      function wireItemsBulkHandlers() {
-        var selectAll = document.getElementById('itemsSelectAll');
-        var tbody = document.getElementById('itemsTbody');
-        var btnV = document.getElementById('btnItemsVerifySelected');
-        var btnD = document.getElementById('btnItemsDeclineSelected');
-        if (selectAll && !selectAll._hrBulkWired) {
-          selectAll._hrBulkWired = true;
-          selectAll.addEventListener('change', function () {
-            if (!tbody) return;
-            var on = !!selectAll.checked;
-            tbody.querySelectorAll('.hr-item-select-cb[data-cid]').forEach(function (cb) {
-              cb.checked = on;
-            });
-            syncItemsBulkBarCounts();
-          });
-        }
-        if (tbody && !tbody._hrBulkChangeWired) {
-          tbody._hrBulkChangeWired = true;
-          tbody.addEventListener('change', function (e) {
-            if (e.target && e.target.classList && e.target.classList.contains('hr-item-select-cb') && e.target.getAttribute('data-cid')) {
-              syncItemsBulkBarCounts();
-            }
-          });
-        }
-        if (btnV && !btnV._hrBulkWired) {
-          btnV._hrBulkWired = true;
-          btnV.addEventListener('click', function () {
-            void runBulkVerify(selectedItemEntries());
-          });
-        }
-        if (btnD && !btnD._hrBulkWired) {
-          btnD._hrBulkWired = true;
-          btnD.addEventListener('click', function () {
-            void runBulkDecline(selectedItemEntries());
-          });
-        }
-      }
-
-      function mergeModuleNameLists(lists) {
-        var seen = Object.create(null);
-        var out = [];
-        (lists || []).forEach(function (arr) {
-          (arr || []).forEach(function (n) {
-            var k = String(n || '').trim();
-            if (!k || seen[k]) return;
-            seen[k] = true;
-            out.push(k);
-          });
-        });
-        return out.sort(function (a, b) {
-          return a.localeCompare(b, undefined, { sensitivity: 'base' });
-        });
-      }
-
-      function loadStoredTab(key, fallback) {
-        try {
-          var v = localStorage.getItem(key);
-          return v === 'archived' ? 'archived' : v === 'new' ? 'new' : fallback;
-        } catch (e) {
-          return fallback;
-        }
-      }
-
-      function saveStoredTab(key, tab) {
-        try {
-          localStorage.setItem(key, tab === 'archived' ? 'archived' : 'new');
-        } catch (e) { /* ignore */ }
-      }
-
-      function setSegmentTab(containerId, tab) {
-        var root = document.getElementById(containerId);
-        if (!root) return;
-        var wanted = tab === 'archived' ? 'archived' : 'new';
-        Array.from(root.querySelectorAll('button[data-tab]')).forEach(function (x) {
-          var active = x.getAttribute('data-tab') === wanted;
-          x.classList.toggle('active', active);
-          x.setAttribute('aria-selected', active ? 'true' : 'false');
-        });
-      }
-
-      function filterInboxGroups(groups) {
-        return (groups || []).filter(function (g) {
-          if (inboxFilterStatus === 'pending' && !(g.pending_count > 0)) return false;
-          if (inboxFilterStatus === 'declined' && !(g.declined_count > 0)) return false;
-          if (inboxFilterStatus === 'no_pending' && g.pending_count > 0) return false;
-          if (inboxFilterModule) {
-            var names =
-              g.pending_module_names && g.pending_module_names.length
-                ? g.pending_module_names
-                : g.module_names || [];
-            if (names.indexOf(inboxFilterModule) < 0) return false;
-          }
-          return true;
-        });
-      }
-
-      function fillInboxModuleSelect(groups) {
-        var sel = document.getElementById('inboxFilterModule');
-        if (!sel) return;
-        var names = mergeModuleNameLists(
-          (groups || []).map(function (g) {
-            return g.pending_module_names && g.pending_module_names.length
-              ? g.pending_module_names
-              : g.module_names;
-          })
-        );
-        var cur = inboxFilterModule;
-        sel.innerHTML =
-          '<option value="">All modules</option>' +
-          names
-            .map(function (n) {
-              return (
-                '<option value="' +
-                esc(n).replace(/"/g, '&quot;') +
-                '">' +
-                esc(n) +
-                '</option>'
-              );
-            })
-            .join('');
-        if (cur && names.indexOf(cur) >= 0) sel.value = cur;
-      }
-
-      function fillItemsModuleSelect(payload) {
-        var sel = document.getElementById('itemsFilterModule');
-        if (!sel || !payload) return;
-        var names = mergeModuleNameLists(
-          (payload.items || []).map(function (it) {
-            return it.module_name ? [it.module_name] : [];
-          })
-        );
-        var cur = itemsFilterModule;
-        sel.innerHTML =
-          '<option value="">All modules</option>' +
-          names
-            .map(function (n) {
-              return (
-                '<option value="' +
-                esc(n).replace(/"/g, '&quot;') +
-                '">' +
-                esc(n) +
-                '</option>'
-              );
-            })
-            .join('');
-        if (cur && names.indexOf(cur) >= 0) sel.value = cur;
-      }
 
       function closeHrCertModal() {
         var modal = document.getElementById('hrCertModal');
@@ -705,7 +172,7 @@
         modal.hidden = false;
       }
 
-      function wireTabs(containerId, storageKey, onPick) {
+      function wireTabs(containerId, onPick) {
         var root = document.getElementById(containerId);
         if (!root) return;
         root.addEventListener('click', function (e) {
@@ -718,7 +185,6 @@
             x.classList.toggle('active', active);
             x.setAttribute('aria-selected', active ? 'true' : 'false');
           });
-          if (storageKey) saveStoredTab(storageKey, wanted);
           onPick(wanted);
         });
       }
@@ -737,9 +203,7 @@
           if (inboxTab === 'new') return !isPortfolio && hasPending;
           return !isPortfolio && !hasPending;
         });
-        lastInboxGroups = aggregateDoctorGroups(sessions);
-        fillInboxModuleSelect(lastInboxGroups);
-        var groups = filterInboxGroups(lastInboxGroups);
+        var groups = aggregateDoctorGroups(sessions);
         if (summaryEl) {
           if (inboxTab === 'new') {
             if (groups.length === 0) {
@@ -778,70 +242,7 @@
           rows ||
           '<tr><td colspan="4" class="hr-muted">' +
             (inboxTab === 'new' ? 'No sets need action right now.' : 'No completed sets to show.') +
-            (lastInboxGroups.length && groups.length < lastInboxGroups.length
-              ? ' (filters hide ' + (lastInboxGroups.length - groups.length) + ' clinician' +
-                (lastInboxGroups.length - groups.length === 1 ? '' : 's') + '.)'
-              : '') +
             '</td></tr>';
-      }
-
-      function rerenderInboxFromCache() {
-        if (!lastInboxGroups.length) {
-          void loadInbox();
-          return;
-        }
-        var tbody = document.getElementById('sessionsTbody');
-        var summaryEl = document.getElementById('inboxSummary');
-        fillInboxModuleSelect(lastInboxGroups);
-        var groups = filterInboxGroups(lastInboxGroups);
-        if (summaryEl) {
-          if (inboxTab === 'new') {
-            if (groups.length === 0) {
-              summaryEl.innerHTML = lastInboxGroups.length
-                ? 'No clinicians match the current filters.'
-                : 'Nothing waiting — <strong>all caught up</strong> for now.';
-            } else if (groups.length === 1) {
-              summaryEl.innerHTML = '<strong>1</strong> clinician still has records to verify.';
-            } else {
-              summaryEl.innerHTML =
-                '<strong>' + String(groups.length) + '</strong> clinicians still have records to verify.';
-            }
-          } else {
-            summaryEl.innerHTML =
-              groups.length === 0
-                ? (lastInboxGroups.length ? 'No clinicians match the current filters.' : 'No completed sets in this list yet.')
-                : '<strong>' + String(groups.length) + '</strong> clinician(s) with every submission fully verified or declined.';
-          }
-        }
-        var rows = groups.map(function (g) {
-          var when = formatSharedAt(g.created_at);
-          var sub = '';
-          if ((g._session_count || 0) > 1) {
-            sub = '<div class="hr-date-sub">' + String(g._session_count) + ' submissions · latest below</div>';
-          }
-          var reviewHref =
-            g.doctor_user_id != null && g.doctor_user_id !== ''
-              ? '/static/hr/?doctor=' + encodeURIComponent(String(g.doctor_user_id))
-              : '/static/hr/?session=' + encodeURIComponent(String((g.sessions && g.sessions[0] && g.sessions[0].session_id) || ''));
-          return (
-            '<tr>' +
-              '<td>' + doctorCellHtml(g) + '</td>' +
-              '<td><div class="hr-date-main">' + esc(when) + '</div>' + sub + '</td>' +
-              '<td>' + statusPillsHtml(g) + '</td>' +
-              '<td class="hr-open-wrap"><a class="hr-open-btn" href="' + reviewHref + '">Review</a></td>' +
-            '</tr>'
-          );
-        }).join('');
-        if (tbody) {
-          tbody.innerHTML =
-            rows ||
-            '<tr><td colspan="4" class="hr-muted">' +
-              (inboxTab === 'new' ? 'No sets need action right now.' : 'No completed sets to show.') +
-              (lastInboxGroups.length && groups.length < lastInboxGroups.length
-                ? ' (filters hide ' + (lastInboxGroups.length - groups.length) + '.)'
-                : '') +
-              '</td></tr>';
-        }
       }
 
       /**
@@ -891,26 +292,15 @@
             (sub.length ? '<div class="hr-doctor-meta" style="text-align:right;">' + sub.join(' · ') + '</div>' : '') +
             tail;
         }
-        fillItemsModuleSelect(s);
         var items = (s.items || []).filter(function (it) {
           var st = String(it.status || '').toUpperCase();
           var pending = st !== 'VERIFIED' && st !== 'DECLINED';
           var pr = merged
             ? String(it.session_share_kind || '').toLowerCase() === 'portfolio'
             : portfolioSession;
-          var tabOk = pr ? itemsTab === 'new' : itemsTab === 'new' ? pending : !pending;
-          if (!tabOk) return false;
-          if (itemsFilterModule && String(it.module_name || '') !== itemsFilterModule) return false;
-          if (itemsFilterStatus && st !== itemsFilterStatus) return false;
-          return true;
+          if (pr) return itemsTab === 'new';
+          return itemsTab === 'new' ? pending : !pending;
         });
-        var showSelectCol =
-          itemsTab === 'new' &&
-          items.some(function (it) {
-            return isItemActionable(it, merged, portfolioSession);
-          });
-        var colspan = itemsTableColspan(showSelectCol);
-        updateItemsBulkControls(showSelectCol);
         var prevSid = null;
         var parts = [];
         items.forEach(function (it) {
@@ -918,9 +308,7 @@
             prevSid = it.session_id;
             var when = formatSharedAt(it.session_created_at);
             parts.push(
-              '<tr class="hr-session-divider"><td colspan="' +
-                String(colspan) +
-                '">Submission · ' +
+              '<tr class="hr-session-divider"><td colspan="4">Submission · ' +
                 esc(when) +
                 ' · #' +
                 esc(String(it.session_id)) +
@@ -936,38 +324,25 @@
               ? '<span class="hr-pill hr-pill--verified">VERIFIED</span>'
               : st === 'DECLINED'
                 ? '<span class="hr-pill">DECLINED</span>'
-                : '<span class="hr-pill">PENDING</span>'
-                  + (it.is_resubmission ? '<span class="hr-pill hr-pill--resubmit">Resubmission</span>' : '');
+                : '<span class="hr-pill">PENDING</span>';
           var isArchived = st === 'VERIFIED' || st === 'DECLINED';
           var sidForApi =
             merged && it.session_id != null ? String(it.session_id) : fixedSessionId != null ? String(fixedSessionId) : '';
-          var btn;
-          if (portfolioRow) {
-            btn = '<span class="hr-muted">—</span>';
-          } else if (st === 'VERIFIED') {
-            btn =
-              '<button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" data-unverify="1" data-sid="' +
-              esc(sidForApi) +
-              '" data-cid="' +
-              esc(it.credential_id) +
-              '">Unverify</button>';
-          } else if (isArchived) {
-            btn = '<span class="hr-muted">—</span>';
-          } else {
-            btn =
-              '<div class="hr-actions">' +
-              '<button type="button" class="nhsuk-button hr-btn-small" data-verify="1" data-sid="' +
-              esc(sidForApi) +
-              '" data-cid="' +
-              esc(it.credential_id) +
-              '">Verify</button>' +
-              '<button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" data-decline="1" data-sid="' +
-              esc(sidForApi) +
-              '" data-cid="' +
-              esc(it.credential_id) +
-              '">Decline</button>' +
-              '</div>';
-          }
+          var btn =
+            isArchived || portfolioRow
+              ? '<span class="hr-muted">—</span>'
+              : '<div class="hr-actions">' +
+                '<button type="button" class="nhsuk-button hr-btn-small" data-verify="1" data-sid="' +
+                esc(sidForApi) +
+                '" data-cid="' +
+                esc(it.credential_id) +
+                '">Verify</button>' +
+                '<button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" data-decline="1" data-sid="' +
+                esc(sidForApi) +
+                '" data-cid="' +
+                esc(it.credential_id) +
+                '">Decline</button>' +
+                '</div>';
           var note =
             st === 'DECLINED' && it.decline_reason
               ? '<div class="hr-muted" style="margin-top:0.25rem;">Reason: ' + esc(it.decline_reason) + '</div>'
@@ -1002,20 +377,6 @@
           }
           var hasCert = !!(rowCert || fallbackSameSubmissionCert || fallbackAnyCert);
           var modLabel = esc(it.module_name || it.credential_id || '—');
-          var actionable = showSelectCol && isItemActionable(it, merged, portfolioSession);
-          var selectCell = showSelectCol
-            ? '<td class="hr-table__select">' +
-              (actionable
-                ? '<input type="checkbox" class="hr-item-select-cb" data-sid="' +
-                  esc(sidForApi) +
-                  '" data-cid="' +
-                  esc(it.credential_id) +
-                  '" aria-label="Select ' +
-                  modLabel +
-                  '">'
-                : '') +
-              '</td>'
-            : '';
           var modCell = hasCert
             ? '<button type="button" class="hr-module-name-btn" data-view-cert="1" data-cid="' +
               esc(it.credential_id) +
@@ -1031,7 +392,6 @@
             : modLabel;
           parts.push(
             '<tr>' +
-              selectCell +
               '<td>' +
               modCell +
               priorNote +
@@ -1051,22 +411,20 @@
               '</tr>'
           );
         });
-        tbody.innerHTML = parts.join('') || '<tr><td colspan="' + String(colspan) + '" class="hr-muted">No items.</td></tr>';
-        syncItemsBulkBarCounts();
+        tbody.innerHTML = parts.join('') || '<tr><td colspan="4" class="hr-muted">No items.</td></tr>';
       }
 
       async function loadDoctorQueue(doctorUserId) {
         var tbody = document.getElementById('itemsTbody');
         var titleEl = document.getElementById('sessionViewTitle');
         if (titleEl) titleEl.textContent = 'E-learning from this clinician';
-        tbody.innerHTML = '<tr><td colspan="5" class="hr-muted">Loading…</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="4" class="hr-muted">Loading…</td></tr>';
         lastSessionPayload = await apiJson('/api/hr/doctors/' + encodeURIComponent(String(doctorUserId)) + '/queue');
         renderItemsTable(lastSessionPayload, null);
         attachItemsRowHandler(null);
       }
 
       function attachItemsRowHandler(fixedSessionId) {
-        lastItemsFixedSessionId = fixedSessionId;
         var tbody = document.getElementById('itemsTbody');
         var actionInFlight = false;
         tbody.onclick = async function (e) {
@@ -1099,43 +457,17 @@
           if (actionInFlight) return;
           var v = e.target && e.target.closest('button[data-verify="1"]');
           var d = e.target && e.target.closest('button[data-decline="1"]');
-          var u = e.target && e.target.closest('button[data-unverify="1"]');
-          if (!v && !d && !u) return;
-          var cid2 = (v || d || u).getAttribute('data-cid');
-          var sidAttr = (v || d || u).getAttribute('data-sid');
+          if (!v && !d) return;
+          var cid2 = (v || d).getAttribute('data-cid');
+          var sidAttr = (v || d).getAttribute('data-sid');
           var sessionIdForApi = sidAttr || (fixedSessionId != null ? String(fixedSessionId) : '');
+          if (!sessionIdForApi) {
+            alert('Missing session for this action.');
+            return;
+          }
           actionInFlight = true;
           try {
-            if (u) {
-              if (
-                !confirm(
-                  'Revert this record to awaiting decision? The clinician will no longer see it as verified by HR at your trust.'
-                )
-              ) {
-                actionInFlight = false;
-                return;
-              }
-              if (!sessionIdForApi) {
-                alert('Missing session for this action.');
-                actionInFlight = false;
-                return;
-              }
-              u.disabled = true;
-              u.textContent = 'Reverting…';
-              await apiJson(
-                '/api/hr/shares/' +
-                  encodeURIComponent(sessionIdForApi) +
-                  '/items/' +
-                  encodeURIComponent(String(cid2)) +
-                  '/unverify',
-                { method: 'POST' }
-              );
-            } else if (v) {
-              if (!sessionIdForApi) {
-                alert('Missing session for this action.');
-                actionInFlight = false;
-                return;
-              }
+            if (v) {
               v.disabled = true;
               v.textContent = 'Verifying…';
               await apiJson(
@@ -1147,11 +479,6 @@
                 { method: 'POST' }
               );
             } else {
-              if (!sessionIdForApi) {
-                alert('Missing session for this action.');
-                actionInFlight = false;
-                return;
-              }
               var reason = (
                 prompt('Why are you declining this record? (This will be sent back to the doctor)') || ''
               ).trim();
@@ -1175,7 +502,6 @@
               );
             }
             await refreshPayloadAfterAction(fixedSessionId);
-            notifyHrInboxChanged();
           } catch (err) {
             alert(err.message || err);
             await refreshPayloadAfterAction(fixedSessionId);
@@ -1202,7 +528,7 @@
         var tbody = document.getElementById('itemsTbody');
         var titleEl = document.getElementById('sessionViewTitle');
         if (titleEl) titleEl.textContent = 'E-learning in this set';
-        tbody.innerHTML = '<tr><td colspan="5" class="hr-muted">Loading…</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="4" class="hr-muted">Loading…</td></tr>';
         lastSessionPayload = await apiJson('/api/hr/shares/' + encodeURIComponent(String(sessionId)));
         if (titleEl) {
           titleEl.textContent =
@@ -1217,7 +543,7 @@
       (async function boot() {
         await NHSAuth.refresh();
         if (!NHSAuth.requireAuth()) return;
-        if (window.NHSNavAccount) void NHSNavAccount.refresh();
+        document.getElementById('navEmail').textContent = NHSAuth.user.email || '';
         wireHamburgerMenu();
 
         document.getElementById('btnSignOut').addEventListener('click', async function () {
@@ -1296,7 +622,6 @@
         function setAddTrainingStatus(msg, kind) {
           var el = document.getElementById('addTrainingStatus');
           if (!el) return;
-          el.hidden = false;
           el.textContent = msg || '';
           el.className = 'hr-bulk-status--muted';
           if (kind === 'error') el.className = 'hr-bulk-status--error';
@@ -1314,353 +639,22 @@
           if (t) t.textContent = 'Add training — ' + (dname || 'Clinician');
           form.reset();
           var nm = document.getElementById('addTrainingEvidenceName');
-          if (nm) nm.textContent = '';
-          if (batchViz()) batchViz().clear(document.getElementById('addTrainingProvisionResult'));
-          var addStEl = document.getElementById('addTrainingStatus');
-          if (addStEl) {
-            addStEl.hidden = true;
-            addStEl.textContent = '';
-          }
-          void (async function () {
-            await fillHrIssuingTrustFieldsIfEmpty();
-            m.hidden = false;
-          })();
+          if (nm) nm.textContent = 'No file chosen';
+          setAddTrainingStatus('', 'muted');
+          void fillHrIssuingTrustFieldsIfEmpty();
+          m.hidden = false;
         }
 
         var searchDoctorItemsCache = [];
-        var searchDoctorViewId = '';
 
         var bulkMod = document.getElementById('bulkModule');
         if (bulkMod) fillHrModuleSelect(bulkMod);
-
-        var bulkWizardStep = 1;
-        var bulkRecipientMethod = null;
-        var _bulkCohortsCache = [];
-
-        function getSelectedBulkCohortIds() {
-          var list = document.getElementById('bulkCohortList');
-          if (!list) return [];
-          return Array.prototype.slice.call(
-            list.querySelectorAll('input[type="checkbox"][data-bulk-cohort-id]:checked')
-          ).map(function (inp) { return parseInt(inp.getAttribute('data-bulk-cohort-id'), 10); })
-            .filter(function (id) { return !isNaN(id); });
-        }
-
-        function bulkCohortById(id) {
-          return _bulkCohortsCache.find(function (c) { return Number(c.id) === Number(id); }) || null;
-        }
-
-        function renderBulkCohortList(cohorts) {
-          var list = document.getElementById('bulkCohortList');
-          if (!list) return;
-          _bulkCohortsCache = cohorts || [];
-          if (!_bulkCohortsCache.length) {
-            list.innerHTML = '<p class="hr-bulk-cohort-list__empty">No cohorts yet. Create one from Cohorts first.</p>';
-            return;
-          }
-          list.innerHTML = _bulkCohortsCache.map(function (c) {
-            var n = (c.name || 'Cohort').trim();
-            var cnt = c.member_count != null ? c.member_count : 0;
-            var checked = c.is_default || String(n).toLowerCase() === 'all doctors' || String(n).toLowerCase() === 'ad-hoc' ? ' checked' : '';
-            return (
-              '<label class="hr-bulk-cohort-option">' +
-              '<input type="checkbox" data-bulk-cohort-id="' + esc(String(c.id)) + '"' + checked + '>' +
-              '<span><strong>' + esc(n) + '</strong>' +
-              '<span class="hr-bulk-cohort-option__meta">' + cnt + ' member' + (cnt === 1 ? '' : 's') + '</span></span>' +
-              '</label>'
-            );
-          }).join('');
-        }
-
-        function clearBulkCohortSelection() {
-          var list = document.getElementById('bulkCohortList');
-          if (!list) return;
-          list.querySelectorAll('input[type="checkbox"][data-bulk-cohort-id]').forEach(function (inp) {
-            inp.checked = false;
-          });
-        }
-
-        function setBulkStepError(elId, msg) {
-          var el = document.getElementById(elId);
-          if (!el) return;
-          el.textContent = msg || '';
-          el.hidden = !msg;
-        }
-
-        function syncBulkRosterPicker() {
-          var inp = document.getElementById('bulkRoster');
-          var picker = document.getElementById('bulkRosterPicker');
-          var done = document.getElementById('bulkRosterDone');
-          var has = inp && inp.files && inp.files[0];
-          if (picker) picker.hidden = !!has;
-          if (done) {
-            if (has) {
-              done.innerHTML = '<strong>Roster file selected.</strong> ' + esc(inp.files[0].name) + ' — continue to class evidence.';
-              done.hidden = false;
-            } else {
-              done.hidden = true;
-              done.textContent = '';
-            }
-          }
-        }
-
-        function syncBulkEvidencePicker() {
-          var inp = document.getElementById('bulkEvidence');
-          var picker = document.getElementById('bulkEvidencePicker');
-          var done = document.getElementById('bulkEvidenceDone');
-          var has = inp && inp.files && inp.files[0];
-          if (picker) picker.hidden = !!has;
-          if (done) {
-            if (has) {
-              done.innerHTML = '<strong>Evidence file selected.</strong> ' + esc(inp.files[0].name) + ' — continue to training details.';
-              done.hidden = false;
-            } else {
-              done.hidden = true;
-              done.textContent = '';
-            }
-          }
-        }
-
-        function updateBulkRecipientsSummary() {
-          var el = document.getElementById('bulkRecipientsSummary');
-          if (!el) return;
-          if (bulkRecipientMethod === 'cohort') {
-            var ids = getSelectedBulkCohortIds();
-            if (!ids.length) {
-              el.textContent = '';
-              return;
-            }
-            var names = ids.map(function (id) {
-              var c = bulkCohortById(id);
-              return c ? (c.name || 'Cohort').trim() : ('Cohort ' + id);
-            });
-            var label = names.length === 1
-              ? 'cohort “' + names[0] + '”'
-              : ids.length + ' cohorts (“' + names.slice(0, 3).join('”, “') + (names.length > 3 ? '”, …' : '') + '”)';
-            el.textContent = 'Recipients: ' + label + '. Duplicates across cohorts are only issued once.';
-          } else if (bulkRecipientMethod === 'roster') {
-            var r = document.getElementById('bulkRoster');
-            var name = r && r.files && r.files[0] ? r.files[0].name : '';
-            el.textContent = name ? 'Recipients: roster file “' + name + '”.' : 'Recipients: roster file.';
-          } else {
-            el.textContent = '';
-          }
-        }
-
-        function setBulkWizardStep(step) {
-          bulkWizardStep = step;
-          var label = document.getElementById('bulkWizardStepLabel');
-          if (label) {
-            if (step === 1) label.textContent = 'Step 1 of 4 — Who receives this?';
-            else if (step === 2) {
-              label.textContent = bulkRecipientMethod === 'cohort'
-                ? 'Step 2 of 4 — Choose cohorts'
-                : 'Step 2 of 4 — Upload roster';
-            } else if (step === 3) label.textContent = 'Step 3 of 4 — Class evidence';
-            else label.textContent = 'Step 4 of 4 — Training details';
-          }
-          var stepMethod = document.getElementById('bulkStepMethod');
-          var stepCohort = document.getElementById('bulkStepCohort');
-          var stepRoster = document.getElementById('bulkStepRoster');
-          var stepEvidence = document.getElementById('bulkStepEvidence');
-          var stepDetails = document.getElementById('bulkStepDetails');
-          if (stepMethod) stepMethod.hidden = step !== 1;
-          if (stepCohort) stepCohort.hidden = !(step === 2 && bulkRecipientMethod === 'cohort');
-          if (stepRoster) stepRoster.hidden = !(step === 2 && bulkRecipientMethod === 'roster');
-          if (stepEvidence) stepEvidence.hidden = step !== 3;
-          if (stepDetails) stepDetails.hidden = step !== 4;
-          if (step === 2 && bulkRecipientMethod === 'roster') syncBulkRosterPicker();
-          if (step === 3) syncBulkEvidencePicker();
-          if (step === 4) updateBulkRecipientsSummary();
-        }
-
-        function resetBulkWizard() {
-          bulkWizardStep = 1;
-          bulkRecipientMethod = null;
-          clearBulkCohortSelection();
-          var defaultCohort = _bulkCohortsCache.find(function (c) {
-            return c.is_default || String(c.name || '').trim().toLowerCase() === 'all doctors'
-              || String(c.name || '').trim().toLowerCase() === 'ad-hoc';
-          });
-          if (defaultCohort && defaultCohort.id != null) {
-            var inp = document.querySelector(
-              'input[data-bulk-cohort-id="' + String(defaultCohort.id) + '"]'
-            );
-            if (inp) inp.checked = true;
-          }
-          var rosterEl = document.getElementById('bulkRoster');
-          var evidenceEl = document.getElementById('bulkEvidence');
-          if (rosterEl) rosterEl.value = '';
-          if (evidenceEl) evidenceEl.value = '';
-          var rn = document.getElementById('bulkRosterName');
-          var en = document.getElementById('bulkEvidenceName');
-          if (rn) rn.textContent = 'No file chosen';
-          if (en) en.textContent = 'No file chosen';
-          setBulkStepError('bulkStepCohortError', '');
-          setBulkStepError('bulkStepRosterError', '');
-          setBulkStepError('bulkStepEvidenceError', '');
-          syncBulkRosterPicker();
-          syncBulkEvidencePicker();
-          setBulkWizardStep(1);
-        }
-
-        async function fillBulkCohortSelect() {
-          if (HR_PAGE !== 'bulk') return;
-          try {
-            var data = await apiJson('/api/hr/cohorts');
-            renderBulkCohortList(data.cohorts || []);
-          } catch (e) {
-            renderBulkCohortList([]);
-          }
-        }
-
-        if (HR_PAGE === 'bulk') {
-          document.querySelectorAll('[data-bulk-method]').forEach(function (btn) {
-            btn.addEventListener('click', function () {
-              bulkRecipientMethod = btn.getAttribute('data-bulk-method');
-              setBulkWizardStep(2);
-              if (bulkRecipientMethod === 'cohort') {
-                var list = document.getElementById('bulkCohortList');
-                if (list) list.focus();
-              } else {
-                syncBulkRosterPicker();
-                var r = document.getElementById('bulkRoster');
-                if (r) r.focus();
-              }
-            });
-          });
-
-          var bulkCohortListEl = document.getElementById('bulkCohortList');
-          if (bulkCohortListEl) {
-            bulkCohortListEl.addEventListener('change', function () {
-              setBulkStepError('bulkStepCohortError', '');
-              if (bulkWizardStep === 4) updateBulkRecipientsSummary();
-            });
-          }
-
-          var bulkNextCohort = document.getElementById('bulkNextCohort');
-          if (bulkNextCohort) {
-            bulkNextCohort.addEventListener('click', function () {
-              var ids = getSelectedBulkCohortIds();
-              if (!ids.length) {
-                setBulkStepError('bulkStepCohortError', 'Select at least one cohort to continue.');
-                var list = document.getElementById('bulkCohortList');
-                if (list) list.focus();
-                return;
-              }
-              setBulkStepError('bulkStepCohortError', '');
-              setBulkWizardStep(3);
-              var ev = document.getElementById('bulkEvidence');
-              if (ev) ev.focus();
-            });
-          }
-
-          var bulkBackCohort = document.getElementById('bulkBackCohort');
-          if (bulkBackCohort) bulkBackCohort.addEventListener('click', function () { setBulkWizardStep(1); });
-
-          var bulkNextRoster = document.getElementById('bulkNextRoster');
-          if (bulkNextRoster) {
-            bulkNextRoster.addEventListener('click', function () {
-              var rosterEl = document.getElementById('bulkRoster');
-              if (!rosterEl || !rosterEl.files || !rosterEl.files[0]) {
-                setBulkStepError('bulkStepRosterError', 'Choose a roster file to continue.');
-                if (rosterEl) rosterEl.focus();
-                return;
-              }
-              setBulkStepError('bulkStepRosterError', '');
-              setBulkWizardStep(3);
-              var ev = document.getElementById('bulkEvidence');
-              if (ev) ev.focus();
-            });
-          }
-
-          var bulkBackRoster = document.getElementById('bulkBackRoster');
-          if (bulkBackRoster) bulkBackRoster.addEventListener('click', function () { setBulkWizardStep(1); });
-
-          var bulkNextEvidence = document.getElementById('bulkNextEvidence');
-          if (bulkNextEvidence) {
-            bulkNextEvidence.addEventListener('click', function () {
-              var evEl = document.getElementById('bulkEvidence');
-              if (!evEl || !evEl.files || !evEl.files[0]) {
-                setBulkStepError('bulkStepEvidenceError', 'Choose a class evidence file to continue.');
-                if (evEl) evEl.focus();
-                return;
-              }
-              setBulkStepError('bulkStepEvidenceError', '');
-              setBulkWizardStep(4);
-              var mod = document.getElementById('bulkModule');
-              if (mod) mod.focus();
-            });
-          }
-
-          var bulkBackEvidence = document.getElementById('bulkBackEvidence');
-          if (bulkBackEvidence) {
-            bulkBackEvidence.addEventListener('click', function () {
-              setBulkWizardStep(bulkRecipientMethod === 'cohort' ? 2 : 2);
-              if (bulkRecipientMethod === 'cohort') {
-                var listBack = document.getElementById('bulkCohortList');
-                if (listBack) listBack.focus();
-              } else {
-                syncBulkRosterPicker();
-              }
-            });
-          }
-
-          var bulkBackDetails = document.getElementById('bulkBackDetails');
-          if (bulkBackDetails) {
-            bulkBackDetails.addEventListener('click', function () {
-              setBulkWizardStep(3);
-              syncBulkEvidencePicker();
-            });
-          }
-
-          void (async function () {
-            await fillBulkCohortSelect();
-            resetBulkWizard();
-          })();
-        }
         fillHrModuleSelect(document.getElementById('addTrainingModule'));
-        initHrIssuingTrustAutocomplete();
 
         var sdTbody = document.getElementById('searchDoctorItemsTbody');
         if (sdTbody && !sdTbody.dataset.certWired) {
           sdTbody.dataset.certWired = '1';
-          sdTbody.addEventListener('click', async function (e) {
-            var unBtn = e.target && e.target.closest('button[data-search-unverify="1"]');
-            if (unBtn) {
-              e.preventDefault();
-              var cidU = unBtn.getAttribute('data-cid');
-              if (!searchDoctorViewId || !cidU) return;
-              if (
-                !confirm(
-                  'Remove HR verification for this record? The clinician will no longer see it as verified by HR at your trust.'
-                )
-              ) {
-                return;
-              }
-              unBtn.disabled = true;
-              unBtn.textContent = 'Reverting…';
-              try {
-                await apiJson(
-                  '/api/hr/doctors/' +
-                    encodeURIComponent(searchDoctorViewId) +
-                    '/credentials/' +
-                    encodeURIComponent(String(cidU)) +
-                    '/unverify',
-                  { method: 'POST' }
-                );
-                var titleEl = document.getElementById('searchDoctorTitle');
-                await openSearchDoctorView(
-                  searchDoctorViewId,
-                  titleEl ? titleEl.textContent.replace(/^Verified training —\s*/, '') : 'Doctor'
-                );
-              } catch (err) {
-                alert(err.message || err);
-                unBtn.disabled = false;
-                unBtn.textContent = 'Unverify';
-              }
-              return;
-            }
+          sdTbody.addEventListener('click', function (e) {
             var btn = e.target && e.target.closest('button[data-view-docs-cid]');
             if (!btn) return;
             var cid = btn.getAttribute('data-view-docs-cid');
@@ -1710,17 +704,9 @@
             var evEl = document.getElementById('addTrainingEvidence');
             var addMod = document.getElementById('addTrainingModule');
             if (!addTrainingFormEl.reportValidity()) return;
-            if (!evEl || !evEl.files || !evEl.files[0]) {
-              setAddTrainingStatus('Choose an evidence file.', 'error');
-              return;
-            }
             addTrainingBusy = true;
             addTrainingSubmitBtn.disabled = true;
-            var addVizEl = document.getElementById('addTrainingProvisionResult');
-            var addSt = document.getElementById('addTrainingStatus');
-            if (addSt) addSt.hidden = true;
-            if (batchViz()) batchViz().clear(addVizEl);
-            if (batchViz()) batchViz().showLoading(addVizEl, 'Issuing training record…');
+            setAddTrainingStatus('Submitting…', 'muted');
             try {
               var fd = new FormData();
               if (evEl && evEl.files && evEl.files[0]) fd.append('evidence', evEl.files[0]);
@@ -1741,18 +727,13 @@
                 throw new Error(typeof d === 'string' ? d : (text || res.statusText));
               }
               var errCount = Number(data.errors || 0);
+              var row0 = (data.rows && data.rows[0]) || {};
               var issued = Number(data.issued || 0);
-              if (batchViz()) {
-                batchViz().singleTraining(addVizEl, data, {
-                  followUpNote: issued
-                    ? 'Close this dialog to return to the list; the table below refreshes automatically.'
-                    : '',
-                });
-              } else if (addSt) {
-                var row0 = (data.rows && data.rows[0]) || {};
-                addSt.hidden = false;
-                setAddTrainingStatus(row0.message || 'Done.', errCount > 0 ? 'error' : 'ok');
-              }
+              setAddTrainingStatus(
+                (row0.message || 'Done.') +
+                  (issued ? ' Close this dialog to return to the list; the table below refreshes automatically.' : ''),
+                errCount > 0 ? 'error' : 'ok'
+              );
               var sdv = document.getElementById('searchDoctorView');
               if (issued && sdv && !sdv.hidden) {
                 var titleEl = document.getElementById('searchDoctorTitle');
@@ -1763,11 +744,7 @@
                 await openSearchDoctorView(addTrainingDoctorId, dnm || 'Doctor');
               }
             } catch (err) {
-              if (batchViz()) batchViz().clear(addVizEl);
-              if (addSt) {
-                addSt.hidden = false;
-                setAddTrainingStatus(err.message || 'Request failed.', 'error');
-              }
+              setAddTrainingStatus(err.message || 'Request failed.', 'error');
             } finally {
               addTrainingBusy = false;
               addTrainingSubmitBtn.disabled = false;
@@ -1775,43 +752,33 @@
           });
         }
 
-        function wireBulkFileName(inputId, nameId, onChange, staffStyle) {
+        function wireBulkFileName(inputId, nameId) {
           var inp = document.getElementById(inputId);
           var nameEl = document.getElementById(nameId);
           if (!inp || !nameEl) return;
           inp.addEventListener('change', function () {
             var f = inp.files && inp.files[0];
-            if (staffStyle) {
-              nameEl.textContent = f ? ('Chosen: ' + f.name) : '';
-            } else {
-              nameEl.textContent = f ? f.name : 'No file chosen';
-            }
-            if (typeof onChange === 'function') onChange();
+            nameEl.textContent = f ? f.name : 'No file chosen';
           });
         }
-        wireBulkFileName('bulkRoster', 'bulkRosterName', function () {
-          syncBulkRosterPicker();
-          setBulkStepError('bulkStepRosterError', '');
-        });
-        wireBulkFileName('bulkEvidence', 'bulkEvidenceName', function () {
-          syncBulkEvidencePicker();
-          setBulkStepError('bulkStepEvidenceError', '');
-        });
-        wireBulkFileName('addTrainingEvidence', 'addTrainingEvidenceName', null, true);
+        wireBulkFileName('bulkRoster', 'bulkRosterName');
+        wireBulkFileName('bulkEvidence', 'bulkEvidenceName');
+        wireBulkFileName('addTrainingEvidence', 'addTrainingEvidenceName');
 
         var bulkForm = document.getElementById('bulkForm');
         if (bulkForm) {
           bulkForm.addEventListener('reset', function () {
             window.setTimeout(function () {
-              resetBulkWizard();
+              var rn = document.getElementById('bulkRosterName');
+              var en = document.getElementById('bulkEvidenceName');
+              if (rn) rn.textContent = 'No file chosen';
+              if (en) en.textContent = 'No file chosen';
               void fillHrIssuingTrustFieldsIfEmpty();
               var st = document.getElementById('bulkStatus');
               if (st) {
                 st.textContent = '';
-                st.hidden = true;
                 st.className = 'hr-muted hr-bulk-status--muted';
               }
-              if (batchViz()) batchViz().clear(document.getElementById('bulkProvisionResult'));
               var wrap = document.getElementById('bulkTableWrap');
               var tb = document.getElementById('bulkResultsTbody');
               if (wrap) wrap.hidden = true;
@@ -1823,7 +790,6 @@
         function setBulkStatusMessage(msg, kind) {
           var statusEl = document.getElementById('bulkStatus');
           if (!statusEl) return;
-          statusEl.hidden = false;
           statusEl.textContent = msg || '';
           statusEl.className = 'hr-bulk-status--muted';
           if (kind === 'error') statusEl.className = 'hr-bulk-status--error';
@@ -1844,47 +810,18 @@
             var rosterEl = document.getElementById('bulkRoster');
             var evEl = document.getElementById('bulkEvidence');
             if (!bulkFormEl.reportValidity()) return;
-            var selectedCohortIds = bulkRecipientMethod === 'cohort' ? getSelectedBulkCohortIds() : [];
-            var hasCohorts = selectedCohortIds.length > 0;
-            var hasRoster = bulkRecipientMethod === 'roster' && rosterEl && rosterEl.files && rosterEl.files[0];
-            if (!hasCohorts && !hasRoster) {
-              setBulkStatusMessage('Complete the recipient steps: select at least one cohort or upload a roster file.', 'error');
-              setBulkWizardStep(bulkRecipientMethod === 'roster' ? 2 : 2);
-              return;
-            }
-            if (!evEl || !evEl.files || !evEl.files[0]) {
-              setBulkStatusMessage('Choose a class evidence file.', 'error');
-              setBulkWizardStep(3);
+            if (!rosterEl || !rosterEl.files || !rosterEl.files[0]) {
+              setBulkStatusMessage('Choose a roster file.', 'error');
               return;
             }
             bulkSubmitBusy = true;
             btnBulkSubmit.disabled = true;
-            var bulkVizEl = document.getElementById('bulkProvisionResult');
-            var bulkSt = document.getElementById('bulkStatus');
-            if (bulkSt) bulkSt.hidden = true;
-            if (batchViz()) batchViz().clear(bulkVizEl);
-            var bulkStartMsg = 'Preparing bulk training issue…';
-            if (hasCohorts) {
-              if (selectedCohortIds.length === 1) {
-                var one = bulkCohortById(selectedCohortIds[0]);
-                var oneName = one ? (one.name || 'Cohort').trim() : ('Cohort ' + selectedCohortIds[0]);
-                bulkStartMsg = 'Loading cohort “' + oneName + '”…';
-              } else {
-                bulkStartMsg = 'Loading ' + selectedCohortIds.length + ' cohorts…';
-              }
-            } else if (hasRoster) {
-              bulkStartMsg = 'Uploading roster file…';
-            }
-            if (batchViz()) batchViz().showLoading(bulkVizEl, bulkStartMsg);
+            setBulkStatusMessage('Submitting…', 'muted');
             if (wrap) wrap.hidden = true;
             if (tbody) tbody.innerHTML = '';
             try {
               var fd = new FormData();
-              if (hasCohorts) {
-                fd.append('cohort_ids', JSON.stringify(selectedCohortIds));
-              } else if (hasRoster) {
-                fd.append('roster', rosterEl.files[0]);
-              }
+              fd.append('roster', rosterEl.files[0]);
               if (evEl && evEl.files && evEl.files[0]) fd.append('evidence', evEl.files[0]);
               fd.append('module_code', (bulkMod && bulkMod.value) ? bulkMod.value : 'fire_safety');
               fd.append('completion_date', (document.getElementById('bulkCompletion') || {}).value || '');
@@ -1893,40 +830,27 @@
               var iname = (document.getElementById('bulkIssuingName') || {}).value;
               if (ods && String(ods).trim()) fd.append('issuing_trust_ods_code', String(ods).trim());
               if (iname && String(iname).trim()) fd.append('issuing_trust_name', String(iname).trim());
-              var data;
-              if (batchViz() && batchViz().postNdjsonStream) {
-                data = await batchViz().postNdjsonStream(
-                  '/api/hr/bulk-training',
-                  { formData: fd },
-                  bulkVizEl
+              var res = await fetch('/api/hr/bulk-training', { method: 'POST', body: fd, credentials: 'include' });
+              var text = await res.text();
+              var data = null;
+              try { data = text ? JSON.parse(text) : null; } catch (e2) { data = null; }
+              if (!res.ok) {
+                var d = data && data.detail;
+                throw new Error(typeof d === 'string' ? d : (text || res.statusText));
+              }
+              var errCount = Number(data.errors || 0);
+              var aborted = Boolean(data.aborted);
+              var summary =
+                'Issued: ' + String(data.issued || 0) +
+                ' · Skipped (duplicate): ' + String(data.skipped_duplicate || 0) +
+                ' · Errors: ' + String(errCount);
+              if (aborted) {
+                setBulkStatusMessage(
+                  'Nothing was saved. Fix the roster errors (or wallet size errors) and submit again. ' + summary,
+                  'error'
                 );
               } else {
-                var res = await fetch('/api/hr/bulk-training', { method: 'POST', body: fd, credentials: 'include' });
-                var text = await res.text();
-                data = null;
-                try { data = text ? JSON.parse(text) : null; } catch (e2) { data = null; }
-                if (!res.ok) {
-                  var d = data && data.detail;
-                  throw new Error(typeof d === 'string' ? d : (text || res.statusText));
-                }
-              }
-              if (batchViz()) {
-                batchViz().bulkTraining(bulkVizEl, data);
-              } else {
-                var errCount = Number(data.errors || 0);
-                var aborted = Boolean(data.aborted);
-                var summary =
-                  'Issued: ' + String(data.issued || 0) +
-                  ' · Skipped (duplicate): ' + String(data.skipped_duplicate || 0) +
-                  ' · Errors: ' + String(errCount);
-                if (aborted) {
-                  setBulkStatusMessage(
-                    'Nothing was saved. Fix the roster errors (or wallet size errors) and submit again. ' + summary,
-                    'error'
-                  );
-                } else {
-                  setBulkStatusMessage(summary, errCount > 0 ? 'error' : 'ok');
-                }
+                setBulkStatusMessage(summary, errCount > 0 ? 'error' : 'ok');
               }
               if (wrap && tbody && data.rows && data.rows.length) {
                 wrap.hidden = false;
@@ -1937,8 +861,6 @@
                 }).join('');
               }
             } catch (err) {
-              if (batchViz()) batchViz().clear(bulkVizEl);
-              if (bulkSt) bulkSt.hidden = false;
               setBulkStatusMessage(err.message || 'Request failed.', 'error');
             } finally {
               bulkSubmitBusy = false;
@@ -1981,7 +903,7 @@
                 var meta = [];
                 if (doc.gmc_number) meta.push('GMC ' + esc(doc.gmc_number));
                 if (doc.email) meta.push(esc(doc.email));
-                if (doc.current_trust) meta.push(esc(doc.current_trust_display || doc.current_trust));
+                if (doc.current_trust) meta.push(esc(doc.current_trust));
                 return (
                   '<div class="hr-search-result-row">' +
                   '<div><div class="hr-search-result-name">' + name + '</div>' +
@@ -1990,7 +912,6 @@
                   '<div class="hr-search-result-actions">' +
                   '<button type="button" class="nhsuk-button hr-btn-small" data-search-doctor-id="' + esc(String(doc.id)) + '" data-search-doctor-name="' + esc(doc.display_name || doc.email || '') + '">View training</button>' +
                   '<button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" data-add-doctor-id="' + esc(String(doc.id)) + '" data-add-doctor-name="' + esc(doc.display_name || doc.email || '') + '">Add training</button>' +
-                  '<a class="nhsuk-button nhsuk-button--secondary hr-btn-small" href="/static/hr/messages/?doctor=' + encodeURIComponent(String(doc.id)) + '">Message</a>' +
                   '</div>' +
                   '</div>'
                 );
@@ -2003,7 +924,6 @@
         }
 
         async function openSearchDoctorView(doctorId, doctorName) {
-          searchDoctorViewId = String(doctorId || '');
           if (HR_PAGE === 'search') {
             try {
               window.history.replaceState({}, '', '/static/hr/search.html?doctor=' + encodeURIComponent(String(doctorId)));
@@ -2043,20 +963,12 @@
                   ? ('<button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" data-view-docs-cid="' +
                     esc(String(it.credential_id || '')) + '">View</button>')
                   : '—';
-                var portfolioRow = String(it.session_share_kind || '').toLowerCase() === 'portfolio';
-                var actionCell = portfolioRow
-                  ? '<span class="hr-muted">—</span>'
-                  : (
-                    '<button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" data-search-unverify="1" data-cid="' +
-                    esc(String(it.credential_id || '')) +
-                    '">Unverify</button>'
-                  );
                 return (
                   '<tr>' +
                   '<td>' + name + issuer + '</td>' +
                   '<td>' + expiry + '</td>' +
                   '<td><span class="hr-pill hr-pill--verified">Verified</span>' + verifiedAt + '</td>' +
-                  '<td>' + evCell + ' ' + actionCell + '</td>' +
+                  '<td>' + evCell + '</td>' +
                   '</tr>'
                 );
               }).join('');
@@ -2109,53 +1021,15 @@
 
         if (HR_PAGE === 'bulk') {
           show(document.getElementById('bulkView'), true);
-          await fillHrIssuingTrustFieldsIfEmpty();
+          void fillHrIssuingTrustFieldsIfEmpty();
           return;
         }
 
         /* HR_PAGE === 'inbox' */
-        var inboxModSel = document.getElementById('inboxFilterModule');
-        var inboxStSel = document.getElementById('inboxFilterStatus');
-        if (inboxModSel) {
-          inboxModSel.addEventListener('change', function () {
-            inboxFilterModule = this.value || '';
-            rerenderInboxFromCache();
-          });
-        }
-        if (inboxStSel) {
-          inboxStSel.addEventListener('change', function () {
-            inboxFilterStatus = this.value || '';
-            rerenderInboxFromCache();
-          });
-        }
-        var itemsModSel = document.getElementById('itemsFilterModule');
-        var itemsStSel = document.getElementById('itemsFilterStatus');
-        if (itemsModSel) {
-          itemsModSel.addEventListener('change', function () {
-            itemsFilterModule = this.value || '';
-            if (lastSessionPayload) {
-              var sid = qs().get('session');
-              renderItemsTable(lastSessionPayload, sid || null);
-            }
-          });
-        }
-        if (itemsStSel) {
-          itemsStSel.addEventListener('change', function () {
-            itemsFilterStatus = this.value || '';
-            if (lastSessionPayload) {
-              var sid2 = qs().get('session');
-              renderItemsTable(lastSessionPayload, sid2 || null);
-            }
-          });
-        }
-        wireItemsBulkHandlers();
-
         if (doctorId) {
           show(document.getElementById('sessionView'), true);
           show(document.getElementById('inboxView'), false);
-          itemsTab = loadStoredTab(LS_ITEMS_TAB, 'new');
-          setSegmentTab('sessionView', itemsTab);
-          wireTabs('sessionView', LS_ITEMS_TAB, function (tab) {
+          wireTabs('sessionView', function (tab) {
             itemsTab = tab === 'archived' ? 'archived' : 'new';
             if (lastSessionPayload) renderItemsTable(lastSessionPayload, null);
           });
@@ -2163,9 +1037,7 @@
         } else if (sessionId) {
           show(document.getElementById('sessionView'), true);
           show(document.getElementById('inboxView'), false);
-          itemsTab = loadStoredTab(LS_ITEMS_TAB, 'new');
-          setSegmentTab('sessionView', itemsTab);
-          wireTabs('sessionView', LS_ITEMS_TAB, function (tab) {
+          wireTabs('sessionView', function (tab) {
             itemsTab = tab === 'archived' ? 'archived' : 'new';
             if (lastSessionPayload) renderItemsTable(lastSessionPayload, sessionId);
           });
@@ -2173,9 +1045,7 @@
         } else {
           show(document.getElementById('inboxView'), true);
           show(document.getElementById('sessionView'), false);
-          inboxTab = loadStoredTab(LS_INBOX_TAB, 'new');
-          setSegmentTab('inboxView', inboxTab);
-          wireTabs('inboxView', LS_INBOX_TAB, async function (tab) {
+          wireTabs('inboxView', async function (tab) {
             inboxTab = tab === 'archived' ? 'archived' : 'new';
             await loadInbox();
           });

@@ -9,13 +9,13 @@ import base64
 from datetime import datetime, date
 from pathlib import Path
 import sqlite3
-from typing import Callable, Iterator, Optional
+from typing import Optional
 
 import bcrypt
-from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import JSONResponse
 
-from . import compliance_snapshot, crypto, db, session_auth
+from . import crypto, db, session_auth
 from .credential_service import (
     completion_dedupe_key,
     get_verification_url_base,
@@ -41,114 +41,7 @@ MAX_WALLET_BYTES = 4 * 1024 * 1024
 DEV_SEED_EMAIL = "sheffieldhr@nhs.net"
 MAX_HR_BULK_ROSTER_BYTES = 256 * 1024
 MAX_HR_BULK_LINES = 50
-MAX_HR_COHORT_LINES = 200
 MAX_HR_BULK_EVIDENCE_BYTES = 10 * 1024 * 1024
-MAX_MESSAGE_ATTACHMENT_BYTES = 5 * 1024 * 1024
-MAX_MESSAGE_ATTACHMENTS = 5
-
-def _first_name_from_nhs_email(email: str) -> str:
-    """Derive a greeting name from email local part (e.g. william.smith@gmail.com → William)."""
-    local = (email or "").split("@")[0].strip().lower()
-    if not local:
-        return "Colleague"
-    part = local.split(".")[0]
-    part = re.sub(r"\d+$", "", part)
-    if not part:
-        return "Colleague"
-    return part[0].upper() + part[1:] if len(part) > 1 else part.upper()
-
-
-def _cohort_welcome_name(doc: dict) -> str:
-    """Prefer profile display name; fall back to first name from email."""
-    display = (doc.get("display_name") or "").strip()
-    if display:
-        return display
-    return _first_name_from_nhs_email(doc.get("email") or "")
-
-
-def trust_display_name(trust_name: str) -> str:
-    """Human-readable trust label for messages and UI (not raw all-caps HR profile text)."""
-    from .trust_packs import trust_display_name as _display
-
-    return _display(trust_name)
-
-
-def _auth_me_payload(u: dict) -> dict:
-    ct = (u.get("current_trust") or "").strip() or None
-    return {
-        "id": u["id"],
-        "email": u["email"],
-        "premium": db.user_is_premium(u),
-        "gmc_number": u.get("gmc_number"),
-        "display_name": db.user_effective_display_name(u),
-        "current_trust": ct,
-        "current_trust_display": trust_display_name(ct) if ct else None,
-        "personal_email": u.get("email"),
-        "must_change_password": bool(u.get("must_change_password")),
-        "onboarding_completed": bool(u.get("onboarding_completed")),
-        "hr_welcome_message_template": (u.get("hr_welcome_message_template") or "").strip()
-        or None
-        if db.user_is_premium(u)
-        else None,
-    }
-
-
-DEFAULT_COHORT_WELCOME_TEMPLATE = (
-    "Welcome {name} to {trust}. Please reply if you have any queries or concerns."
-)
-
-MAX_WELCOME_TEMPLATE_LEN = 4000
-
-
-def _normalize_welcome_template(raw: Optional[str]) -> Optional[str]:
-    t = (raw or "").strip()
-    if not t:
-        return None
-    if len(t) > MAX_WELCOME_TEMPLATE_LEN:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Welcome message must be {MAX_WELCOME_TEMPLATE_LEN} characters or fewer",
-        )
-    return t
-
-
-def _render_welcome_template(template: str, doc: dict, hr_trust: str) -> str:
-    name = _cohort_welcome_name(doc)
-    trust = trust_display_name(hr_trust) or "your trust"
-    text = template.replace("{name}", name).replace("{trust}", trust)
-    return text.strip()
-
-
-def _resolve_welcome_template(cohort_id: int) -> str:
-    """Cohort override, then cohort creator HR default, then system default."""
-    cohort = db.cohort_get_by_id(int(cohort_id))
-    if not cohort:
-        return DEFAULT_COHORT_WELCOME_TEMPLATE
-    cohort_tmpl = (cohort.get("welcome_message_template") or "").strip()
-    if cohort_tmpl:
-        return cohort_tmpl
-    creator = db.user_get_by_id(int(cohort["created_by_user_id"]))
-    if creator:
-        hr_tmpl = (creator.get("hr_welcome_message_template") or "").strip()
-        if hr_tmpl:
-            return hr_tmpl
-    return DEFAULT_COHORT_WELCOME_TEMPLATE
-
-
-def _cohort_welcome_message(doc: dict, hr_trust: str, cohort_id: int) -> str:
-    return _render_welcome_template(_resolve_welcome_template(cohort_id), doc, hr_trust)
-
-
-def _welcome_template_meta(cohort: dict, hr_user: dict) -> dict:
-    cohort_tmpl = (cohort.get("welcome_message_template") or "").strip() or None
-    hr_default = (hr_user.get("hr_welcome_message_template") or "").strip() or None
-    effective = cohort_tmpl or hr_default or DEFAULT_COHORT_WELCOME_TEMPLATE
-    return {
-        "welcome_message_template": cohort_tmpl,
-        "welcome_message_hr_default": hr_default,
-        "welcome_message_system_default": DEFAULT_COHORT_WELCOME_TEMPLATE,
-        "welcome_message_effective": effective,
-    }
 
 
 def _normalize_email(email: str) -> str:
@@ -184,10 +77,6 @@ def require_premium_user(request: Request) -> dict:
     if not db.user_is_premium(u):
         raise HTTPException(status_code=403, detail="Premium account required")
     return u
-
-
-def _profile_is_complete(u: dict) -> bool:
-    return not _profile_missing_fields(u)
 
 
 def _profile_missing_fields(u: dict) -> list[str]:
@@ -319,11 +208,9 @@ def _hr_resolve_issuing_trust(
     return ods, name
 
 
-def _resolve_issuing_trust_from_name(trust_name: str) -> dict:
-    """ODS + canonical display name from profile trust string and static trust packs."""
-    from . import trust_packs
-
-    profile_trust = (trust_name or "").strip()
+def _hr_issuing_defaults_payload(hr: dict) -> dict:
+    """Suggested ODS + display name for HR forms (same source as server-side resolution when overrides are blank)."""
+    profile_trust = (hr.get("current_trust") or "").strip()
     if not profile_trust:
         return {
             "profile_trust": "",
@@ -339,15 +226,6 @@ def _resolve_issuing_trust_from_name(trust_name: str) -> dict:
             "profile_trust": profile_trust,
             "issuing_trust_ods_code": ods,
             "issuing_trust_name": name,
-            "matched_trust_config": bool(ods),
-        }
-    ods = trust_packs.ods_for_trust_name(profile_trust)
-    if ods:
-        display = trust_packs.trust_display_name(profile_trust) or profile_trust
-        return {
-            "profile_trust": profile_trust,
-            "issuing_trust_ods_code": ods,
-            "issuing_trust_name": display,
             "matched_trust_config": True,
         }
     return {
@@ -356,11 +234,6 @@ def _resolve_issuing_trust_from_name(trust_name: str) -> dict:
         "issuing_trust_name": profile_trust,
         "matched_trust_config": False,
     }
-
-
-def _hr_issuing_defaults_payload(hr: dict) -> dict:
-    """Suggested ODS + display name for HR forms (same source as server-side resolution when overrides are blank)."""
-    return _resolve_issuing_trust_from_name((hr.get("current_trust") or "").strip())
 
 
 def _staff_identifier_for_issue(doc: dict) -> str:
@@ -531,8 +404,8 @@ def _hr_commit_training_for_clinician(
     module_name: str,
     ed: date,
     base: str,
-    ev_b64: str,
-    ev_name: str,
+    ev_b64: Optional[str] = None,
+    ev_name: Optional[str] = None,
 ) -> tuple[HrBulkTrainingRow, str]:
     """Persist one HR-attested training row after classify + wallet guard passed."""
     doc_id = int(doc["id"])
@@ -563,19 +436,19 @@ def _hr_commit_training_for_clinician(
     if not isinstance(wallet, list):
         wallet = []
     cred_id = r0["credential_id"]
-    wallet.append(
-        {
-            "credential_id": cred_id,
-            "verification_url": r0["verification_url"],
-            "jwt": r0["jwt"],
-            "pdf_base64": r0.get("pdf_base64"),
-            "module_name": module_name,
-            "expiry_date": ed.isoformat(),
-            "revoked": False,
-            "certificate_base64": ev_b64,
-            "certificate_filename": ev_name,
-        }
-    )
+    wallet_entry: dict = {
+        "credential_id": cred_id,
+        "verification_url": r0["verification_url"],
+        "jwt": r0["jwt"],
+        "pdf_base64": r0.get("pdf_base64"),
+        "module_name": module_name,
+        "expiry_date": ed.isoformat(),
+        "revoked": False,
+    }
+    if ev_b64:
+        wallet_entry["certificate_base64"] = ev_b64
+        wallet_entry["certificate_filename"] = ev_name or "evidence"
+    wallet.append(wallet_entry)
     merged = json.dumps(wallet)
     if len(merged.encode("utf-8")) > MAX_WALLET_BYTES:
         try:
@@ -599,20 +472,6 @@ def _hr_commit_training_for_clinician(
         verified_by_trust_name=trust,
         module_name=module_name,
         expiry_date=ed.isoformat(),
-    )
-    _notify_clinician_hr_training(
-        doc_id,
-        kind="hr_issued",
-        module_name=module_name,
-        trust_name=trust,
-    )
-    _audit_hr_action(
-        hr,
-        "hr_issue_training",
-        doctor_user_id=doc_id,
-        credential_id=cred_id,
-        detail=module_name,
-        meta={"roster_line": roster_line, "expiry_date": ed.isoformat()},
     )
     return (
         HrBulkTrainingRow(
@@ -644,11 +503,24 @@ def _session_response(data: dict, user_id: int, email: str, request: Request) ->
 
 @router.post("/auth/register")
 def auth_register(request: Request, body: dict):
-    """Self-service registration disabled; HR provisions accounts via cohorts."""
-    raise HTTPException(
-        status_code=403,
-        detail="Accounts are created by your HR team. Sign in with your personal email address.",
-    )
+    email = _normalize_email(body.get("email") or "")
+    password = body.get("password") or ""
+    _reserved = {
+        db.DEV_SEED_EMAIL.strip().lower(),
+        db.DEV_SEED_EMAIL_ROTHERHAM.strip().lower(),
+    }
+    if email in _reserved:
+        raise HTTPException(status_code=403, detail="This email is reserved. Use sign in.")
+    if not EMAIL_RE.match(email):
+        raise HTTPException(status_code=400, detail="Invalid email")
+    if len(str(password)) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    h = bcrypt.hashpw(str(password).encode("utf-8"), bcrypt.gensalt()).decode("ascii")
+    try:
+        uid = db.user_create(email, h, None)
+    except sqlite3.IntegrityError:
+        raise HTTPException(status_code=409, detail="Email already registered")
+    return _session_response({"ok": True, "email": email}, uid, email, request)
 
 
 @router.post("/auth/login")
@@ -692,35 +564,14 @@ def auth_me(request: Request):
     u = db.user_get_by_id(uid)
     if not u:
         raise HTTPException(status_code=401, detail="Not signed in")
-    return _auth_me_payload(u)
-
-
-@router.post("/auth/change-password")
-async def auth_change_password(request: Request):
-    uid = require_user_id(request)
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON")
-    current = str(body.get("current_password") or "")
-    new_pw = str(body.get("new_password") or "")
-    if len(new_pw) < 8:
-        raise HTTPException(status_code=400, detail="New password must be at least 8 characters")
-    brief = db.user_get_by_id(uid)
-    if not brief:
-        raise HTTPException(status_code=401, detail="Not signed in")
-    u = db.user_get_by_email(brief.get("email") or "")
-    if not u or "password_hash" not in u:
-        raise HTTPException(status_code=401, detail="Not signed in")
-    try:
-        ok = bcrypt.checkpw(current.encode("utf-8"), u["password_hash"].encode("utf-8"))
-    except ValueError:
-        ok = False
-    if not ok:
-        raise HTTPException(status_code=400, detail="Current password is incorrect")
-    h = bcrypt.hashpw(new_pw.encode("utf-8"), bcrypt.gensalt()).decode("ascii")
-    db.user_set_password(uid, h, clear_must_change=True)
-    return {"ok": True}
+    return {
+        "id": u["id"],
+        "email": u["email"],
+        "premium": db.user_is_premium(u),
+        "gmc_number": u.get("gmc_number"),
+        "display_name": u.get("display_name"),
+        "current_trust": u.get("current_trust"),
+    }
 
 
 @router.put("/me/profile")
@@ -751,17 +602,9 @@ async def me_profile_put(request: Request):
         gmc = u.get("gmc_number")
 
     if "current_trust" in body:
-        from .trust_packs import normalize_stored_trust_name
-
-        current_trust = normalize_stored_trust_name((body.get("current_trust") or "").strip())
+        current_trust = (body.get("current_trust") or "").strip() or None
     else:
         current_trust = u.get("current_trust")
-
-    hr_welcome_template = u.get("hr_welcome_message_template")
-    if db.user_is_premium(u) and "hr_welcome_message_template" in body:
-        hr_welcome_template = _normalize_welcome_template(
-            body.get("hr_welcome_message_template")
-        )
 
     merged = {
         "display_name": display_name,
@@ -781,46 +624,8 @@ async def me_profile_put(request: Request):
         if not gn or not GMC_RE.match(gn):
             raise HTTPException(status_code=400, detail="GMC number must be exactly 7 digits")
 
-    was_complete = _profile_is_complete(
-        {
-            "display_name": u.get("display_name"),
-            "gmc_number": u.get("gmc_number"),
-            "current_trust": u.get("current_trust"),
-        }
-    )
-    if db.user_is_premium(u) and "hr_welcome_message_template" in body:
-        db.user_set_profile(
-            uid,
-            display_name,
-            gmc,
-            current_trust,
-            hr_welcome_template,
-            update_hr_welcome_template=True,
-        )
-    else:
-        db.user_set_profile(uid, display_name, gmc, current_trust)
-    if not db.user_is_premium(u) and _profile_is_complete(merged):
-        db.user_mark_onboarding_complete(uid)
-    if not db.user_is_premium(u) and _profile_is_complete(merged) and not was_complete:
-        _hr_process_pending_welcomes(uid)
+    db.user_set_profile(uid, display_name, gmc, current_trust)
     return {"ok": True}
-
-
-def _try_seed_mandatory_from_pack(trust_name: str) -> Optional[str]:
-    """If trust has no topics and a static pack exists, seed once. Returns message or None."""
-    from . import trust_packs
-
-    trust_name = (trust_name or "").strip()
-    if not trust_name or db.mandatory_topics_count(trust_name) > 0:
-        return None
-    pack_id = trust_packs.pack_id_for_trust_name(trust_name)
-    if not pack_id:
-        return None
-    pack = trust_packs.load_trust_pack(pack_id)
-    if not pack:
-        return None
-    _n, msg = db.seed_mandatory_from_trust_pack(trust_name, pack)
-    return msg if _n else None
 
 
 @router.get("/me/trust-requirements")
@@ -832,7 +637,6 @@ def me_trust_requirements(request: Request):
     trust = (u.get("current_trust") or "").strip()
     if not trust:
         return {"topics": [], "trust": None}
-    _try_seed_mandatory_from_pack(trust)
     return {"topics": db.mandatory_topics_list(trust), "trust": trust}
 
 
@@ -869,50 +673,8 @@ async def me_wallet_put(request: Request):
         raise HTTPException(status_code=400, detail="Expected a JSON array of credentials")
     if len(data) > 5000:
         raise HTTPException(status_code=400, detail="Too many credentials")
-    try:
-        old_wallet = json.loads(db.user_wallet_get(uid))
-    except Exception:
-        old_wallet = []
-    if not isinstance(old_wallet, list):
-        old_wallet = []
-    old_ids = {
-        str(c.get("credential_id")).strip()
-        for c in old_wallet
-        if isinstance(c, dict) and str(c.get("credential_id") or "").strip()
-    }
-    new_ids = {
-        str(c.get("credential_id")).strip()
-        for c in data
-        if isinstance(c, dict) and str(c.get("credential_id") or "").strip()
-    }
-    removed_ids = old_ids - new_ids
-    withdrawn = 0
-    if removed_ids:
-        withdrawn = db.share_withdraw_pending_for_doctor(uid, list(removed_ids))
     db.user_wallet_put(uid, json.dumps(data))
-    return {"ok": True, "count": len(data), "withdrawn_pending_shares": withdrawn}
-
-
-@router.post("/me/shares/withdraw")
-async def me_shares_withdraw(request: Request):
-    """Remove pending HR verification queue entries for credentials dropped from the wallet."""
-    uid = require_user_id(request)
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON")
-    if not isinstance(body, dict):
-        raise HTTPException(status_code=400, detail="Invalid JSON")
-    ids = body.get("credential_ids")
-    if not isinstance(ids, list) or not ids:
-        raise HTTPException(status_code=400, detail="Expected credential_ids: [..]")
-    ids = [str(x).strip() for x in ids if str(x).strip()]
-    if not ids:
-        raise HTTPException(status_code=400, detail="No credential ids provided")
-    if len(ids) > 200:
-        raise HTTPException(status_code=400, detail="Too many credential ids")
-    withdrawn = db.share_withdraw_pending_for_doctor(uid, ids)
-    return {"ok": True, "withdrawn": withdrawn}
+    return {"ok": True, "count": len(data)}
 
 
 @router.post("/me/shares")
@@ -975,15 +737,10 @@ async def me_shares_post(request: Request):
                 )
 
     items = []
-    batch_cert_attached = False
     for cid in ids:
         w = wallet_by_id.get(cid) or {}
-        b64 = w.get("certificate_base64")
-        fn = w.get("certificate_filename")
-        if not b64 and fallback_b64 and not batch_cert_attached:
-            b64 = fallback_b64
-            fn = fallback_fn
-            batch_cert_attached = True
+        b64 = w.get("certificate_base64") or fallback_b64
+        fn = w.get("certificate_filename") or fallback_fn
         issuing = _issuing_trust_from_wallet_entry(w)
         entry = {
             "credential_id": cid,
@@ -1022,13 +779,6 @@ def me_verified_map(request: Request):
     return db.doctor_verified_map(uid)
 
 
-@router.get("/me/getting-started-progress")
-def me_getting_started_progress(request: Request):
-    """Checklist steps 4–5: only count actions the clinician took (not HR bulk issue)."""
-    uid = require_user_id(request)
-    return db.doctor_getting_started_progress(uid)
-
-
 @router.get("/me/visibility")
 def me_visibility_get(request: Request):
     uid = require_user_id(request)
@@ -1058,71 +808,6 @@ def _hr_trust(hr_user: dict) -> Optional[str]:
     return t or None
 
 
-def _notify_clinician_hr_training(
-    doctor_user_id: int,
-    *,
-    kind: str,
-    module_name: str,
-    trust_name: str,
-    decline_reason: Optional[str] = None,
-) -> None:
-    mod = (module_name or "Training").strip() or "Training"
-    trust = (trust_name or "HR").strip() or "HR"
-    titles = {
-        "hr_verified": "Training verified",
-        "hr_declined": "Training declined",
-        "hr_unverified": "Verification reverted",
-        "hr_issued": "Training recorded by HR",
-    }
-    title = titles.get(kind, "Training update")
-    if kind == "hr_verified":
-        body = f"{mod} was verified by HR at {trust}."
-        link = "/static/staff/"
-    elif kind == "hr_declined":
-        reason = (decline_reason or "").strip()
-        body = f"{mod} was declined by HR at {trust}."
-        if reason:
-            body += f" Reason: {reason}"
-        link = "/static/staff/"
-    elif kind == "hr_unverified":
-        body = f"HR at {trust} reverted verification for {mod}. It is awaiting review again."
-        link = "/static/staff/"
-    else:
-        body = f"{mod} was recorded by HR at {trust}."
-        link = "/static/staff/"
-    db.notification_create(
-        int(doctor_user_id),
-        kind=kind,
-        title=title,
-        body=body,
-        link_path=link,
-        meta={"module_name": mod, "trust_name": trust},
-    )
-
-
-def _audit_hr_action(
-    hr: dict,
-    action: str,
-    *,
-    doctor_user_id: Optional[int] = None,
-    credential_id: Optional[str] = None,
-    session_id: Optional[int] = None,
-    detail: Optional[str] = None,
-    meta: Optional[dict] = None,
-) -> None:
-    trust = (hr.get("current_trust") or "").strip()
-    db.hr_audit_log_append(
-        int(hr["id"]),
-        action,
-        trust_name=trust,
-        doctor_user_id=doctor_user_id,
-        credential_id=credential_id,
-        session_id=session_id,
-        detail=detail,
-        meta=meta,
-    )
-
-
 def _assert_same_trust(hr_user: dict, session: dict) -> None:
     """Raise 403 if the session's doctor is not from the HR user's trust."""
     trust = _hr_trust(hr_user)
@@ -1148,27 +833,6 @@ def hr_doctors_search(request: Request, q: str = "", limit: int = 30):
         raise HTTPException(status_code=400, detail="Your HR account must have a current trust set to search for doctors.")
     results = db.hr_doctor_search(q=q, hr_trust=trust, limit=limit)
     return {"results": results}
-
-
-@router.get("/me/issuing-trust-defaults")
-def me_issuing_trust_defaults(request: Request):
-    """Suggested issuing-trust ODS and display name from the signed-in user's current trust."""
-    uid = require_user_id(request)
-    u = db.user_get_by_id(uid)
-    if not u:
-        raise HTTPException(status_code=401, detail="Not signed in")
-    return _resolve_issuing_trust_from_name((u.get("current_trust") or "").strip())
-
-
-@router.get("/trust/resolve-ods")
-def trust_resolve_ods(request: Request, name: str = Query("")):
-    """Resolve ODS from a trust name string (pack config first, for client auto-fill)."""
-    require_user_id(request)
-    resolved = _resolve_issuing_trust_from_name(name)
-    return {
-        "ods": resolved.get("issuing_trust_ods_code") or "",
-        "name": resolved.get("issuing_trust_name") or (name or "").strip(),
-    }
 
 
 @router.get("/hr/issuing-defaults")
@@ -1286,30 +950,28 @@ async def hr_doctor_add_training(
         )
 
     assert rec is not None
-    if evidence is None or not (evidence.filename or "").strip():
-        raise HTTPException(
-            status_code=400,
-            detail="Evidence file is required to issue a credential.",
-        )
-    ev_raw = await evidence.read()
-    if len(ev_raw) > MAX_HR_BULK_EVIDENCE_BYTES:
-        raise HTTPException(status_code=413, detail="Evidence file too large (max 10 MB).")
-    ev_ct = _hr_evidence_content_type(evidence.content_type, evidence.filename)
-    if not ev_ct:
-        raise HTTPException(
-            status_code=400,
-            detail="Evidence must be a PDF or image (JPEG, PNG, or WebP).",
-        )
-    ev_name = (evidence.filename or "evidence").strip()
-    ev_b64 = base64.b64encode(ev_raw).decode("ascii")
+    ev_b64: Optional[str] = None
+    ev_name: Optional[str] = None
+    if evidence is not None and (evidence.filename or "").strip():
+        ev_raw = await evidence.read()
+        if len(ev_raw) > MAX_HR_BULK_EVIDENCE_BYTES:
+            raise HTTPException(status_code=413, detail="Evidence file too large (max 10 MB).")
+        ev_ct = _hr_evidence_content_type(evidence.content_type, evidence.filename)
+        if not ev_ct:
+            raise HTTPException(
+                status_code=400,
+                detail="Evidence must be a PDF or image (JPEG, PNG, or WebP).",
+            )
+        ev_name = (evidence.filename or "evidence").strip()
+        ev_b64 = base64.b64encode(ev_raw).decode("ascii")
 
     if _hr_wallet_size_would_exceed_after_append(
         wallet_raw,
         module_name=module_name,
         expiry_date=ed,
         base=base,
-        evidence_b64=ev_b64,
-        evidence_filename=ev_name,
+        evidence_b64=ev_b64 or "",
+        evidence_filename=ev_name or "",
     ):
         return HrBulkTrainingResponse(
             dry_run=False,
@@ -1361,102 +1023,63 @@ async def hr_doctor_add_training(
     )
 
 
-NDJSON_STREAM_HEADERS = {"Cache-Control": "no-store", "X-Accel-Buffering": "no"}
+@router.post("/hr/bulk-training", response_model=HrBulkTrainingResponse)
+async def hr_bulk_training(
+    request: Request,
+    roster: UploadFile = File(...),
+    evidence: Optional[UploadFile] = File(None),
+    module_code: str = Form(...),
+    completion_date: str = Form(...),
+    expiry_date: str = Form(...),
+    issuing_trust_ods_code: Optional[str] = Form(None),
+    issuing_trust_name: Optional[str] = Form(None),
+):
+    """
+    Premium HR: issue one CSTF-style module completion to many clinicians from a roster file
+    (one GMC or email per line, or CSV with identifier in the first column) plus shared evidence.
 
+    All-or-nothing on roster validation: every line is checked first; if any line fails
+    (unknown clinician, visibility, premium account, or wallet size guard), nothing is issued.
+    When the roster is clean, lines that would duplicate an existing wallet entry are skipped
+    and all remaining lines are issued in one pass.
+    """
+    hr = require_premium_user(request)
+    trust = (hr.get("current_trust") or "").strip()
+    if not trust:
+        raise HTTPException(status_code=400, detail="Your HR account must have a current trust set.")
 
-def _ndjson_progress_line(
-    phase: str, message: str, current: int = 0, total: int = 0
-) -> str:
-    return (
-        json.dumps(
-            {
-                "event": "progress",
-                "phase": phase,
-                "message": message,
-                "current": current,
-                "total": total,
-            }
+    raw_roster = await roster.read()
+    if len(raw_roster) > MAX_HR_BULK_ROSTER_BYTES:
+        raise HTTPException(status_code=413, detail="Roster file too large")
+    text = _decode_roster_text(raw_roster)
+    if text is None:
+        raise HTTPException(status_code=400, detail="Roster encoding not recognised (try UTF-8).")
+    lines = _parse_roster_lines(text)
+    if not lines:
+        raise HTTPException(status_code=400, detail="Roster is empty.")
+    if len(lines) > MAX_HR_BULK_LINES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many roster lines ({len(lines)}). Maximum is {MAX_HR_BULK_LINES} per upload.",
         )
-        + "\n"
-    )
 
+    mc = str(module_code or "").strip().lower()
+    module_lookup = dict(CSTF_MODULES)
+    if mc not in module_lookup:
+        raise HTTPException(status_code=400, detail="Unknown module_code.")
+    module_name = module_lookup[mc]
 
-def _ndjson_complete_line(data: dict) -> str:
-    return json.dumps({"event": "complete", "data": data}) + "\n"
-
-
-def _ndjson_stream_wrap(gen: Iterator[str]) -> Iterator[str]:
     try:
-        yield from gen
-    except HTTPException as exc:
-        detail = exc.detail
-        msg = detail if isinstance(detail, str) else str(detail)
-        yield json.dumps({"event": "error", "message": msg}) + "\n"
+        cd = date.fromisoformat(str(completion_date).strip()[:10])
+        ed = date.fromisoformat(str(expiry_date).strip()[:10])
+    except ValueError:
+        raise HTTPException(status_code=400, detail="completion_date and expiry_date must be YYYY-MM-DD.")
 
-
-def _bulk_training_progress_line(
-    phase: str, message: str, current: int = 0, total: int = 0
-) -> str:
-    return _ndjson_progress_line(phase, message, current, total)
-
-
-def _bulk_training_complete_line(resp: HrBulkTrainingResponse) -> str:
-    return _ndjson_complete_line(resp.model_dump())
-
-
-def _hr_bulk_training_run(ctx: dict, *, emit_progress: bool = True) -> Iterator[str]:
-    """
-    Execute bulk training; yields NDJSON progress lines and a final complete line.
-    When emit_progress is False, only the complete line is yielded (for JSON clients).
-    """
-    hr = ctx["hr"]
-    trust = ctx["trust"]
-    lines: list[str] = ctx["lines"]
-    cohort_label: str = ctx.get("cohort_label") or ""
-    mc: str = ctx["mc"]
-    module_name: str = ctx["module_name"]
-    cd: date = ctx["cd"]
-    ed: date = ctx["ed"]
-    ods: str = ctx["ods"]
-    issuing_name: str = ctx["issuing_name"]
-    base: str = ctx["base"]
-    evidence_upload = ctx.get("evidence_upload")
-
-    total = len(lines)
-
-    def progress(phase: str, message: str, current: int = 0, total_n: int = 0) -> None:
-        if emit_progress:
-            yield_lines.append(
-                _bulk_training_progress_line(phase, message, current, total_n or total)
-            )
-
-    yield_lines: list[str] = []
-
-    if cohort_label:
-        progress(
-            "prepare",
-            f'Loaded {total} clinician{"s" if total != 1 else ""} from cohort “{cohort_label}”.',
-            0,
-            total,
-        )
-    else:
-        progress(
-            "prepare",
-            f'Loaded roster ({total} line{"s" if total != 1 else ""}).',
-            0,
-            total,
-        )
-    for line in yield_lines:
-        yield line
-    yield_lines.clear()
+    ods, issuing_name = _hr_resolve_issuing_trust(hr, issuing_trust_ods_code, issuing_trust_name)
+    base = _public_app_base(request)
 
     plans: list[dict] = []
-    for idx, line in enumerate(lines):
-        progress("validate", f"Checking clinician {idx + 1} of {total}…", idx + 1, total)
-        for chunk in yield_lines:
-            yield chunk
-        yield_lines.clear()
-
+    for line in lines:
         doc = db.hr_lookup_doctor_by_roster_line(line)
         if not doc:
             plans.append(
@@ -1497,11 +1120,6 @@ def _hr_bulk_training_run(ctx: dict, *, emit_progress: bool = True) -> Iterator[
 
     has_classify_error = any(p["kind"] in ("missing", "error") for p in plans)
     if has_classify_error:
-        progress("validate", "Roster validation finished — errors found.", total, total)
-        for chunk in yield_lines:
-            yield chunk
-        yield_lines.clear()
-
         rows_out: list[HrBulkTrainingRow] = []
         errors = skipped = 0
         for p in plans:
@@ -1533,7 +1151,7 @@ def _hr_bulk_training_run(ctx: dict, *, emit_progress: bool = True) -> Iterator[
                         doctor_user_id=doc_id,
                     )
                 )
-        resp = HrBulkTrainingResponse(
+        return HrBulkTrainingResponse(
             dry_run=False,
             aborted=True,
             issuing_trust_ods_code=ods,
@@ -1545,16 +1163,9 @@ def _hr_bulk_training_run(ctx: dict, *, emit_progress: bool = True) -> Iterator[
             errors=errors,
             rows=rows_out,
         )
-        yield _bulk_training_complete_line(resp)
-        return
 
     issue_plans = [p for p in plans if p["kind"] == "issue"]
     if not issue_plans:
-        progress("validate", "Everyone on the roster already has this training.", total, total)
-        for chunk in yield_lines:
-            yield chunk
-        yield_lines.clear()
-
         rows_out = []
         skipped = 0
         for p in plans:
@@ -1569,7 +1180,7 @@ def _hr_bulk_training_run(ctx: dict, *, emit_progress: bool = True) -> Iterator[
                 )
             )
             skipped += 1
-        resp = HrBulkTrainingResponse(
+        return HrBulkTrainingResponse(
             dry_run=False,
             aborted=False,
             issuing_trust_ods_code=ods,
@@ -1581,51 +1192,26 @@ def _hr_bulk_training_run(ctx: dict, *, emit_progress: bool = True) -> Iterator[
             errors=0,
             rows=rows_out,
         )
-        yield _bulk_training_complete_line(resp)
-        return
 
-    progress("validate", f"Roster OK — issuing to {len(issue_plans)} clinician(s).", total, total)
-    for chunk in yield_lines:
-        yield chunk
-    yield_lines.clear()
-
-    if evidence_upload is None or not (evidence_upload.get("filename") or "").strip():
+    if evidence is None or not (evidence.filename or "").strip():
         raise HTTPException(
             status_code=400,
             detail="Evidence file is required when at least one clinician would receive a new credential.",
         )
-    progress("evidence", "Reading and validating evidence file…", 0, len(issue_plans))
-    for chunk in yield_lines:
-        yield chunk
-    yield_lines.clear()
-
-    ev_raw = evidence_upload["raw"]
+    ev_raw = await evidence.read()
     if len(ev_raw) > MAX_HR_BULK_EVIDENCE_BYTES:
         raise HTTPException(status_code=413, detail="Evidence file too large (max 10 MB).")
-    ev_ct = _hr_evidence_content_type(
-        evidence_upload.get("content_type"), evidence_upload.get("filename")
-    )
+    ev_ct = _hr_evidence_content_type(evidence.content_type, evidence.filename)
     if not ev_ct:
         raise HTTPException(
             status_code=400,
             detail="Evidence must be a PDF or image (JPEG, PNG, or WebP).",
         )
-    ev_name = (evidence_upload.get("filename") or "evidence").strip()
+    ev_name = (evidence.filename or "evidence").strip()
     ev_b64 = base64.b64encode(ev_raw).decode("ascii")
 
     wallet_bad: set[str] = set()
-    wallet_total = len(issue_plans)
-    for widx, p in enumerate(issue_plans):
-        progress(
-            "wallet",
-            f"Checking wallet size {widx + 1} of {wallet_total}…",
-            widx + 1,
-            wallet_total,
-        )
-        for chunk in yield_lines:
-            yield chunk
-        yield_lines.clear()
-
+    for p in issue_plans:
         if _hr_wallet_size_would_exceed_after_append(
             p["wallet_raw"],
             module_name=module_name,
@@ -1637,11 +1223,6 @@ def _hr_bulk_training_run(ctx: dict, *, emit_progress: bool = True) -> Iterator[
             wallet_bad.add(p["line"])
 
     if wallet_bad:
-        progress("wallet", "Wallet size check failed for at least one clinician.", wallet_total, wallet_total)
-        for chunk in yield_lines:
-            yield chunk
-        yield_lines.clear()
-
         rows_out = []
         errors = skipped = 0
         for p in plans:
@@ -1677,7 +1258,7 @@ def _hr_bulk_training_run(ctx: dict, *, emit_progress: bool = True) -> Iterator[
                             doctor_user_id=doc_id,
                         )
                     )
-        resp = HrBulkTrainingResponse(
+        return HrBulkTrainingResponse(
             dry_run=False,
             aborted=True,
             issuing_trust_ods_code=ods,
@@ -1689,13 +1270,9 @@ def _hr_bulk_training_run(ctx: dict, *, emit_progress: bool = True) -> Iterator[
             errors=errors,
             rows=rows_out,
         )
-        yield _bulk_training_complete_line(resp)
-        return
 
-    issue_total = len(issue_plans)
     rows_out = []
     issued = skipped = errors = 0
-    issue_idx = 0
     for p in plans:
         if p["kind"] == "skipped":
             doc_id = int(p["doc"]["id"])
@@ -1709,19 +1286,7 @@ def _hr_bulk_training_run(ctx: dict, *, emit_progress: bool = True) -> Iterator[
             )
             skipped += 1
             continue
-        if p["kind"] != "issue":
-            continue
-        issue_idx += 1
-        progress(
-            "issue",
-            f"Issuing training record {issue_idx} of {issue_total}…",
-            issue_idx,
-            issue_total,
-        )
-        for chunk in yield_lines:
-            yield chunk
-        yield_lines.clear()
-
+        assert p["kind"] == "issue"
         assert p["rec"] is not None and p["doc"] is not None
         row, outcome = _hr_commit_training_for_clinician(
             hr=hr,
@@ -1743,12 +1308,7 @@ def _hr_bulk_training_run(ctx: dict, *, emit_progress: bool = True) -> Iterator[
         elif outcome == "error":
             errors += 1
 
-    progress("finalize", "Finishing up…", issue_total, issue_total)
-    for chunk in yield_lines:
-        yield chunk
-    yield_lines.clear()
-
-    resp = HrBulkTrainingResponse(
+    return HrBulkTrainingResponse(
         dry_run=False,
         aborted=False,
         issuing_trust_ods_code=ods,
@@ -1760,231 +1320,6 @@ def _hr_bulk_training_run(ctx: dict, *, emit_progress: bool = True) -> Iterator[
         errors=errors,
         rows=rows_out,
     )
-    yield _bulk_training_complete_line(resp)
-
-
-def _hr_bulk_training_collect(ctx: dict) -> HrBulkTrainingResponse:
-    resp: Optional[HrBulkTrainingResponse] = None
-    for line in _hr_bulk_training_run(ctx, emit_progress=False):
-        payload = json.loads(line)
-        if payload.get("event") == "complete":
-            resp = HrBulkTrainingResponse(**payload["data"])
-    if resp is None:
-        raise HTTPException(status_code=500, detail="Bulk training did not return a result.")
-    return resp
-
-
-def _parse_bulk_cohort_ids(
-    cohort_id: Optional[str], cohort_ids: Optional[str]
-) -> list[int]:
-    """Parse one or many cohort ids from bulk-training form fields."""
-    raw_ids: list[int] = []
-    if cohort_ids and str(cohort_ids).strip():
-        try:
-            parsed = json.loads(str(cohort_ids).strip())
-        except json.JSONDecodeError:
-            parsed = [
-                x.strip() for x in str(cohort_ids).split(",") if x.strip()
-            ]
-        if isinstance(parsed, list):
-            for item in parsed:
-                try:
-                    raw_ids.append(int(item))
-                except (TypeError, ValueError):
-                    raise HTTPException(status_code=400, detail="Invalid cohort_ids")
-        else:
-            raise HTTPException(status_code=400, detail="cohort_ids must be a JSON array")
-    elif cohort_id and str(cohort_id).strip():
-        try:
-            raw_ids = [int(str(cohort_id).strip())]
-        except (TypeError, ValueError):
-            raise HTTPException(status_code=400, detail="Invalid cohort_id")
-    seen: set[int] = set()
-    out: list[int] = []
-    for cid in raw_ids:
-        if cid not in seen:
-            seen.add(cid)
-            out.append(cid)
-    return out
-
-
-def _bulk_training_roster_from_cohorts(
-    cohort_ids: list[int], trust: str
-) -> tuple[list[str], str]:
-    """Merge roster lines from multiple cohorts; dedupe by normalised identifier."""
-    if not cohort_ids:
-        return [], ""
-    seen: set[str] = set()
-    lines: list[str] = []
-    labels: list[str] = []
-    for cid in cohort_ids:
-        cohort = db.cohort_get(int(cid), trust)
-        if not cohort:
-            raise HTTPException(status_code=404, detail=f"Cohort not found: {cid}")
-        labels.append(cohort.get("name") or f"Cohort {cid}")
-        for line in db.cohort_roster_lines(int(cid), trust):
-            key = str(line or "").strip().lower()
-            if key and key not in seen:
-                seen.add(key)
-                lines.append(str(line).strip())
-    if not lines:
-        raise HTTPException(
-            status_code=400,
-            detail="Selected cohort(s) have no members with email or GMC.",
-        )
-    if len(labels) == 1:
-        cohort_label = labels[0]
-    elif len(labels) <= 3:
-        cohort_label = ", ".join(labels)
-    else:
-        cohort_label = f"{len(labels)} cohorts"
-    return lines, cohort_label
-
-
-async def _hr_bulk_training_build_context(
-    request: Request,
-    hr: dict,
-    trust: str,
-    *,
-    roster: Optional[UploadFile],
-    cohort_id: Optional[str],
-    cohort_ids: Optional[str],
-    evidence: Optional[UploadFile],
-    module_code: str,
-    completion_date: str,
-    expiry_date: str,
-    issuing_trust_ods_code: Optional[str],
-    issuing_trust_name: Optional[str],
-) -> dict:
-    lines: list[str] = []
-    cohort_label = ""
-    parsed_cohort_ids = _parse_bulk_cohort_ids(cohort_id, cohort_ids)
-    if parsed_cohort_ids:
-        lines, cohort_label = _bulk_training_roster_from_cohorts(parsed_cohort_ids, trust)
-    elif roster and (roster.filename or "").strip():
-        raw_roster = await roster.read()
-        if len(raw_roster) > MAX_HR_BULK_ROSTER_BYTES:
-            raise HTTPException(status_code=413, detail="Roster file too large")
-        text = _decode_roster_text(raw_roster)
-        if text is None:
-            raise HTTPException(status_code=400, detail="Roster encoding not recognised (try UTF-8).")
-        lines = _parse_roster_lines(text)
-        if not lines:
-            raise HTTPException(status_code=400, detail="Roster is empty.")
-    else:
-        raise HTTPException(
-            status_code=400,
-            detail="Select a cohort or upload a roster file.",
-        )
-    if len(lines) > MAX_HR_BULK_LINES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Too many roster lines ({len(lines)}). Maximum is {MAX_HR_BULK_LINES} per upload.",
-        )
-
-    mc = str(module_code or "").strip().lower()
-    module_lookup = dict(CSTF_MODULES)
-    if mc not in module_lookup:
-        raise HTTPException(status_code=400, detail="Unknown module_code.")
-    module_name = module_lookup[mc]
-
-    try:
-        cd = date.fromisoformat(str(completion_date).strip()[:10])
-        ed = date.fromisoformat(str(expiry_date).strip()[:10])
-    except ValueError:
-        raise HTTPException(status_code=400, detail="completion_date and expiry_date must be YYYY-MM-DD.")
-
-    ods, issuing_name = _hr_resolve_issuing_trust(hr, issuing_trust_ods_code, issuing_trust_name)
-    base = _public_app_base(request)
-
-    evidence_upload = None
-    if evidence is not None and (evidence.filename or "").strip():
-        ev_raw = await evidence.read()
-        evidence_upload = {
-            "raw": ev_raw,
-            "filename": (evidence.filename or "evidence").strip(),
-            "content_type": evidence.content_type,
-        }
-
-    return {
-        "hr": hr,
-        "trust": trust,
-        "lines": lines,
-        "cohort_label": cohort_label,
-        "mc": mc,
-        "module_name": module_name,
-        "cd": cd,
-        "ed": ed,
-        "ods": ods,
-        "issuing_name": issuing_name,
-        "base": base,
-        "evidence_upload": evidence_upload,
-    }
-
-
-@router.post("/hr/bulk-training")
-async def hr_bulk_training(
-    request: Request,
-    roster: Optional[UploadFile] = File(None),
-    cohort_id: Optional[str] = Form(None),
-    cohort_ids: Optional[str] = Form(None),
-    evidence: Optional[UploadFile] = File(None),
-    module_code: str = Form(...),
-    completion_date: str = Form(...),
-    expiry_date: str = Form(...),
-    issuing_trust_ods_code: Optional[str] = Form(None),
-    issuing_trust_name: Optional[str] = Form(None),
-    stream: bool = Form(False),
-):
-    """
-    Premium HR: issue one CSTF-style module completion to many clinicians from a roster file
-    or a cohort (one GMC or email per line, or CSV with identifier in the first column) plus shared evidence.
-
-    All-or-nothing on roster validation: every line is checked first; if any line fails
-    (unknown clinician, visibility, premium account, or wallet size guard), nothing is issued.
-    When the roster is clean, lines that would duplicate an existing wallet entry are skipped
-    and all remaining lines are issued in one pass.
-
-    Pass stream=true (form field) to receive application/x-ndjson progress events, then a
-    final {"event":"complete","data":...} line.
-    """
-    hr = require_premium_user(request)
-    trust = (hr.get("current_trust") or "").strip()
-    if not trust:
-        raise HTTPException(status_code=400, detail="Your HR account must have a current trust set.")
-
-    ctx = await _hr_bulk_training_build_context(
-        request,
-        hr,
-        trust,
-        roster=roster,
-        cohort_id=cohort_id,
-        cohort_ids=cohort_ids,
-        evidence=evidence,
-        module_code=module_code,
-        completion_date=completion_date,
-        expiry_date=expiry_date,
-        issuing_trust_ods_code=issuing_trust_ods_code,
-        issuing_trust_name=issuing_trust_name,
-    )
-
-    if stream:
-
-        def _stream_with_errors() -> Iterator[str]:
-            try:
-                yield from _hr_bulk_training_run(ctx, emit_progress=True)
-            except HTTPException as exc:
-                detail = exc.detail
-                msg = detail if isinstance(detail, str) else str(detail)
-                yield json.dumps({"event": "error", "message": msg}) + "\n"
-
-        return StreamingResponse(
-            _stream_with_errors(),
-            media_type="application/x-ndjson",
-            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
-        )
-
-    return _hr_bulk_training_collect(ctx)
 
 
 @router.get("/hr/doctors/{doctor_user_id}/queue")
@@ -2020,29 +1355,9 @@ def hr_share_item_verify(request: Request, session_id: int, credential_id: str):
             detail="This is a reference-only pack (already verified elsewhere). No further verification is required.",
         )
     # Ensure item exists in session
-    item = next(
-        (it for it in (s.get("items") or []) if it.get("credential_id") == credential_id),
-        None,
-    )
-    if not item:
+    if not any(it.get("credential_id") == credential_id for it in (s.get("items") or [])):
         raise HTTPException(status_code=404, detail="Item not found in share")
     db.share_item_set_decision(int(session_id), str(credential_id), int(hr["id"]), status="VERIFIED")
-    trust_label = (hr.get("current_trust") or s.get("target_trust") or "").strip()
-    mod = (item.get("module_name") or credential_id or "Training").strip()
-    _notify_clinician_hr_training(
-        int(s["doctor_user_id"]),
-        kind="hr_verified",
-        module_name=mod,
-        trust_name=trust_label,
-    )
-    _audit_hr_action(
-        hr,
-        "verify",
-        doctor_user_id=int(s["doctor_user_id"]),
-        credential_id=credential_id,
-        session_id=int(session_id),
-        detail=mod,
-    )
     return {"ok": True}
 
 
@@ -2069,477 +1384,8 @@ async def hr_share_item_decline(request: Request, session_id: int, credential_id
         reason = str(body.get("reason") or "").strip()
     if not reason:
         raise HTTPException(status_code=400, detail="Decline reason required")
-    item = next(
-        (it for it in (s.get("items") or []) if it.get("credential_id") == credential_id),
-        None,
-    )
     db.share_item_set_decision(int(session_id), str(credential_id), int(hr["id"]), status="DECLINED", decline_reason=reason)
-    trust_label = (hr.get("current_trust") or s.get("target_trust") or "").strip()
-    mod = ((item or {}).get("module_name") or credential_id or "Training").strip()
-    _notify_clinician_hr_training(
-        int(s["doctor_user_id"]),
-        kind="hr_declined",
-        module_name=mod,
-        trust_name=trust_label,
-        decline_reason=reason,
-    )
-    _audit_hr_action(
-        hr,
-        "decline",
-        doctor_user_id=int(s["doctor_user_id"]),
-        credential_id=credential_id,
-        session_id=int(session_id),
-        detail=reason,
-        meta={"module_name": mod},
-    )
     return {"ok": True}
-
-
-@router.post("/hr/shares/{session_id}/items/{credential_id}/unverify")
-def hr_share_item_unverify(request: Request, session_id: int, credential_id: str):
-    """Revert a verified share item to pending so HR can review again."""
-    hr = require_premium_user(request)
-    s = db.share_session_get(int(session_id))
-    if not s:
-        raise HTTPException(status_code=404, detail="Share not found")
-    _assert_same_trust(hr, s)
-    if str(s.get("share_kind") or "review").lower() == "portfolio":
-        raise HTTPException(
-            status_code=400,
-            detail="This is a reference-only pack (already verified elsewhere). It cannot be changed here.",
-        )
-    item = next(
-        (it for it in (s.get("items") or []) if it.get("credential_id") == credential_id),
-        None,
-    )
-    if not item:
-        raise HTTPException(status_code=404, detail="Item not found in share")
-    if str(item.get("status") or "").upper() != "VERIFIED":
-        raise HTTPException(status_code=400, detail="Only verified records can be unverified.")
-    db.share_item_set_decision(int(session_id), str(credential_id), int(hr["id"]), status="PENDING")
-    trust_label = (hr.get("current_trust") or s.get("target_trust") or "").strip()
-    mod = (item.get("module_name") or credential_id or "Training").strip()
-    _notify_clinician_hr_training(
-        int(s["doctor_user_id"]),
-        kind="hr_unverified",
-        module_name=mod,
-        trust_name=trust_label,
-    )
-    _audit_hr_action(
-        hr,
-        "unverify",
-        doctor_user_id=int(s["doctor_user_id"]),
-        credential_id=credential_id,
-        session_id=int(session_id),
-        detail=mod,
-    )
-    return {"ok": True}
-
-
-@router.post("/hr/doctors/{doctor_user_id}/credentials/{credential_id}/unverify")
-def hr_doctor_credential_unverify(request: Request, doctor_user_id: int, credential_id: str):
-    """
-    Premium HR: remove verification for a credential (HR-issued attestation or shared item
-    verified at this trust).
-    """
-    hr = require_premium_user(request)
-    trust = (hr.get("current_trust") or "").strip()
-    if not trust:
-        raise HTTPException(status_code=400, detail="Your HR account must have a current trust set.")
-    with __import__("sqlite3").connect(db.DB_PATH) as conn:
-        if not db._doctor_visible_to_trust(int(doctor_user_id), trust, conn):
-            raise HTTPException(
-                status_code=403,
-                detail="This clinician has not permitted your trust to view or update their records.",
-            )
-    cid = str(credential_id).strip()
-    mod = cid
-    wallet = []
-    try:
-        wallet = json.loads(db.user_wallet_get(int(doctor_user_id)))
-    except Exception:
-        wallet = []
-    if isinstance(wallet, list):
-        for c in wallet:
-            if isinstance(c, dict) and str(c.get("credential_id")) == cid:
-                mod = (c.get("module_name") or cid).strip()
-                break
-    if db.hr_attestation_delete(int(doctor_user_id), cid, trust):
-        _notify_clinician_hr_training(
-            int(doctor_user_id),
-            kind="hr_unverified",
-            module_name=mod,
-            trust_name=trust,
-        )
-        _audit_hr_action(
-            hr,
-            "unverify",
-            doctor_user_id=int(doctor_user_id),
-            credential_id=cid,
-            detail=mod,
-            meta={"source": "hr_attestation"},
-        )
-        return {"ok": True, "source": "hr_attestation"}
-    found = db.share_item_find_verified_for_trust(int(doctor_user_id), cid, trust)
-    if found:
-        if str(found.get("share_kind") or "review").lower() == "portfolio":
-            raise HTTPException(
-                status_code=400,
-                detail="This is a reference-only pack (already verified elsewhere). It cannot be changed here.",
-            )
-        db.share_item_set_decision(int(found["session_id"]), cid, int(hr["id"]), status="PENDING")
-        _notify_clinician_hr_training(
-            int(doctor_user_id),
-            kind="hr_unverified",
-            module_name=mod,
-            trust_name=trust,
-        )
-        _audit_hr_action(
-            hr,
-            "unverify",
-            doctor_user_id=int(doctor_user_id),
-            credential_id=cid,
-            session_id=int(found["session_id"]),
-            detail=mod,
-            meta={"source": "share"},
-        )
-        return {"ok": True, "source": "share", "session_id": found["session_id"]}
-    raise HTTPException(status_code=404, detail="No verified record found for this clinician at your trust.")
-
-
-# ── Phase 0: notifications, audit, compliance snapshots ─────────────────────
-
-@router.get("/me/notifications")
-def me_notifications_list(request: Request, limit: int = 50, unread_only: bool = False):
-    uid = require_user_id(request)
-    return {
-        "items": db.notifications_list(uid, limit=limit, unread_only=unread_only),
-        "unread_count": db.notifications_unread_count(uid),
-    }
-
-
-@router.get("/me/notifications/unread-count")
-def me_notifications_unread_count(request: Request):
-    uid = require_user_id(request)
-    return {"count": db.notifications_unread_count(uid)}
-
-
-@router.post("/me/notifications/{notification_id}/read")
-def me_notification_mark_read(request: Request, notification_id: int):
-    uid = require_user_id(request)
-    if not db.notification_mark_read(int(notification_id), uid):
-        raise HTTPException(status_code=404, detail="Notification not found")
-    return {"ok": True, "unread_count": db.notifications_unread_count(uid)}
-
-
-@router.post("/me/notifications/read-all")
-def me_notifications_read_all(request: Request):
-    uid = require_user_id(request)
-    n = db.notifications_mark_all_read(uid)
-    return {"ok": True, "marked": n, "unread_count": 0}
-
-
-@router.get("/me/compliance-snapshot")
-def me_compliance_snapshot(request: Request):
-    uid = require_user_id(request)
-    u = db.user_get_by_id(uid)
-    if not u:
-        raise HTTPException(status_code=401, detail="Not signed in")
-    trust = (u.get("current_trust") or "").strip()
-    if not trust:
-        return {"snapshot": None, "message": "Set your current trust in Profile to see mandatory requirements."}
-    _try_seed_mandatory_from_pack(trust)
-    return {"snapshot": compliance_snapshot.doctor_compliance_snapshot(uid, trust)}
-
-
-@router.get("/hr/audit-log")
-def hr_audit_log(request: Request, limit: int = 100, offset: int = 0, action: Optional[str] = None):
-    hr = require_premium_user(request)
-    trust = _hr_trust_required(hr)
-    return {
-        "items": db.hr_audit_log_list(trust, limit=limit, offset=offset, action=action or None),
-        "trust": trust,
-    }
-
-
-@router.get("/hr/compliance/expiring")
-def hr_compliance_expiring(
-    request: Request,
-    window_days: int = 90,
-    cohort_id: Optional[int] = None,
-):
-    hr = require_premium_user(request)
-    trust = _hr_trust_required(hr)
-    return compliance_snapshot.trust_expiring_report(
-        trust, window_days=window_days, cohort_id=cohort_id
-    )
-
-
-@router.get("/hr/cohorts/{cohort_id}/compliance-snapshot")
-def hr_cohort_compliance_snapshot(request: Request, cohort_id: int):
-    hr = require_premium_user(request)
-    trust = _hr_trust_required(hr)
-    snap = compliance_snapshot.cohort_compliance_snapshot(int(cohort_id), trust)
-    if not snap:
-        raise HTTPException(status_code=404, detail="Cohort not found")
-    return {"snapshot": snap}
-
-
-@router.get("/hr/cohorts/{cohort_id}/compliance-export")
-def hr_cohort_compliance_export(request: Request, cohort_id: int):
-    hr = require_premium_user(request)
-    trust = _hr_trust_required(hr)
-    result = compliance_snapshot.cohort_compliance_csv(int(cohort_id), trust)
-    if not result:
-        raise HTTPException(status_code=404, detail="Cohort not found")
-    filename, csv_text = result
-    return Response(
-        content=csv_text,
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
-
-
-# ── Phase 3: trust move, verifier links, welcome templates ───
-
-
-@router.get("/me/trust-move/candidates")
-def me_trust_move_candidates(request: Request):
-    """HR-verified wallet items eligible for a portfolio reference pack."""
-    uid = require_user_id(request)
-    u = db.user_get_by_id(uid)
-    if not u:
-        raise HTTPException(status_code=401, detail="Not signed in")
-    items = db.doctor_verified_bundle_items(uid)
-    return {
-        "current_trust": (u.get("current_trust") or "").strip() or None,
-        "items": items,
-    }
-
-
-@router.post("/me/trust-move/complete")
-async def me_trust_move_complete(request: Request):
-    """
-    Update current trust, create portfolio share for selected verified credentials.
-    """
-    uid = require_user_id(request)
-    u = db.user_get_by_id(uid)
-    if not u:
-        raise HTTPException(status_code=401, detail="Not signed in")
-    require_profile_complete(u)
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON")
-    if not isinstance(body, dict):
-        raise HTTPException(status_code=400, detail="Expected JSON object")
-    from .trust_packs import normalize_stored_trust_name
-
-    new_trust = normalize_stored_trust_name((body.get("new_trust") or "").strip())
-    if not new_trust:
-        raise HTTPException(status_code=400, detail="new_trust is required")
-    ids = body.get("portfolio_credential_ids") or []
-    if not isinstance(ids, list):
-        raise HTTPException(status_code=400, detail="portfolio_credential_ids must be a list")
-    ids = [str(x).strip() for x in ids if str(x).strip()]
-    if body.get("update_profile", True):
-        db.user_set_profile(
-            uid,
-            (u.get("display_name") or "").strip() or None,
-            (u.get("gmc_number") or "").strip() or None,
-            new_trust,
-        )
-    portfolio_session = None
-    share_url = None
-    if ids:
-        wallet_raw = db.user_wallet_get(uid)
-        try:
-            wallet = json.loads(wallet_raw)
-        except Exception:
-            wallet = []
-        if not isinstance(wallet, list):
-            wallet = []
-        wallet_by_id = {
-            str(c.get("credential_id")): c
-            for c in wallet
-            if isinstance(c, dict) and c.get("credential_id")
-        }
-        vmap = db.doctor_verified_map(uid)
-        items = []
-        for cid in ids:
-            if str(vmap.get(cid, {}).get("status") or "").upper() != "VERIFIED":
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Credential {cid} is not HR-verified and cannot go in a reference pack.",
-                )
-            w = wallet_by_id.get(cid) or {}
-            issuing = _issuing_trust_from_wallet_entry(w)
-            entry = {
-                "credential_id": cid,
-                "module_name": w.get("module_name"),
-                "expiry_date": w.get("expiry_date"),
-                "certificate_base64": w.get("certificate_base64"),
-                "certificate_filename": w.get("certificate_filename"),
-                "issuing_trust_name": issuing,
-            }
-            prior = db.share_portfolio_prior_decision_at(uid, cid)
-            entry["portfolio_verified_at"] = prior or datetime.utcnow().isoformat()
-            entry["verified_by_trust_name"] = db.share_portfolio_prior_verifier_trust(uid, cid)
-            items.append(entry)
-        created = db.share_session_create(
-            doctor_user_id=uid,
-            doctor_email=u.get("email") or "",
-            items=items,
-            share_kind="portfolio",
-            target_trust=new_trust,
-        )
-        portfolio_session = created.get("session_id")
-        base = _public_app_base(request)
-        share_url = f"{base}/static/hr/?session={portfolio_session}"
-    snap = None
-    try:
-        from . import compliance_snapshot
-
-        snap = compliance_snapshot.doctor_compliance_snapshot(uid, new_trust)
-    except Exception:
-        snap = None
-    return {
-        "ok": True,
-        "new_trust": new_trust,
-        "portfolio_session_id": portfolio_session,
-        "share_url": share_url,
-        "compliance_at_new_trust": snap,
-    }
-
-
-@router.get("/public/verifier-link/{token}")
-def public_verifier_link_bundle(request: Request, token: str):
-    """Read-only verified training bundle for staffing (no login)."""
-    row = db.verifier_link_get_by_token(token)
-    if not row:
-        raise HTTPException(status_code=404, detail="Link not found")
-    payload = db.verifier_link_bundle_payload(row)
-    if not payload:
-        raise HTTPException(status_code=410, detail="This link has expired or been revoked")
-    return payload
-
-
-@router.get("/hr/verifier-links")
-def hr_verifier_links_list_api(request: Request, limit: int = 50):
-    hr = require_premium_user(request)
-    trust = _hr_trust_required(hr)
-    return {"items": db.verifier_links_list(trust, limit=limit), "trust": trust}
-
-
-@router.post("/hr/verifier-links")
-async def hr_verifier_links_create(request: Request):
-    hr = require_premium_user(request)
-    trust = _hr_trust_required(hr)
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON")
-    if not isinstance(body, dict):
-        raise HTTPException(status_code=400, detail="Expected JSON object")
-    doctor_user_id = body.get("doctor_user_id")
-    cohort_id = body.get("cohort_id")
-    try:
-        link = db.verifier_link_create(
-            hr_trust=trust,
-            created_by_user_id=int(hr["id"]),
-            doctor_user_id=int(doctor_user_id) if doctor_user_id else None,
-            cohort_id=int(cohort_id) if cohort_id else None,
-            label=(body.get("label") or "").strip() or None,
-            expires_days=int(body.get("expires_days") or 14),
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    base = _public_app_base(request)
-    url = f"{base}/static/verifier/bundle.html?token={link['token']}"
-    _audit_hr_action(
-        hr,
-        "verifier_link_created",
-        doctor_user_id=int(doctor_user_id) if doctor_user_id else None,
-        detail=link.get("label") or url,
-        meta={"link_id": link.get("id"), "cohort_id": cohort_id},
-    )
-    return {"ok": True, "link": link, "url": url}
-
-
-@router.post("/hr/verifier-links/{link_id}/revoke")
-def hr_verifier_link_revoke(request: Request, link_id: int):
-    hr = require_premium_user(request)
-    trust = _hr_trust_required(hr)
-    if not db.verifier_link_revoke(int(link_id), trust):
-        raise HTTPException(status_code=404, detail="Link not found")
-    return {"ok": True}
-
-
-@router.get("/hr/welcome-templates")
-def hr_welcome_templates_list_api(request: Request):
-    hr = require_premium_user(request)
-    trust = _hr_trust_required(hr)
-    return {"templates": db.hr_welcome_templates_list(trust), "trust": trust}
-
-
-@router.post("/hr/welcome-templates")
-async def hr_welcome_templates_save_api(request: Request):
-    hr = require_premium_user(request)
-    trust = _hr_trust_required(hr)
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON")
-    if not isinstance(body, dict):
-        raise HTTPException(status_code=400, detail="Expected JSON object")
-    tmpl = db.hr_welcome_template_save(
-        trust,
-        (body.get("name") or "").strip() or "Template",
-        (body.get("body") or "").strip(),
-        topic_id=body.get("topic_id"),
-        template_id=int(body["id"]) if body.get("id") else None,
-    )
-    return {"ok": True, "template": tmpl}
-
-
-@router.delete("/hr/welcome-templates/{template_id}")
-def hr_welcome_templates_delete_api(request: Request, template_id: int):
-    hr = require_premium_user(request)
-    trust = _hr_trust_required(hr)
-    if not db.hr_welcome_template_delete(int(template_id), trust):
-        raise HTTPException(status_code=404, detail="Template not found")
-    return {"ok": True}
-
-
-@router.get("/hr/cohorts/{cohort_id}/welcome-template-suggestions")
-def hr_cohort_welcome_template_suggestions(request: Request, cohort_id: int):
-    """Suggest welcome templates based on mandatory gaps in the cohort."""
-    hr = require_premium_user(request)
-    trust = _hr_trust_required(hr)
-    snap = compliance_snapshot.cohort_compliance_snapshot(int(cohort_id), trust)
-    if not snap:
-        raise HTTPException(status_code=404, detail="Cohort not found")
-    gap_topics = [
-        t for t in (snap.get("topics") or [])
-        if int(t.get("gap") or 0) > 0 or int(t.get("expiring") or 0) > 0
-    ]
-    all_tmpl = db.hr_welcome_templates_list(trust)
-    suggested = []
-    for gt in gap_topics:
-        tname = (gt.get("topic_name") or "").strip().lower()
-        tid = gt.get("topic_id")
-        for tmpl in all_tmpl:
-            if tmpl.get("topic_id") and tid and int(tmpl["topic_id"]) == int(tid):
-                suggested.append({**tmpl, "reason": "Matches gap topic: " + (gt.get("topic_name") or "")})
-                break
-            elif tmpl.get("topic_name") and tname and tname in (tmpl.get("name") or "").lower():
-                suggested.append({**tmpl, "reason": "Related to: " + (gt.get("topic_name") or "")})
-                break
-    return {
-        "gap_topics": gap_topics,
-        "suggested_templates": suggested,
-        "all_templates": all_tmpl,
-    }
 
 
 # ── Mandatory topics ──────────────────────────────────────────────────────────
@@ -2551,63 +1397,11 @@ def _hr_trust_required(hr_user: dict) -> str:
     return trust
 
 
-def _parse_match_hints(body: dict) -> Optional[dict]:
-    hints = body.get("match_hints")
-    if isinstance(hints, dict):
-        return hints
-    subs = body.get("match_name_substrings")
-    codes = body.get("match_module_codes")
-    if subs or codes:
-        out: dict = {}
-        if codes:
-            out["match_module_codes"] = codes
-        if subs:
-            out["match_name_substrings"] = subs
-        return out
-    return None
-
-
 @router.get("/hr/mandatory-topics")
 def hr_mandatory_topics_list(request: Request):
     hr = require_premium_user(request)
     trust = _hr_trust_required(hr)
-    _try_seed_mandatory_from_pack(trust)
-    return {
-        "topics": db.mandatory_topics_list(trust, seed_defaults=False),
-        "trust": trust,
-        "pack_available": bool(_pack_id_for_hr_trust(trust)),
-    }
-
-
-def _pack_id_for_hr_trust(trust: str):
-    from . import trust_packs
-
-    return trust_packs.pack_id_for_trust_name(trust)
-
-
-@router.post("/hr/mandatory-topics/seed-from-pack")
-async def hr_mandatory_topics_seed_from_pack(request: Request):
-    hr = require_premium_user(request)
-    trust = _hr_trust_required(hr)
-    from . import trust_packs
-
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    pack_id = str(body.get("pack_id") or "").strip() or trust_packs.pack_id_for_trust_name(trust)
-    if not pack_id:
-        raise HTTPException(
-            status_code=400,
-            detail="No trust pack found for your profile trust name. Set current trust to match the pack display name or pass pack_id.",
-        )
-    pack = trust_packs.load_trust_pack(pack_id)
-    if not pack:
-        raise HTTPException(status_code=404, detail="Trust pack not found")
-    n, msg = db.seed_mandatory_from_trust_pack(trust, pack)
-    if n == 0 and "skipped" in msg.lower():
-        raise HTTPException(status_code=409, detail=msg)
-    return {"ok": True, "seeded": n, "message": msg, "topics": db.mandatory_topics_list(trust, seed_defaults=False)}
+    return {"topics": db.mandatory_topics_list(trust)}
 
 
 @router.post("/hr/mandatory-topics")
@@ -2623,14 +1417,7 @@ async def hr_mandatory_topic_add(request: Request):
     if not topic_name:
         raise HTTPException(status_code=400, detail="topic_name is required")
     try:
-        topic = db.mandatory_topic_add(
-            trust,
-            topic_name,
-            category,
-            delivery_channel=str(body.get("delivery_channel") or "").strip() or None,
-            resource_url=str(body.get("resource_url") or "").strip() or None,
-            match_hints=_parse_match_hints(body),
-        )
+        topic = db.mandatory_topic_add(trust, topic_name, category)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return topic
@@ -2648,18 +1435,7 @@ async def hr_mandatory_topic_update(request: Request, topic_id: int):
     category = str(body.get("category") or "").strip()
     if not topic_name:
         raise HTTPException(status_code=400, detail="topic_name is required")
-    updated = db.mandatory_topic_update(
-        int(topic_id),
-        trust,
-        topic_name,
-        category,
-        delivery_channel=str(body.get("delivery_channel") or "").strip() or None,
-        resource_url=str(body.get("resource_url") or "").strip() or None,
-        match_hints=_parse_match_hints(body),
-        update_delivery_channel="delivery_channel" in body,
-        update_resource_url="resource_url" in body,
-        update_match_hints="match_hints" in body or "match_name_substrings" in body,
-    )
+    updated = db.mandatory_topic_update(int(topic_id), trust, topic_name, category)
     if not updated:
         raise HTTPException(status_code=404, detail="Topic not found")
     return {"ok": True}
@@ -2708,68 +1484,6 @@ def _get_conversation_assert_hr(conv_id: int, hr_trust: str):
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
     return conv
-
-
-async def _message_send_payload(request: Request) -> tuple[str, list[tuple[str, str, bytes]]]:
-    """Parse JSON or multipart message send (body + optional files)."""
-    ct = (request.headers.get("content-type") or "").lower()
-    if "multipart/form-data" in ct:
-        form = await request.form()
-        text = str(form.get("body") or "").strip()
-        attachments: list[tuple[str, str, bytes]] = []
-        for uf in form.getlist("files"):
-            if not hasattr(uf, "read"):
-                continue
-            raw = await uf.read()
-            name = (getattr(uf, "filename", None) or "attachment").strip()
-            mime = _hr_evidence_content_type(getattr(uf, "content_type", None), name)
-            if not mime:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Unsupported file type for {name}. Use PDF or image (JPEG, PNG, WebP).",
-                )
-            if len(raw) > MAX_MESSAGE_ATTACHMENT_BYTES:
-                raise HTTPException(
-                    status_code=413,
-                    detail=f"File too large (max 5 MB): {name}",
-                )
-            attachments.append((name, mime, raw))
-        if len(attachments) > MAX_MESSAGE_ATTACHMENTS:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Maximum {MAX_MESSAGE_ATTACHMENTS} attachments per message.",
-            )
-        return text, attachments
-    try:
-        raw = await request.json()
-    except Exception:
-        raw = {}
-    if not isinstance(raw, dict):
-        raw = {}
-    return str(raw.get("body") or "").strip(), []
-
-
-def _require_message_content(text: str, attachments: list) -> None:
-    if not (text or "").strip() and not attachments:
-        raise HTTPException(
-            status_code=400,
-            detail="Message must include text or at least one attachment",
-        )
-
-
-@router.get("/messages/attachments/{attachment_id}")
-def message_attachment_download(request: Request, attachment_id: int):
-    uid = require_user_id(request)
-    result = db.message_attachment_get_for_viewer(int(attachment_id), uid)
-    if not result:
-        raise HTTPException(status_code=404, detail="Attachment not found")
-    meta, data = result
-    fn = (meta.get("filename") or "attachment").replace('"', "")
-    return Response(
-        content=data,
-        media_type=meta.get("content_type") or "application/octet-stream",
-        headers={"Content-Disposition": f'attachment; filename="{fn}"'},
-    )
 
 
 # Doctor endpoints
@@ -2828,7 +1542,6 @@ async def me_messages_start(request: Request):
         trust = (user.get("current_trust") or "").strip()
         if not trust:
             raise HTTPException(status_code=400, detail="Set your current trust in your profile before messaging HR.")
-        trust = db.conversation_trust_canonical(trust)
     conv = db.conversation_get_or_create(uid, trust)
     return conv
 
@@ -2837,162 +1550,18 @@ async def me_messages_start(request: Request):
 async def me_messages_send(request: Request, conv_id: int):
     uid = require_user_id(request)
     _get_conversation_assert_doctor(conv_id, uid)
-    text, attachments = await _message_send_payload(request)
-    _require_message_content(text, attachments)
-    try:
-        msg = db.message_send_body(int(conv_id), uid, text, attachments=attachments or None)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    return msg
-
-
-# HR endpoints
-@router.get("/hr/messages/doctors/search")
-def hr_messages_doctors_search(request: Request, q: str = "", limit: int = 30):
-    """Search clinicians or cohorts by name to start a message."""
-    hr = require_premium_user(request)
-    results = db.hr_doctors_search_messaging(q=q, limit=limit)
-    cohorts: list[dict] = []
-    trust = (hr.get("current_trust") or "").strip()
-    if trust:
-        cohorts = db.hr_cohort_search_by_name(trust, q=q, limit=10)
-    return {"results": results, "cohorts": cohorts}
-
-
-@router.post("/hr/messages/start")
-async def hr_messages_start(request: Request):
-    """Start or open a conversation with any registered clinician."""
-    hr = require_premium_user(request)
-    trust = _hr_trust_required(hr)
     try:
         body = await request.json()
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON")
-    raw_id = body.get("doctor_user_id")
-    if raw_id is None or raw_id == "":
-        raise HTTPException(status_code=400, detail="doctor_user_id is required")
-    try:
-        doctor_id = int(raw_id)
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail="doctor_user_id must be an integer")
-    doc = db.user_get_by_id(doctor_id)
-    if not doc or db.user_is_premium(doc):
-        raise HTTPException(status_code=404, detail="Clinician not found")
-    if int(doc["id"]) == int(hr["id"]):
-        raise HTTPException(status_code=400, detail="Cannot message yourself")
-    conv = db.conversation_get_or_create(doctor_id, trust)
-    return conv
+    text = str(body.get("body") or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Message body cannot be empty")
+    msg = db.message_send_body(int(conv_id), uid, text)
+    return msg
 
 
-def _parse_doctor_user_ids(raw) -> list[int]:
-    if raw is None:
-        return []
-    if isinstance(raw, list):
-        items = raw
-    elif isinstance(raw, str):
-        raw = raw.strip()
-        if not raw:
-            return []
-        try:
-            parsed = json.loads(raw)
-            items = parsed if isinstance(parsed, list) else [parsed]
-        except json.JSONDecodeError:
-            items = [p for p in raw.replace(",", " ").split() if p.strip()]
-    else:
-        items = [raw]
-    out: list[int] = []
-    seen: set[int] = set()
-    for item in items:
-        try:
-            uid = int(item)
-        except (TypeError, ValueError):
-            continue
-        if uid in seen:
-            continue
-        seen.add(uid)
-        out.append(uid)
-    return out
-
-
-@router.post("/hr/messages/broadcast")
-async def hr_messages_broadcast(
-    request: Request,
-    stream: bool = Query(False),
-):
-    """Send the same message to multiple clinicians (separate private threads each)."""
-    hr = require_premium_user(request)
-    trust = _hr_trust_required(hr)
-    ct = (request.headers.get("content-type") or "").lower()
-    if "multipart/form-data" in ct:
-        form = await request.form()
-        if not stream:
-            stream = str(form.get("stream") or "").strip().lower() in ("1", "true", "yes")
-        doctor_ids = _parse_doctor_user_ids(form.get("doctor_user_ids"))
-        text = str(form.get("body") or "").strip()
-        attachments: list[tuple[str, str, bytes]] = []
-        for uf in form.getlist("files"):
-            if not hasattr(uf, "read"):
-                continue
-            raw = await uf.read()
-            name = (getattr(uf, "filename", None) or "attachment").strip()
-            mime = _hr_evidence_content_type(getattr(uf, "content_type", None), name)
-            if not mime:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Unsupported file type for {name}. Use PDF or image (JPEG, PNG, WebP).",
-                )
-            if len(raw) > MAX_MESSAGE_ATTACHMENT_BYTES:
-                raise HTTPException(
-                    status_code=413,
-                    detail=f"File too large (max 5 MB): {name}",
-                )
-            attachments.append((name, mime, raw))
-        if len(attachments) > MAX_MESSAGE_ATTACHMENTS:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Maximum {MAX_MESSAGE_ATTACHMENTS} attachments per message.",
-            )
-    else:
-        try:
-            body = await request.json()
-        except Exception:
-            raise HTTPException(status_code=400, detail="Invalid JSON")
-        if not isinstance(body, dict):
-            raise HTTPException(status_code=400, detail="Invalid JSON")
-        doctor_ids = _parse_doctor_user_ids(body.get("doctor_user_ids"))
-        text = str(body.get("body") or "").strip()
-        attachments = []
-        if not stream:
-            stream = bool(body.get("stream"))
-    if not doctor_ids:
-        raise HTTPException(status_code=400, detail="Select at least one clinician")
-    if len(doctor_ids) > MAX_HR_COHORT_LINES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Too many recipients (maximum {MAX_HR_COHORT_LINES})",
-        )
-    _require_message_content(text, attachments)
-    if int(hr["id"]) in doctor_ids:
-        raise HTTPException(status_code=400, detail="Cannot message yourself")
-    if stream:
-        return StreamingResponse(
-            _ndjson_stream_wrap(
-                _hr_broadcast_stream(
-                    int(hr["id"]),
-                    trust,
-                    doctor_ids,
-                    text,
-                    attachments=attachments or None,
-                )
-            ),
-            media_type="application/x-ndjson",
-            headers=NDJSON_STREAM_HEADERS,
-        )
-    return _hr_broadcast_to_doctors(
-        int(hr["id"]), trust, doctor_ids, text, attachments=attachments or None
-    )
-
-
+# HR endpoints
 @router.get("/hr/messages")
 def hr_messages_list(request: Request):
     hr = require_premium_user(request)
@@ -3021,776 +1590,13 @@ def hr_messages_thread(request: Request, conv_id: int):
 async def hr_messages_send(request: Request, conv_id: int):
     hr = require_premium_user(request)
     trust = _hr_trust_required(hr)
-    conv = _get_conversation_assert_hr(conv_id, trust)
-    text, attachments = await _message_send_payload(request)
-    _require_message_content(text, attachments)
-    doc = db.user_get_by_id(int(conv["doctor_user_id"]))
-    if doc:
-        text = _render_welcome_template(text, doc, trust)
+    _get_conversation_assert_hr(conv_id, trust)
     try:
-        msg = db.message_send_body(
-            int(conv_id), int(hr["id"]), text, attachments=attachments or None
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    text = str(body.get("body") or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Message body cannot be empty")
+    msg = db.message_send_body(int(conv_id), int(hr["id"]), text)
     return msg
-
-
-# ── HR cohorts (provision clinicians + group messaging) ─────────────────────
-
-
-def _cohort_reserved_emails() -> set[str]:
-    return {
-        db.DEV_SEED_EMAIL.strip().lower(),
-        db.DEV_SEED_EMAIL_ROTHERHAM.strip().lower(),
-    }
-
-
-def _parse_cohort_emails(raw_emails) -> list[str]:
-    if isinstance(raw_emails, list):
-        lines = [str(x).strip() for x in raw_emails if str(x).strip()]
-    elif isinstance(raw_emails, str):
-        lines = _parse_roster_lines(raw_emails)
-    else:
-        lines = []
-    seen: set[str] = set()
-    out: list[str] = []
-    for line in lines:
-        email = _normalize_email(line.split(",")[0].strip())
-        if not email or email in seen:
-            continue
-        seen.add(email)
-        out.append(email)
-    return out
-
-
-def _cohort_member_from_item(item) -> Optional[dict]:
-    """Normalize one roster row: personal_email (login) required."""
-    if isinstance(item, str):
-        personal = _normalize_email(item)
-        return {"personal_email": personal} if personal else None
-    if not isinstance(item, dict):
-        return None
-    personal = _normalize_email(
-        str(
-            item.get("personal_email")
-            or item.get("personal")
-            or item.get("login_email")
-            or item.get("email")
-            or ""
-        )
-    )
-    if personal and not EMAIL_RE.match(personal):
-        personal = ""
-    if not personal:
-        return None
-    dn = str(item.get("display_name") or item.get("full_name") or item.get("name") or "").strip()
-    gmc_raw = str(item.get("gmc_number") or item.get("gmc") or "").strip()
-    out: dict = {"personal_email": personal}
-    if dn:
-        out["display_name"] = dn
-    if gmc_raw:
-        out["gmc_number"] = gmc_raw
-    return out
-
-
-def _parse_cohort_members(body: dict) -> list[dict]:
-    """
-    Accept members: [{personal_email, display_name?, gmc_number?}, ...]
-    or legacy emails: [string, ...].
-    """
-    raw_members = body.get("members")
-    if raw_members is not None:
-        if not isinstance(raw_members, list):
-            raise HTTPException(status_code=400, detail="members must be a list")
-        seen: set[str] = set()
-        out: list[dict] = []
-        for item in raw_members:
-            row = _cohort_member_from_item(item)
-            key = row.get("personal_email") if row else ""
-            if not row or key in seen:
-                continue
-            seen.add(key)
-            out.append(row)
-        return out
-    emails = _parse_cohort_emails(body.get("emails"))
-    return [{"personal_email": e} for e in emails]
-
-
-def _validate_cohort_members(members: list[dict]) -> None:
-    if not members:
-        raise HTTPException(status_code=400, detail="At least one personal email address is required")
-    if len(members) > MAX_HR_COHORT_LINES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Too many rows ({len(members)}). Maximum is {MAX_HR_COHORT_LINES}.",
-        )
-    for row in members:
-        personal = row.get("personal_email") or ""
-        if not EMAIL_RE.match(personal):
-            raise HTTPException(status_code=400, detail=f"Invalid personal email: {personal}")
-        gmc = _normalize_gmc(str(row.get("gmc_number") or ""))
-        if row.get("gmc_number") and gmc and not GMC_RE.match(gmc):
-            raise HTTPException(
-                status_code=400,
-                detail=f"GMC number for {personal} must be exactly 7 digits",
-            )
-
-
-def _hr_broadcast_to_doctors(
-    hr_user_id: int,
-    hr_trust: str,
-    doctor_ids: list[int],
-    body: str,
-    attachments: Optional[list[tuple[str, str, bytes]]] = None,
-    *,
-    on_progress: Optional[Callable[[str, str, int, int], None]] = None,
-) -> dict:
-    sent = 0
-    failed: list[dict] = []
-    att = attachments or None
-    total = len(doctor_ids)
-    for idx, did in enumerate(doctor_ids):
-        if on_progress:
-            on_progress(
-                "send",
-                f"Sending message {idx + 1} of {total}…",
-                idx + 1,
-                total,
-            )
-        try:
-            doc = db.user_get_by_id(int(did))
-            if not doc or db.user_is_premium(doc):
-                failed.append({"doctor_user_id": did, "error": "clinician not found"})
-                continue
-            conv = db.conversation_get_or_create(int(did), hr_trust)
-            personalized = _render_welcome_template(body, doc, hr_trust)
-            db.message_send_body(int(conv["id"]), int(hr_user_id), personalized, attachments=att)
-            sent += 1
-        except Exception as e:
-            failed.append({"doctor_user_id": did, "error": str(e)})
-    return {"sent": sent, "failed": failed}
-
-
-def _hr_broadcast_stream(
-    hr_user_id: int,
-    hr_trust: str,
-    doctor_ids: list[int],
-    body: str,
-    attachments: Optional[list[tuple[str, str, bytes]]] = None,
-) -> Iterator[str]:
-    total = len(doctor_ids)
-    yield _ndjson_progress_line(
-        "prepare",
-        f"Preparing to message {total} clinician{'s' if total != 1 else ''}…",
-        0,
-        total,
-    )
-    sent = 0
-    failed: list[dict] = []
-    att = attachments or None
-    for idx, did in enumerate(doctor_ids):
-        yield _ndjson_progress_line(
-            "send",
-            f"Sending message {idx + 1} of {total}…",
-            idx + 1,
-            total,
-        )
-        try:
-            doc = db.user_get_by_id(int(did))
-            if not doc or db.user_is_premium(doc):
-                failed.append({"doctor_user_id": did, "error": "clinician not found"})
-                continue
-            conv = db.conversation_get_or_create(int(did), hr_trust)
-            personalized = _render_welcome_template(body, doc, hr_trust)
-            db.message_send_body(int(conv["id"]), int(hr_user_id), personalized, attachments=att)
-            sent += 1
-        except Exception as e:
-            failed.append({"doctor_user_id": did, "error": str(e)})
-    yield _ndjson_complete_line({"sent": sent, "failed": failed})
-
-
-def _hr_process_pending_welcomes(user_id: int) -> int:
-    """
-    Send queued cohort welcome message(s) once the clinician profile is complete.
-    One message per HR trust; uses profile display name when set.
-    Returns number of trust-level welcomes sent.
-    """
-    doc = db.user_get_by_id(int(user_id))
-    if not doc or db.user_is_premium(doc) or not _profile_is_complete(doc):
-        return 0
-    pending = db.cohort_pending_welcomes_for_user(int(user_id))
-    if not pending:
-        return 0
-    by_trust: dict[str, dict] = {}
-    for row in pending:
-        key = (row.get("hr_trust") or "").strip().lower()
-        if key and key not in by_trust:
-            by_trust[key] = row
-    sent = 0
-    cohort_ids: list[int] = []
-    for row in pending:
-        cohort_ids.append(int(row["cohort_id"]))
-    for row in by_trust.values():
-        trust = row["hr_trust"]
-        try:
-            text = _cohort_welcome_message(doc, trust, int(row["cohort_id"]))
-            conv = db.conversation_get_or_create(int(user_id), trust)
-            db.message_send_body(
-                int(conv["id"]), int(row["created_by_user_id"]), text
-            )
-            sent += 1
-        except Exception:
-            pass
-    if cohort_ids:
-        db.cohort_mark_welcome_sent_for_user(int(user_id), cohort_ids)
-    return sent
-
-
-def _hr_after_cohort_welcome_queue(user_ids: list[int]) -> dict:
-    """Try to send queued welcomes immediately; count those still waiting on profile."""
-    welcome_sent = 0
-    welcome_queued = 0
-    seen: set[int] = set()
-    for raw_id in user_ids:
-        if raw_id is None:
-            continue
-        uid = int(raw_id)
-        if uid in seen:
-            continue
-        seen.add(uid)
-        welcome_sent += _hr_process_pending_welcomes(uid)
-        if db.cohort_pending_welcomes_for_user(uid):
-            welcome_queued += 1
-    return {"welcome_sent": welcome_sent, "welcome_queued": welcome_queued}
-
-
-def _hr_welcome_send_stream(
-    cohort_id: int,
-    trust: str,
-    hr: dict,
-    user_ids: list[int],
-) -> Iterator[str]:
-    unique: list[int] = []
-    seen: set[int] = set()
-    for raw_id in user_ids:
-        if raw_id is None:
-            continue
-        uid = int(raw_id)
-        if uid in seen:
-            continue
-        seen.add(uid)
-        unique.append(uid)
-    total = len(unique)
-    yield _ndjson_progress_line(
-        "prepare",
-        f"Preparing welcome message{'s' if total != 1 else ''} for {total} clinician{'s' if total != 1 else ''}…",
-        0,
-        total,
-    )
-    welcome_sent = 0
-    welcome_queued = 0
-    for idx, uid in enumerate(unique):
-        yield _ndjson_progress_line(
-            "welcome",
-            f"Sending welcome {idx + 1} of {total}…",
-            idx + 1,
-            total,
-        )
-        welcome_sent += _hr_process_pending_welcomes(uid)
-        if db.cohort_pending_welcomes_for_user(uid):
-            welcome_queued += 1
-    cohort = db.cohort_get(cohort_id, trust)
-    meta = _welcome_template_meta(cohort or {}, hr) if cohort else {}
-    yield _ndjson_complete_line(
-        {
-            "cohort": {**cohort, **meta} if cohort else None,
-            "welcome_sent": welcome_sent,
-            "welcome_queued": welcome_queued,
-        }
-    )
-
-
-def _cohort_provision_stream(
-    cohort_id: int,
-    trust: str,
-    members: list[dict],
-    hr: dict,
-    reserved: set[str],
-    *,
-    queue_welcome: bool,
-    prepare_message: str,
-) -> Iterator[str]:
-    from . import trust_packs
-
-    if not db.cohort_get(cohort_id, trust):
-        raise HTTPException(status_code=404, detail="Cohort not found")
-    processable = db.cohort_processable_members(members)
-    total = len(processable)
-    default_trust = trust_packs.trust_display_name(trust) or None
-    yield _ndjson_progress_line("prepare", prepare_message, 0, total)
-    results: list[dict] = []
-    hr_user_id = int(hr["id"])
-    for idx, row in enumerate(processable):
-        yield _ndjson_progress_line(
-            "provision",
-            f"Adding clinician {idx + 1} of {total}…",
-            idx + 1,
-            total,
-        )
-        results.append(
-            db.cohort_add_single_member(
-                cohort_id,
-                row,
-                hr_user_id=hr_user_id,
-                reserved_emails=reserved,
-                queue_welcome=queue_welcome,
-                default_trust=default_trust,
-            )
-        )
-    user_ids = _cohort_member_user_ids_from_results(results)
-    welcome_summary = _welcome_review_summary(user_ids)
-    cohort = db.cohort_get(cohort_id, trust)
-    meta = _welcome_template_meta(cohort or {}, hr) if cohort else {}
-    payload = {
-        "results": results,
-        "cohort": {**cohort, **meta} if cohort else None,
-        "summary": {
-            "created": sum(1 for r in results if r.get("status") == "created"),
-            "existing": sum(1 for r in results if r.get("status") == "existing"),
-            "failed": sum(1 for r in results if r.get("status") == "failed"),
-            **welcome_summary,
-        },
-    }
-    yield _ndjson_complete_line(payload)
-
-
-def _cohort_create_stream(
-    trust: str,
-    name: str,
-    members: list[dict],
-    hr: dict,
-    reserved: set[str],
-) -> Iterator[str]:
-    yield _ndjson_progress_line("prepare", f'Creating cohort “{name}”…', 0, 1)
-    cohort_id = db.cohort_create(trust, name, int(hr["id"]))
-    yield from _cohort_provision_stream(
-        cohort_id,
-        trust,
-        members,
-        hr,
-        reserved,
-        queue_welcome=True,
-        prepare_message=f"Provisioning accounts for “{name}”…",
-    )
-
-
-def _cohort_member_user_ids_from_results(results: list[dict]) -> list[int]:
-    ids: list[int] = []
-    seen: set[int] = set()
-    for row in results:
-        if row.get("status") not in ("created", "existing"):
-            continue
-        raw = row.get("user_id")
-        if raw is None:
-            continue
-        uid = int(raw)
-        if uid in seen:
-            continue
-        seen.add(uid)
-        ids.append(uid)
-    return ids
-
-
-def _welcome_review_summary(user_ids: list[int]) -> dict:
-    n = len(user_ids)
-    if not n:
-        return {"welcome_awaiting_review": 0}
-    return {"welcome_awaiting_review": n}
-
-
-@router.get("/hr/cohorts")
-def hr_cohorts_list(request: Request):
-    hr = require_premium_user(request)
-    trust = _hr_trust_required(hr)
-    db.ensure_default_cohort(trust, int(hr["id"]))
-    return {"cohorts": db.cohort_list_for_trust(trust)}
-
-
-@router.post("/hr/cohorts")
-async def hr_cohorts_create(request: Request):
-    hr = require_premium_user(request)
-    trust = _hr_trust_required(hr)
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON")
-    if not isinstance(body, dict):
-        raise HTTPException(status_code=400, detail="Invalid JSON")
-    name = str(body.get("name") or "").strip()
-    if not name:
-        raise HTTPException(status_code=400, detail="Cohort name is required")
-    if db.is_default_cohort_name(name) and db.cohort_get_by_name(trust, name):
-        raise HTTPException(
-            status_code=400,
-            detail='A default "All Doctors" cohort already exists. Open it to add clinicians.',
-        )
-    members = _parse_cohort_members(body)
-    _validate_cohort_members(members)
-    stream = bool(body.get("stream"))
-    reserved = _cohort_reserved_emails()
-
-    if stream:
-        return StreamingResponse(
-            _ndjson_stream_wrap(
-                _cohort_create_stream(trust, name, members, hr, reserved)
-            ),
-            media_type="application/x-ndjson",
-            headers=NDJSON_STREAM_HEADERS,
-        )
-
-    cohort_id = db.cohort_create(trust, name, int(hr["id"]))
-    results = db.cohort_add_members(
-        cohort_id,
-        trust,
-        members,
-        int(hr["id"]),
-        reserved,
-        queue_welcome=True,
-    )
-    user_ids = _cohort_member_user_ids_from_results(results)
-    welcome_summary = _welcome_review_summary(user_ids)
-
-    created = sum(1 for r in results if r.get("status") == "created")
-    existing = sum(1 for r in results if r.get("status") == "existing")
-    failed = sum(1 for r in results if r.get("status") == "failed")
-
-    cohort = db.cohort_get(cohort_id, trust)
-    meta = _welcome_template_meta(cohort or {}, hr) if cohort else {}
-    return {
-        "cohort": {**cohort, **meta} if cohort else None,
-        "results": results,
-        "summary": {
-            "created": created,
-            "existing": existing,
-            "failed": failed,
-            **welcome_summary,
-        },
-    }
-
-
-@router.delete("/hr/cohorts/{cohort_id}")
-def hr_cohorts_delete(request: Request, cohort_id: int):
-    hr = require_premium_user(request)
-    trust = _hr_trust_required(hr)
-    cohort = db.cohort_get(int(cohort_id), trust)
-    if not cohort:
-        raise HTTPException(status_code=404, detail="Cohort not found")
-    if db.is_default_cohort_name(cohort.get("name")):
-        raise HTTPException(
-            status_code=400,
-            detail='The default "All Doctors" cohort cannot be deleted. Add clinicians to it instead.',
-        )
-    if not db.cohort_delete(int(cohort_id), trust):
-        raise HTTPException(status_code=404, detail="Cohort not found")
-    return {"ok": True, "deleted_cohort_id": int(cohort_id)}
-
-
-@router.get("/hr/cohorts/{cohort_id}")
-def hr_cohorts_detail(request: Request, cohort_id: int):
-    hr = require_premium_user(request)
-    trust = _hr_trust_required(hr)
-    cohort = db.cohort_get(int(cohort_id), trust)
-    if not cohort:
-        raise HTTPException(status_code=404, detail="Cohort not found")
-    members = db.cohort_members_list(int(cohort_id), trust)
-    meta = _welcome_template_meta(cohort, hr)
-    return {
-        "cohort": {**cohort, **meta},
-        "members": members,
-    }
-
-
-@router.patch("/hr/cohorts/{cohort_id}")
-async def hr_cohorts_patch(request: Request, cohort_id: int):
-    hr = require_premium_user(request)
-    trust = _hr_trust_required(hr)
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON")
-    if not isinstance(body, dict):
-        raise HTTPException(status_code=400, detail="Invalid JSON")
-    if "welcome_message_template" not in body:
-        raise HTTPException(status_code=400, detail="No fields to update")
-    tmpl = _normalize_welcome_template(body.get("welcome_message_template"))
-    cohort = db.cohort_set_welcome_template(int(cohort_id), trust, tmpl)
-    if not cohort:
-        raise HTTPException(status_code=404, detail="Cohort not found")
-    meta = _welcome_template_meta(cohort, hr)
-    return {"cohort": {**cohort, **meta}}
-
-
-@router.patch("/hr/cohorts/{cohort_id}/members/{doctor_user_id}")
-async def hr_cohort_member_update(
-    request: Request, cohort_id: int, doctor_user_id: int
-):
-    hr = require_premium_user(request)
-    trust = _hr_trust_required(hr)
-    if not db.cohort_get(int(cohort_id), trust):
-        raise HTTPException(status_code=404, detail="Cohort not found")
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON")
-    if not isinstance(body, dict):
-        raise HTTPException(status_code=400, detail="Invalid JSON")
-    display_name = body.get("display_name") if "display_name" in body else None
-    gmc_raw = body.get("gmc_number") if "gmc_number" in body else None
-    if gmc_raw is not None:
-        gmc = _normalize_gmc(str(gmc_raw or ""))
-        if str(gmc_raw).strip() and gmc and not GMC_RE.match(gmc):
-            raise HTTPException(
-                status_code=400,
-                detail="GMC number must be exactly 7 digits",
-            )
-    member = db.cohort_member_update_profile(
-        int(cohort_id),
-        int(doctor_user_id),
-        trust,
-        display_name=display_name if "display_name" in body else None,
-        gmc_number=gmc_raw if "gmc_number" in body else None,
-    )
-    if not member:
-        raise HTTPException(status_code=404, detail="Member not found")
-    return {"member": member}
-
-
-@router.delete("/hr/cohorts/{cohort_id}/members/{doctor_user_id}")
-def hr_cohort_member_remove(request: Request, cohort_id: int, doctor_user_id: int):
-    hr = require_premium_user(request)
-    trust = _hr_trust_required(hr)
-    if not db.cohort_member_remove(int(cohort_id), int(doctor_user_id), trust):
-        raise HTTPException(status_code=404, detail="Member not found")
-    return {"ok": True, "removed_user_id": int(doctor_user_id)}
-
-
-@router.post("/hr/cohorts/{cohort_id}/members")
-async def hr_cohorts_add_members(request: Request, cohort_id: int):
-    hr = require_premium_user(request)
-    trust = _hr_trust_required(hr)
-    if not db.cohort_get(int(cohort_id), trust):
-        raise HTTPException(status_code=404, detail="Cohort not found")
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON")
-    if not isinstance(body, dict):
-        raise HTTPException(status_code=400, detail="Invalid JSON")
-    members = _parse_cohort_members(body)
-    _validate_cohort_members(members)
-    stream = bool(body.get("stream"))
-    reserved = _cohort_reserved_emails()
-    cid = int(cohort_id)
-
-    if stream:
-        cohort = db.cohort_get(cid, trust) or {}
-        cname = cohort.get("name") or f"Cohort {cid}"
-        return StreamingResponse(
-            _ndjson_stream_wrap(
-                _cohort_provision_stream(
-                    cid,
-                    trust,
-                    members,
-                    hr,
-                    reserved,
-                    queue_welcome=True,
-                    prepare_message=f'Adding clinicians to “{cname}”…',
-                )
-            ),
-            media_type="application/x-ndjson",
-            headers=NDJSON_STREAM_HEADERS,
-        )
-
-    results = db.cohort_add_members(
-        cid,
-        trust,
-        members,
-        int(hr["id"]),
-        reserved,
-        queue_welcome=True,
-    )
-    user_ids = _cohort_member_user_ids_from_results(results)
-    welcome_summary = _welcome_review_summary(user_ids)
-
-    cohort = db.cohort_get(cid, trust)
-    meta = _welcome_template_meta(cohort or {}, hr) if cohort else {}
-
-    return {
-        "results": results,
-        "cohort": {**cohort, **meta} if cohort else None,
-        "summary": {
-            "created": sum(1 for r in results if r.get("status") == "created"),
-            "existing": sum(1 for r in results if r.get("status") == "existing"),
-            "failed": sum(1 for r in results if r.get("status") == "failed"),
-            **welcome_summary,
-        },
-    }
-
-
-@router.post("/hr/cohorts/{cohort_id}/welcome/send")
-async def hr_cohorts_welcome_send(request: Request, cohort_id: int):
-    """Send welcome message(s) after HR review (profile-complete now; others stay queued)."""
-    hr = require_premium_user(request)
-    trust = _hr_trust_required(hr)
-    if not db.cohort_get(int(cohort_id), trust):
-        raise HTTPException(status_code=404, detail="Cohort not found")
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON")
-    if not isinstance(body, dict):
-        raise HTTPException(status_code=400, detail="Invalid JSON")
-    user_ids = _parse_doctor_user_ids(body.get("doctor_user_ids"))
-    if not user_ids:
-        raise HTTPException(status_code=400, detail="doctor_user_ids is required")
-    if len(user_ids) > MAX_HR_COHORT_LINES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Too many recipients (maximum {MAX_HR_COHORT_LINES})",
-        )
-    if "welcome_message_template" in body:
-        tmpl = _normalize_welcome_template(body.get("welcome_message_template"))
-        db.cohort_set_welcome_template(int(cohort_id), trust, tmpl)
-    stream = bool(body.get("stream"))
-    cid = int(cohort_id)
-    if stream:
-        return StreamingResponse(
-            _ndjson_stream_wrap(_hr_welcome_send_stream(cid, trust, hr, user_ids)),
-            media_type="application/x-ndjson",
-            headers=NDJSON_STREAM_HEADERS,
-        )
-    welcome_summary = _hr_after_cohort_welcome_queue(user_ids)
-    cohort = db.cohort_get(cid, trust)
-    meta = _welcome_template_meta(cohort or {}, hr) if cohort else {}
-    return {
-        "cohort": {**cohort, **meta} if cohort else None,
-        **welcome_summary,
-    }
-
-
-@router.post("/hr/cohorts/{cohort_id}/welcome/skip")
-async def hr_cohorts_welcome_skip(request: Request, cohort_id: int):
-    """Do not send a welcome message to these newly added members."""
-    hr = require_premium_user(request)
-    trust = _hr_trust_required(hr)
-    if not db.cohort_get(int(cohort_id), trust):
-        raise HTTPException(status_code=404, detail="Cohort not found")
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON")
-    if not isinstance(body, dict):
-        raise HTTPException(status_code=400, detail="Invalid JSON")
-    user_ids = _parse_doctor_user_ids(body.get("doctor_user_ids"))
-    if not user_ids:
-        raise HTTPException(status_code=400, detail="doctor_user_ids is required")
-    skipped = db.cohort_skip_welcome_for_users(int(cohort_id), trust, user_ids)
-    return {"skipped": skipped, "doctor_user_ids": user_ids}
-
-
-@router.get("/hr/cohorts/{cohort_id}/pending-verification")
-def hr_cohort_pending_verification(request: Request, cohort_id: int):
-    """Cohort members who still have training awaiting HR verification at this trust."""
-    hr = require_premium_user(request)
-    trust = _hr_trust_required(hr)
-    if not db.cohort_get(int(cohort_id), trust):
-        raise HTTPException(status_code=404, detail="Cohort not found")
-    members = db.cohort_members_pending_verification(int(cohort_id), trust)
-    return {"members": members, "count": len(members)}
-
-
-async def _cohort_message_payload(request: Request) -> tuple[str, list[tuple[str, str, bytes]], list[int]]:
-    """Parse cohort broadcast body; optional doctor_user_ids limits recipients."""
-    ct = (request.headers.get("content-type") or "").lower()
-    subset: list[int] = []
-    if "multipart/form-data" in ct:
-        form = await request.form()
-        subset = _parse_doctor_user_ids(form.get("doctor_user_ids"))
-        text = str(form.get("body") or "").strip()
-        attachments: list[tuple[str, str, bytes]] = []
-        for uf in form.getlist("files"):
-            if not hasattr(uf, "read"):
-                continue
-            raw = await uf.read()
-            name = (getattr(uf, "filename", None) or "attachment").strip()
-            mime = _hr_evidence_content_type(getattr(uf, "content_type", None), name)
-            if not mime:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Unsupported file type for {name}. Use PDF or image (JPEG, PNG, WebP).",
-                )
-            if len(raw) > MAX_MESSAGE_ATTACHMENT_BYTES:
-                raise HTTPException(
-                    status_code=413,
-                    detail=f"File too large (max 5 MB): {name}",
-                )
-            attachments.append((name, mime, raw))
-        if len(attachments) > MAX_MESSAGE_ATTACHMENTS:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Maximum {MAX_MESSAGE_ATTACHMENTS} attachments per message.",
-            )
-        return text, attachments, subset
-    try:
-        raw = await request.json()
-    except Exception:
-        raw = {}
-    if not isinstance(raw, dict):
-        raw = {}
-    subset = _parse_doctor_user_ids(raw.get("doctor_user_ids"))
-    return str(raw.get("body") or "").strip(), [], subset
-
-
-@router.post("/hr/cohorts/{cohort_id}/message")
-async def hr_cohorts_message(
-    request: Request,
-    cohort_id: int,
-    stream: bool = Query(False),
-):
-    hr = require_premium_user(request)
-    trust = _hr_trust_required(hr)
-    if not db.cohort_get(int(cohort_id), trust):
-        raise HTTPException(status_code=404, detail="Cohort not found")
-    text, attachments, subset_ids = await _cohort_message_payload(request)
-    _require_message_content(text, attachments)
-    doctor_ids = db.cohort_member_user_ids(int(cohort_id), trust)
-    if not doctor_ids:
-        raise HTTPException(status_code=400, detail="Cohort has no members")
-    if subset_ids:
-        member_set = set(doctor_ids)
-        doctor_ids = [d for d in subset_ids if d in member_set]
-        if not doctor_ids:
-            raise HTTPException(
-                status_code=400,
-                detail="No selected recipients are members of this cohort",
-            )
-    if len(doctor_ids) > MAX_HR_COHORT_LINES:
-        raise HTTPException(status_code=400, detail="Cohort is too large to message in one request")
-    if stream:
-        return StreamingResponse(
-            _ndjson_stream_wrap(
-                _hr_broadcast_stream(
-                    int(hr["id"]),
-                    trust,
-                    doctor_ids,
-                    text,
-                    attachments=attachments or None,
-                )
-            ),
-            media_type="application/x-ndjson",
-            headers=NDJSON_STREAM_HEADERS,
-        )
-    return _hr_broadcast_to_doctors(
-        int(hr["id"]), trust, doctor_ids, text, attachments=attachments or None
-    )
