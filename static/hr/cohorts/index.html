@@ -231,48 +231,12 @@
 
         <h3 class="hr-cohort-actions-title">Actions</h3>
         <div class="hr-segment" role="tablist" aria-label="Cohort actions">
-          <button type="button" class="active" id="tabCohortMessage" role="tab" aria-selected="true" aria-controls="panelCohortMessage" data-tab="message">Message cohort</button>
-          <button type="button" id="tabCohortAdd" role="tab" aria-selected="false" aria-controls="panelCohortAdd" data-tab="add">Add clinicians</button>
+          <button type="button" class="active" id="tabCohortAdd" role="tab" aria-selected="true" aria-controls="panelCohortAdd" data-tab="add">Add clinicians</button>
+          <button type="button" id="tabCohortMessage" role="tab" aria-selected="false" aria-controls="panelCohortMessage" data-tab="message">Message cohort</button>
           <button type="button" id="tabCohortCompliance" role="tab" aria-selected="false" aria-controls="panelCohortCompliance" data-tab="compliance">Compliance</button>
         </div>
 
-        <div id="panelCohortMessage" class="hr-bulk-panel hr-cohort-panel" role="tabpanel" aria-labelledby="tabCohortMessage">
-          <div id="cohortPendingVerifyBanner" class="cohort-pending-verify-banner" hidden role="region" aria-label="Pending HR verification">
-            <p class="cohort-pending-verify-banner__text" id="cohortPendingVerifyText"></p>
-            <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnCohortNudgePending">Nudge with in-app message</button>
-          </div>
-          <p class="nhsuk-hint" style="margin-top:0;max-width:none;" id="messageHint">Each person receives the same text in a <strong>separate private</strong> conversation.</p>
-          <button type="button" class="hr-cohort-recipient-toggle" id="btnToggleRecipients" aria-expanded="false" aria-controls="recipientList">View recipients</button>
-          <ul id="recipientList" class="hr-cohort-recipient-list" hidden aria-label="Recipients"></ul>
-          <form id="formCohortMessage" class="hr-bulk-form" novalidate>
-            <div class="nhsuk-form-group" id="cohortMsgGroup">
-              <label class="nhsuk-label" for="cohortMsgBody">Your message</label>
-              <span class="nhsuk-hint nhsuk-hint--secondary">Optional text and/or attachments (PDF or images). Each clinician gets their own private thread.</span>
-              <div class="msg-compose msg-compose--cohort">
-                <div class="msg-compose-row">
-                  <input type="file" id="cohortMsgFileInput" multiple hidden
-                    accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp">
-                  <button type="button" class="msg-attach-btn" id="btnCohortAttach" aria-label="Attach file" title="Attach file">
-                    <svg class="msg-attach-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                      <path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
-                    </svg>
-                  </button>
-                  <div class="msg-compose-field">
-                    <textarea class="nhsuk-textarea" id="cohortMsgBody" rows="5" placeholder="Write your message to everyone in this cohort…" aria-label="Message to cohort"></textarea>
-                  </div>
-                </div>
-                <ul class="msg-pending-files" id="cohortMsgPendingFiles" hidden aria-label="Files to send"></ul>
-              </div>
-            </div>
-            <div class="hr-cohort-panel-actions">
-              <button type="submit" class="nhsuk-button" id="btnSendCohort">Send to clinicians</button>
-            </div>
-          </form>
-          <div id="msgProvisionResult" class="hr-provision-viz-wrap" aria-live="polite"></div>
-          <p id="msgStatus" class="hr-cohort-status-msg hr-muted" role="status" aria-live="polite" hidden></p>
-        </div>
-
-        <div id="panelCohortAdd" class="hr-bulk-panel hr-cohort-panel" role="tabpanel" aria-labelledby="tabCohortAdd" hidden>
+        <div id="panelCohortAdd" class="hr-bulk-panel hr-cohort-panel" role="tabpanel" aria-labelledby="tabCohortAdd">
           <div class="cohort-wizard-head">
             <h2>Add clinicians</h2>
             <p class="cohort-wizard-step-label" id="addWizardStepLabel" aria-live="polite">Step 1 of 2 — How to add clinicians</p>
@@ -362,6 +326,42 @@
           </form>
           <div id="addProvisionResult" class="hr-provision-viz-wrap" aria-live="polite"></div>
           <p id="addStatus" class="hr-cohort-status-msg hr-muted" role="status" aria-live="polite" hidden></p>
+        </div>
+
+        <div id="panelCohortMessage" class="hr-bulk-panel hr-cohort-panel" role="tabpanel" aria-labelledby="tabCohortMessage" hidden>
+          <div id="cohortPendingVerifyBanner" class="cohort-pending-verify-banner" hidden role="region" aria-label="Pending HR verification">
+            <p class="cohort-pending-verify-banner__text" id="cohortPendingVerifyText"></p>
+            <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnCohortNudgePending">Nudge with in-app message</button>
+          </div>
+          <p class="nhsuk-hint" style="margin-top:0;max-width:none;" id="messageHint">Each person receives the same text in a <strong>separate private</strong> conversation.</p>
+          <button type="button" class="hr-cohort-recipient-toggle" id="btnToggleRecipients" aria-expanded="false" aria-controls="recipientList">View recipients</button>
+          <ul id="recipientList" class="hr-cohort-recipient-list" hidden aria-label="Recipients"></ul>
+          <form id="formCohortMessage" class="hr-bulk-form" novalidate>
+            <div class="nhsuk-form-group" id="cohortMsgGroup">
+              <label class="nhsuk-label" for="cohortMsgBody">Your message</label>
+              <span class="nhsuk-hint nhsuk-hint--secondary">Optional text and/or attachments (PDF or images). Each clinician gets their own private thread.</span>
+              <div class="msg-compose msg-compose--cohort">
+                <div class="msg-compose-row">
+                  <input type="file" id="cohortMsgFileInput" multiple hidden
+                    accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp">
+                  <button type="button" class="msg-attach-btn" id="btnCohortAttach" aria-label="Attach file" title="Attach file">
+                    <svg class="msg-attach-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                      <path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+                    </svg>
+                  </button>
+                  <div class="msg-compose-field">
+                    <textarea class="nhsuk-textarea" id="cohortMsgBody" rows="5" placeholder="Write your message to everyone in this cohort…" aria-label="Message to cohort"></textarea>
+                  </div>
+                </div>
+                <ul class="msg-pending-files" id="cohortMsgPendingFiles" hidden aria-label="Files to send"></ul>
+              </div>
+            </div>
+            <div class="hr-cohort-panel-actions">
+              <button type="submit" class="nhsuk-button" id="btnSendCohort">Send to clinicians</button>
+            </div>
+          </form>
+          <div id="msgProvisionResult" class="hr-provision-viz-wrap" aria-live="polite"></div>
+          <p id="msgStatus" class="hr-cohort-status-msg hr-muted" role="status" aria-live="polite" hidden></p>
         </div>
 
         <div id="panelCohortCompliance" class="hr-bulk-panel hr-cohort-panel" role="tabpanel" aria-labelledby="tabCohortCompliance" hidden>
@@ -1412,7 +1412,7 @@
           var v = localStorage.getItem(LS_COHORT_TAB);
           if (v === 'add' || v === 'compliance' || v === 'message') return v;
         } catch (e) { /* ignore */ }
-        return 'message';
+        return 'add';
       }
 
       function saveStoredCohortTab(tab) {
