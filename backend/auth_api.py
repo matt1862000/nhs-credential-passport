@@ -1837,6 +1837,56 @@ def _bulk_training_roster_from_cohorts(
     return lines, cohort_label
 
 
+def _bulk_training_roster_from_doctor_ids(
+    doctor_ids: list[int], trust: str
+) -> tuple[list[str], str]:
+    """Resolve searched clinician ids to roster lines (email or GMC)."""
+    if not doctor_ids:
+        return [], ""
+    if len(doctor_ids) > MAX_HR_BULK_LINES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many clinicians selected ({len(doctor_ids)}). Maximum is {MAX_HR_BULK_LINES}.",
+        )
+    seen_lines: set[str] = set()
+    lines: list[str] = []
+    names: list[str] = []
+    with sqlite3.connect(db.DB_PATH) as conn:
+        for uid in doctor_ids:
+            doc = db.user_get_by_id(int(uid))
+            if not doc or int(doc.get("premium") or 0):
+                raise HTTPException(status_code=404, detail=f"Clinician not found: {uid}")
+            if not db._doctor_visible_to_trust(int(uid), trust, conn):
+                label = (doc.get("display_name") or doc.get("email") or str(uid)).strip()
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{label} has not permitted your trust to view their records.",
+                )
+            line = (doc.get("email") or "").strip()
+            if not line and doc.get("gmc_number"):
+                line = str(doc.get("gmc_number") or "").strip()
+            if not line:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Clinician {uid} has no email or GMC number on file.",
+                )
+            key = line.lower()
+            if key in seen_lines:
+                continue
+            seen_lines.add(key)
+            lines.append(line)
+            names.append((doc.get("display_name") or doc.get("email") or str(uid)).strip())
+    if not lines:
+        raise HTTPException(status_code=400, detail="No clinicians selected.")
+    if len(names) == 1:
+        cohort_label = names[0]
+    elif len(names) <= 3:
+        cohort_label = ", ".join(names)
+    else:
+        cohort_label = f"{len(names)} clinicians"
+    return lines, cohort_label
+
+
 async def _hr_bulk_training_build_context(
     request: Request,
     hr: dict,
@@ -1845,6 +1895,7 @@ async def _hr_bulk_training_build_context(
     roster: Optional[UploadFile],
     cohort_id: Optional[str],
     cohort_ids: Optional[str],
+    doctor_user_ids: Optional[str],
     evidence: Optional[UploadFile],
     module_code: str,
     completion_date: str,
@@ -1855,8 +1906,11 @@ async def _hr_bulk_training_build_context(
     lines: list[str] = []
     cohort_label = ""
     parsed_cohort_ids = _parse_bulk_cohort_ids(cohort_id, cohort_ids)
+    parsed_doctor_ids = _parse_doctor_user_ids(doctor_user_ids)
     if parsed_cohort_ids:
         lines, cohort_label = _bulk_training_roster_from_cohorts(parsed_cohort_ids, trust)
+    elif parsed_doctor_ids:
+        lines, cohort_label = _bulk_training_roster_from_doctor_ids(parsed_doctor_ids, trust)
     elif roster and (roster.filename or "").strip():
         raw_roster = await roster.read()
         if len(raw_roster) > MAX_HR_BULK_ROSTER_BYTES:
@@ -1870,7 +1924,7 @@ async def _hr_bulk_training_build_context(
     else:
         raise HTTPException(
             status_code=400,
-            detail="Select a cohort or upload a roster file.",
+            detail="Select a cohort, search for clinicians, or upload a roster file.",
         )
     if len(lines) > MAX_HR_BULK_LINES:
         raise HTTPException(
@@ -1924,6 +1978,7 @@ async def hr_bulk_training(
     roster: Optional[UploadFile] = File(None),
     cohort_id: Optional[str] = Form(None),
     cohort_ids: Optional[str] = Form(None),
+    doctor_user_ids: Optional[str] = Form(None),
     evidence: Optional[UploadFile] = File(None),
     module_code: str = Form(...),
     completion_date: str = Form(...),
@@ -1956,6 +2011,7 @@ async def hr_bulk_training(
         roster=roster,
         cohort_id=cohort_id,
         cohort_ids=cohort_ids,
+        doctor_user_ids=doctor_user_ids,
         evidence=evidence,
         module_code=module_code,
         completion_date=completion_date,

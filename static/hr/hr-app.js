@@ -1335,7 +1335,111 @@
 
         var bulkWizardStep = 1;
         var bulkRecipientMethod = null;
+        var bulkSelectedDoctors = [];
+        var BULK_MAX_DOCTORS = 50;
         var _bulkCohortsCache = [];
+
+        function bulkDoctorById(id) {
+          return bulkSelectedDoctors.find(function (d) { return Number(d.id) === Number(id); }) || null;
+        }
+
+        function renderBulkDoctorList() {
+          var list = document.getElementById('bulkDoctorList');
+          var empty = document.getElementById('bulkDoctorListEmpty');
+          var countEl = document.getElementById('bulkDoctorCount');
+          var n = bulkSelectedDoctors.length;
+          if (countEl) {
+            countEl.textContent = n + ' clinician' + (n === 1 ? '' : 's');
+            countEl.classList.toggle('cohort-email-count--empty', n === 0);
+          }
+          if (empty) empty.hidden = n > 0;
+          if (!list) return;
+          if (!n) {
+            list.innerHTML = '';
+            return;
+          }
+          list.innerHTML = bulkSelectedDoctors.map(function (d) {
+            var meta = [];
+            if (d.gmc_number) meta.push('GMC ' + esc(d.gmc_number));
+            if (d.email) meta.push(esc(d.email));
+            return (
+              '<div class="cohort-email-row">' +
+              '<div class="cohort-email-row__body">' +
+              '<span class="cohort-email-row__addr">' + esc(d.name || d.email || 'Clinician') + '</span>' +
+              (meta.length ? '<span class="cohort-email-row__sub">' + meta.join(' · ') + '</span>' : '') +
+              '</div>' +
+              '<button type="button" class="cohort-email-row__remove" data-bulk-remove-doctor="' + esc(String(d.id)) + '" aria-label="Remove ' + esc(d.name || d.email || 'clinician') + '">&times;</button>' +
+              '</div>'
+            );
+          }).join('');
+        }
+
+        function addBulkDoctor(doc) {
+          if (!doc || doc.id == null) return false;
+          if (bulkDoctorById(doc.id)) return false;
+          if (bulkSelectedDoctors.length >= BULK_MAX_DOCTORS) {
+            setBulkStepError('bulkStepDoctorsError', 'Maximum ' + BULK_MAX_DOCTORS + ' clinicians per upload.');
+            return false;
+          }
+          bulkSelectedDoctors.push({
+            id: Number(doc.id),
+            name: (doc.display_name || doc.email || 'Clinician').trim(),
+            email: doc.email || '',
+            gmc_number: doc.gmc_number || '',
+          });
+          setBulkStepError('bulkStepDoctorsError', '');
+          renderBulkDoctorList();
+          if (bulkWizardStep === 4) updateBulkRecipientsSummary();
+          return true;
+        }
+
+        function removeBulkDoctor(id) {
+          bulkSelectedDoctors = bulkSelectedDoctors.filter(function (d) {
+            return Number(d.id) !== Number(id);
+          });
+          renderBulkDoctorList();
+          if (bulkWizardStep === 4) updateBulkRecipientsSummary();
+        }
+
+        async function runBulkDoctorSearch() {
+          var inp = document.getElementById('bulkDoctorSearchInput');
+          var statusEl = document.getElementById('bulkDoctorSearchStatus');
+          var resultsEl = document.getElementById('bulkDoctorSearchResults');
+          var q = (inp ? inp.value : '').trim();
+          if (!q) {
+            if (statusEl) statusEl.textContent = 'Enter a name, email, or GMC number.';
+            return;
+          }
+          if (statusEl) statusEl.textContent = 'Searching…';
+          if (resultsEl) resultsEl.innerHTML = '';
+          try {
+            var data = await apiJson('/api/hr/doctors/search?q=' + encodeURIComponent(q) + '&limit=30');
+            var results = data.results || [];
+            if (statusEl) statusEl.textContent = results.length ? '' : 'No matching clinicians found.';
+            if (!results.length || !resultsEl) return;
+            resultsEl.innerHTML = results.map(function (doc) {
+              var name = esc(doc.display_name || doc.email || '—');
+              var meta = [];
+              if (doc.gmc_number) meta.push('GMC ' + esc(doc.gmc_number));
+              if (doc.email) meta.push(esc(doc.email));
+              if (doc.current_trust) meta.push(esc(doc.current_trust_display || doc.current_trust));
+              var already = bulkDoctorById(doc.id);
+              return (
+                '<div class="hr-search-result-row">' +
+                '<div><div class="hr-search-result-name">' + name + '</div>' +
+                (meta.length ? '<div class="hr-search-result-meta">' + meta.join(' &middot; ') + '</div>' : '') +
+                '</div>' +
+                '<div class="hr-search-result-actions">' +
+                (already
+                  ? '<span class="hr-muted">Added</span>'
+                  : ('<button type="button" class="nhsuk-button hr-btn-small" data-bulk-add-doctor-id="' + esc(String(doc.id)) + '" data-bulk-add-doctor-name="' + esc(doc.display_name || doc.email || '') + '" data-bulk-add-doctor-email="' + esc(doc.email || '') + '" data-bulk-add-doctor-gmc="' + esc(doc.gmc_number || '') + '">Add</button>')) +
+                '</div></div>'
+              );
+            }).join('');
+          } catch (err) {
+            if (statusEl) statusEl.textContent = err.message || 'Search failed.';
+          }
+        }
 
         function getSelectedBulkCohortIds() {
           var list = document.getElementById('bulkCohortList');
@@ -1442,9 +1546,25 @@
             var r = document.getElementById('bulkRoster');
             var name = r && r.files && r.files[0] ? r.files[0].name : '';
             el.textContent = name ? 'Recipients: roster file “' + name + '”.' : 'Recipients: roster file.';
+          } else if (bulkRecipientMethod === 'search') {
+            if (!bulkSelectedDoctors.length) {
+              el.textContent = '';
+              return;
+            }
+            var docNames = bulkSelectedDoctors.map(function (d) { return d.name; });
+            var docLabel = docNames.length === 1
+              ? '“' + docNames[0] + '”'
+              : docNames.length + ' clinicians (“' + docNames.slice(0, 3).join('”, “') + (docNames.length > 3 ? '”, …' : '') + '”)';
+            el.textContent = 'Recipients: ' + docLabel + '.';
           } else {
             el.textContent = '';
           }
+        }
+
+        function bulkStepTwoLabel() {
+          if (bulkRecipientMethod === 'cohort') return 'Step 2 of 4 — Choose cohorts';
+          if (bulkRecipientMethod === 'search') return 'Step 2 of 4 — Choose clinicians';
+          return 'Step 2 of 4 — Upload roster';
         }
 
         function setBulkWizardStep(step) {
@@ -1452,19 +1572,18 @@
           var label = document.getElementById('bulkWizardStepLabel');
           if (label) {
             if (step === 1) label.textContent = 'Step 1 of 4 — Who receives this?';
-            else if (step === 2) {
-              label.textContent = bulkRecipientMethod === 'cohort'
-                ? 'Step 2 of 4 — Choose cohorts'
-                : 'Step 2 of 4 — Upload roster';
-            } else if (step === 3) label.textContent = 'Step 3 of 4 — Class evidence';
+            else if (step === 2) label.textContent = bulkStepTwoLabel();
+            else if (step === 3) label.textContent = 'Step 3 of 4 — Class evidence';
             else label.textContent = 'Step 4 of 4 — Training details';
           }
           var stepMethod = document.getElementById('bulkStepMethod');
+          var stepDoctors = document.getElementById('bulkStepDoctors');
           var stepCohort = document.getElementById('bulkStepCohort');
           var stepRoster = document.getElementById('bulkStepRoster');
           var stepEvidence = document.getElementById('bulkStepEvidence');
           var stepDetails = document.getElementById('bulkStepDetails');
           if (stepMethod) stepMethod.hidden = step !== 1;
+          if (stepDoctors) stepDoctors.hidden = !(step === 2 && bulkRecipientMethod === 'search');
           if (stepCohort) stepCohort.hidden = !(step === 2 && bulkRecipientMethod === 'cohort');
           if (stepRoster) stepRoster.hidden = !(step === 2 && bulkRecipientMethod === 'roster');
           if (stepEvidence) stepEvidence.hidden = step !== 3;
@@ -1477,6 +1596,7 @@
         function resetBulkWizard() {
           bulkWizardStep = 1;
           bulkRecipientMethod = null;
+          bulkSelectedDoctors = [];
           clearBulkCohortSelection();
           var defaultCohort = _bulkCohortsCache.find(function (c) {
             return c.is_default || String(c.name || '').trim().toLowerCase() === 'all doctors'
@@ -1496,7 +1616,15 @@
           var en = document.getElementById('bulkEvidenceName');
           if (rn) rn.textContent = 'No file chosen';
           if (en) en.textContent = 'No file chosen';
+          var bulkSearchInp = document.getElementById('bulkDoctorSearchInput');
+          var bulkSearchResults = document.getElementById('bulkDoctorSearchResults');
+          var bulkSearchStatus = document.getElementById('bulkDoctorSearchStatus');
+          if (bulkSearchInp) bulkSearchInp.value = '';
+          if (bulkSearchResults) bulkSearchResults.innerHTML = '';
+          if (bulkSearchStatus) bulkSearchStatus.textContent = '';
+          renderBulkDoctorList();
           setBulkStepError('bulkStepCohortError', '');
+          setBulkStepError('bulkStepDoctorsError', '');
           setBulkStepError('bulkStepRosterError', '');
           setBulkStepError('bulkStepEvidenceError', '');
           syncBulkRosterPicker();
@@ -1522,6 +1650,9 @@
               if (bulkRecipientMethod === 'cohort') {
                 var list = document.getElementById('bulkCohortList');
                 if (list) list.focus();
+              } else if (bulkRecipientMethod === 'search') {
+                var searchInp = document.getElementById('bulkDoctorSearchInput');
+                if (searchInp) searchInp.focus();
               } else {
                 syncBulkRosterPicker();
                 var r = document.getElementById('bulkRoster');
@@ -1529,6 +1660,62 @@
               }
             });
           });
+
+          var bulkDoctorSearchBtn = document.getElementById('bulkDoctorSearchBtn');
+          if (bulkDoctorSearchBtn) {
+            bulkDoctorSearchBtn.addEventListener('click', function () { void runBulkDoctorSearch(); });
+          }
+          var bulkDoctorSearchInput = document.getElementById('bulkDoctorSearchInput');
+          if (bulkDoctorSearchInput) {
+            bulkDoctorSearchInput.addEventListener('keydown', function (e) {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                void runBulkDoctorSearch();
+              }
+            });
+          }
+          var bulkDoctorSearchResults = document.getElementById('bulkDoctorSearchResults');
+          if (bulkDoctorSearchResults) {
+            bulkDoctorSearchResults.addEventListener('click', function (e) {
+              var addBtn = e.target && e.target.closest('[data-bulk-add-doctor-id]');
+              if (!addBtn) return;
+              var added = addBulkDoctor({
+                id: addBtn.getAttribute('data-bulk-add-doctor-id'),
+                display_name: addBtn.getAttribute('data-bulk-add-doctor-name'),
+                email: addBtn.getAttribute('data-bulk-add-doctor-email'),
+                gmc_number: addBtn.getAttribute('data-bulk-add-doctor-gmc'),
+              });
+              if (added) {
+                addBtn.outerHTML = '<span class="hr-muted">Added</span>';
+              }
+            });
+          }
+          var bulkDoctorList = document.getElementById('bulkDoctorList');
+          if (bulkDoctorList) {
+            bulkDoctorList.addEventListener('click', function (e) {
+              var rm = e.target && e.target.closest('[data-bulk-remove-doctor]');
+              if (!rm) return;
+              removeBulkDoctor(rm.getAttribute('data-bulk-remove-doctor'));
+            });
+          }
+
+          var bulkNextDoctors = document.getElementById('bulkNextDoctors');
+          if (bulkNextDoctors) {
+            bulkNextDoctors.addEventListener('click', function () {
+              if (!bulkSelectedDoctors.length) {
+                setBulkStepError('bulkStepDoctorsError', 'Add at least one clinician to continue.');
+                var searchInp = document.getElementById('bulkDoctorSearchInput');
+                if (searchInp) searchInp.focus();
+                return;
+              }
+              setBulkStepError('bulkStepDoctorsError', '');
+              setBulkWizardStep(3);
+              var ev = document.getElementById('bulkEvidence');
+              if (ev) ev.focus();
+            });
+          }
+          var bulkBackDoctors = document.getElementById('bulkBackDoctors');
+          if (bulkBackDoctors) bulkBackDoctors.addEventListener('click', function () { setBulkWizardStep(1); });
 
           var bulkCohortListEl = document.getElementById('bulkCohortList');
           if (bulkCohortListEl) {
@@ -1590,10 +1777,13 @@
           var bulkBackEvidence = document.getElementById('bulkBackEvidence');
           if (bulkBackEvidence) {
             bulkBackEvidence.addEventListener('click', function () {
-              setBulkWizardStep(bulkRecipientMethod === 'cohort' ? 2 : 2);
+              setBulkWizardStep(2);
               if (bulkRecipientMethod === 'cohort') {
                 var listBack = document.getElementById('bulkCohortList');
                 if (listBack) listBack.focus();
+              } else if (bulkRecipientMethod === 'search') {
+                var searchBack = document.getElementById('bulkDoctorSearchInput');
+                if (searchBack) searchBack.focus();
               } else {
                 syncBulkRosterPicker();
               }
@@ -1837,9 +2027,10 @@
             var selectedCohortIds = bulkRecipientMethod === 'cohort' ? getSelectedBulkCohortIds() : [];
             var hasCohorts = selectedCohortIds.length > 0;
             var hasRoster = bulkRecipientMethod === 'roster' && rosterEl && rosterEl.files && rosterEl.files[0];
-            if (!hasCohorts && !hasRoster) {
-              setBulkStatusMessage('Complete the recipient steps: select at least one cohort or upload a roster file.', 'error');
-              setBulkWizardStep(bulkRecipientMethod === 'roster' ? 2 : 2);
+            var hasDoctors = bulkRecipientMethod === 'search' && bulkSelectedDoctors.length > 0;
+            if (!hasCohorts && !hasRoster && !hasDoctors) {
+              setBulkStatusMessage('Complete the recipient steps: search for clinicians, select a cohort, or upload a roster file.', 'error');
+              setBulkWizardStep(2);
               return;
             }
             bulkSubmitBusy = true;
@@ -1859,6 +2050,10 @@
               }
             } else if (hasRoster) {
               bulkStartMsg = 'Uploading roster file…';
+            } else if (hasDoctors) {
+              bulkStartMsg = bulkSelectedDoctors.length === 1
+                ? 'Issuing training for ' + bulkSelectedDoctors[0].name + '…'
+                : 'Issuing training for ' + bulkSelectedDoctors.length + ' clinicians…';
             }
             if (batchViz()) batchViz().showLoading(bulkVizEl, bulkStartMsg);
             if (wrap) wrap.hidden = true;
@@ -1867,6 +2062,8 @@
               var fd = new FormData();
               if (hasCohorts) {
                 fd.append('cohort_ids', JSON.stringify(selectedCohortIds));
+              } else if (hasDoctors) {
+                fd.append('doctor_user_ids', JSON.stringify(bulkSelectedDoctors.map(function (d) { return d.id; })));
               } else if (hasRoster) {
                 fd.append('roster', rosterEl.files[0]);
               }
