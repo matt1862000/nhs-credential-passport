@@ -33,6 +33,10 @@
   var _verifyPreviewHideTimer = null;
   var _verifyPreviewShowTimer = null;
   var _verifyPreviewWired = false;
+  var _alertsPreviewCache = { at: 0, items: [] };
+  var _alertsPreviewHideTimer = null;
+  var _alertsPreviewShowTimer = null;
+  var _alertsPreviewWired = false;
   var _unreadPollTimer = null;
   var _unreadPollWired = false;
   var _lastUnreadCount = 0;
@@ -73,7 +77,14 @@
       '" class="nhsuk-topnav__messages nhsuk-topnav__alerts" id="navAlertsLink" aria-label="Alerts">' +
       BELL_SVG +
       '<span class="nhsuk-topnav__msg-badge" id="navAlertsBadge" hidden aria-live="polite"></span>' +
-      '</a>'
+      '</a>' +
+      '<div class="nhsuk-topnav__msg-preview" id="navAlertsPreview" role="tooltip" hidden>' +
+      '<p class="nhsuk-topnav__msg-preview-head">Alerts</p>' +
+      '<div class="nhsuk-topnav__msg-preview-body" id="navAlertsPreviewBody"></div>' +
+      '<a class="nhsuk-topnav__msg-preview-foot" id="navAlertsPreviewAll" href="' +
+      ALERTS_PATH +
+      '">View all alerts</a>' +
+      '</div>'
     );
   }
 
@@ -131,6 +142,34 @@
     var msgWrap = document.getElementById('navMessagesWrap');
     if (msgWrap) tools.insertBefore(wrap, msgWrap);
     else tools.appendChild(wrap);
+  }
+
+  function ensureAlertsPreviewUi() {
+    ensureAccountToolsLayout();
+    var link = document.getElementById('navAlertsLink');
+    if (!link || document.getElementById('navAlertsPreview')) return;
+
+    var wrap = document.getElementById('navAlertsWrap');
+    if (!wrap || wrap !== link.parentNode) {
+      wrap = document.createElement('div');
+      wrap.className = 'nhsuk-topnav__alerts-wrap';
+      wrap.id = 'navAlertsWrap';
+      link.parentNode.insertBefore(wrap, link);
+      wrap.appendChild(link);
+    }
+
+    var pop = document.createElement('div');
+    pop.id = 'navAlertsPreview';
+    pop.className = 'nhsuk-topnav__msg-preview';
+    pop.hidden = true;
+    pop.setAttribute('role', 'tooltip');
+    pop.innerHTML =
+      '<p class="nhsuk-topnav__msg-preview-head">Alerts</p>' +
+      '<div class="nhsuk-topnav__msg-preview-body" id="navAlertsPreviewBody"></div>' +
+      '<a class="nhsuk-topnav__msg-preview-foot" id="navAlertsPreviewAll" href="' +
+      ALERTS_PATH +
+      '">View all alerts</a>';
+    wrap.appendChild(pop);
   }
 
   function ensureVerifyBellUi() {
@@ -403,6 +442,138 @@
         }
       });
       pop.addEventListener('mouseleave', scheduleHidePreview);
+    }
+  }
+
+  function renderAlertsPreviewBody(items) {
+    var body = document.getElementById('navAlertsPreviewBody');
+    var foot = document.getElementById('navAlertsPreviewAll');
+    if (foot) foot.href = ALERTS_PATH;
+    if (!body) return;
+
+    if (!items.length) {
+      body.innerHTML = '<p class="nhsuk-topnav__msg-preview-empty">No alerts yet.</p>';
+      return;
+    }
+
+    body.innerHTML = items
+      .slice(0, PREVIEW_LIMIT)
+      .map(function (it) {
+        var unread = !!it.unread;
+        var href = it.link_path || ALERTS_PATH;
+        var time = fmtPreviewTime(it.created_at);
+        var meta = time ? '<span class="nhsuk-topnav__msg-preview-time">' + esc(time) + '</span>' : '';
+        return (
+          '<a class="nhsuk-topnav__msg-preview-item' +
+          (unread ? ' nhsuk-topnav__msg-preview-item--unread' : '') +
+          '" href="' +
+          esc(href) +
+          '">' +
+          '<span class="nhsuk-topnav__msg-preview-title">' +
+          esc(it.title || 'Alert') +
+          '</span>' +
+          '<span class="nhsuk-topnav__msg-preview-snippet">' +
+          esc(previewSnippet(it.body)) +
+          '</span>' +
+          meta +
+          '</a>'
+        );
+      })
+      .join('');
+  }
+
+  async function fetchAlertsPreviewItems() {
+    var now = Date.now();
+    if (now - _alertsPreviewCache.at < PREVIEW_CACHE_MS) {
+      return _alertsPreviewCache.items;
+    }
+    var res = await fetch('/api/me/notifications?limit=' + String(PREVIEW_LIMIT), { credentials: 'include' });
+    if (!res.ok) throw new Error('Could not load alerts');
+    var data = await res.json();
+    var items = data.items || [];
+    _alertsPreviewCache = { at: now, items: items };
+    return items;
+  }
+
+  function hideAlertsPreview() {
+    var pop = document.getElementById('navAlertsPreview');
+    var link = document.getElementById('navAlertsLink');
+    if (pop) pop.hidden = true;
+    if (link) link.removeAttribute('aria-describedby');
+  }
+
+  function showAlertsPreview() {
+    var pop = document.getElementById('navAlertsPreview');
+    var link = document.getElementById('navAlertsLink');
+    if (!pop) return;
+    pop.hidden = false;
+    if (link) link.setAttribute('aria-describedby', 'navAlertsPreview');
+  }
+
+  async function openAlertsPreview() {
+    if (!global.NHSAuth || !NHSAuth.user) return;
+    var body = document.getElementById('navAlertsPreviewBody');
+    if (body) {
+      body.innerHTML = '<p class="nhsuk-topnav__msg-preview-loading">Loading…</p>';
+    }
+    showAlertsPreview();
+    try {
+      var items = await fetchAlertsPreviewItems();
+      renderAlertsPreviewBody(items);
+    } catch (e) {
+      if (body) {
+        body.innerHTML = '<p class="nhsuk-topnav__msg-preview-empty">Could not load preview.</p>';
+      }
+    }
+  }
+
+  function scheduleShowAlertsPreview() {
+    if (_alertsPreviewHideTimer) {
+      clearTimeout(_alertsPreviewHideTimer);
+      _alertsPreviewHideTimer = null;
+    }
+    if (_alertsPreviewShowTimer) clearTimeout(_alertsPreviewShowTimer);
+    _alertsPreviewShowTimer = setTimeout(function () {
+      _alertsPreviewShowTimer = null;
+      void openAlertsPreview();
+    }, 280);
+  }
+
+  function scheduleHideAlertsPreview() {
+    if (_alertsPreviewShowTimer) {
+      clearTimeout(_alertsPreviewShowTimer);
+      _alertsPreviewShowTimer = null;
+    }
+    if (_alertsPreviewHideTimer) clearTimeout(_alertsPreviewHideTimer);
+    _alertsPreviewHideTimer = setTimeout(function () {
+      _alertsPreviewHideTimer = null;
+      hideAlertsPreview();
+    }, 220);
+  }
+
+  function wireAlertsPreview() {
+    if (_alertsPreviewWired) return;
+    var wrap = document.getElementById('navAlertsWrap');
+    if (!wrap) return;
+    _alertsPreviewWired = true;
+
+    wrap.addEventListener('mouseenter', scheduleShowAlertsPreview);
+    wrap.addEventListener('mouseleave', scheduleHideAlertsPreview);
+    wrap.addEventListener('focusin', scheduleShowAlertsPreview);
+    wrap.addEventListener('focusout', function (e) {
+      if (wrap.contains(e.relatedTarget)) return;
+      scheduleHideAlertsPreview();
+    });
+
+    var pop = document.getElementById('navAlertsPreview');
+    if (pop) {
+      pop.addEventListener('mouseenter', function () {
+        if (_alertsPreviewHideTimer) {
+          clearTimeout(_alertsPreviewHideTimer);
+          _alertsPreviewHideTimer = null;
+        }
+      });
+      pop.addEventListener('mouseleave', scheduleHideAlertsPreview);
     }
   }
 
@@ -705,6 +876,10 @@
       if (!r.ok) return;
       var data = await r.json();
       var n = Number(data.count || 0);
+      var hadUnread = link.classList.contains('nhsuk-topnav__messages--unread');
+      if ((n > 0) !== hadUnread) {
+        setBellGraphic(link, n > 0);
+      }
       var badge = document.getElementById('navAlertsBadge');
       if (n > 0) {
         link.classList.add('nhsuk-topnav__messages--unread');
@@ -726,6 +901,7 @@
   }
 
   function notifyAlertsChanged() {
+    _alertsPreviewCache.at = 0;
     document.dispatchEvent(new CustomEvent('nhs-alerts-changed'));
     void refreshAlertsBadge();
   }
@@ -781,6 +957,7 @@
       void refreshVerifyBadge();
     });
     document.addEventListener('nhs-alerts-changed', function () {
+      _alertsPreviewCache.at = 0;
       void refreshAlertsBadge();
     });
 
@@ -803,8 +980,10 @@
     ensureAccountToolsLayout();
     ensureVerifyBellUi();
     ensureAlertsBellUi();
+    ensureAlertsPreviewUi();
     ensureMessagesPreviewUi();
     wireVerifyPreview();
+    wireAlertsPreview();
     wireMessagesPreview();
     wireUnreadPolling();
 
@@ -852,7 +1031,9 @@
   function init() {
     upgradeLegacyNavEmail();
     ensureAlertsBellUi();
+    ensureAlertsPreviewUi();
     ensureMessagesPreviewUi();
+    wireAlertsPreview();
     wireMessagesPreview();
     wireUnreadPolling();
     void refreshNavAccount();

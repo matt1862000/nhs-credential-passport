@@ -890,7 +890,8 @@ a:hover {
     overflow: visible;
   }
   .nhsuk-topnav__messages-wrap .nhsuk-topnav__msg-preview,
-  .nhsuk-topnav__verify-wrap .nhsuk-topnav__msg-preview {
+  .nhsuk-topnav__verify-wrap .nhsuk-topnav__msg-preview,
+  .nhsuk-topnav__alerts-wrap .nhsuk-topnav__msg-preview {
     position: fixed;
     z-index: 300;
     top: calc(0.5rem + 3.25rem + 0.45rem);
