@@ -2369,6 +2369,26 @@ def me_trust_move_candidates(request: Request):
     }
 
 
+@router.get("/me/trust-move/checklist-preview")
+def me_trust_move_checklist_preview(request: Request, pack_id: str = ""):
+    """Destination trust pack vs wallet using shared compliance matcher."""
+    uid = require_user_id(request)
+    u = db.user_get_by_id(uid)
+    if not u:
+        raise HTTPException(status_code=401, detail="Not signed in")
+    pid = (pack_id or "").strip()
+    if not pid:
+        raise HTTPException(status_code=400, detail="pack_id is required")
+    preview = compliance_snapshot.pack_checklist_preview(
+        uid,
+        pid,
+        leaving_trust=(u.get("current_trust") or "").strip() or None,
+    )
+    if not preview:
+        raise HTTPException(status_code=404, detail="No checklist pack for this trust yet.")
+    return {"preview": preview}
+
+
 @router.post("/me/trust-move/complete")
 async def me_trust_move_complete(request: Request):
     """

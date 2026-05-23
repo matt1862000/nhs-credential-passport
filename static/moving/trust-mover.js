@@ -1,20 +1,15 @@
 /**
  * Trust move planner: loads /static/trust/config/{configId}.json and renders
- * mandatory list and wallet gap analysis.
- *
- * "I am leaving" = NHSAuth.user.current_trust (set by page boot).
- * "I am joining" = ODS autocomplete; ODS code mapped to config ID below.
+ * mandatory list + wallet gap analysis via /api/me/trust-move/checklist-preview
+ * (same matcher as trust requirements / compliance snapshot).
  */
 (function () {
-  var STORAGE_KEY = 'nhs_credentials';
-
   /**
    * Map ODS code → config file ID (filename without .json).
    * Add a row here whenever a new trust config is added to /static/trust/config/.
    */
   var ODS_TO_CONFIG_ID = {
     RHQ: 'sheffield',
-    TAH: 'sheffield-health-partnership',
     RXE: 'rotherham',
   };
 
@@ -24,8 +19,6 @@
    */
   var NAME_TO_CONFIG_ID = [
     { substr: 'sheffield teaching', id: 'sheffield' },
-    { substr: 'sheffield health', id: 'sheffield-health-partnership' },
-    { substr: 'social care nhs foundation', id: 'sheffield-health-partnership' },
     { substr: 'rotherham doncaster', id: 'rotherham' },
     { substr: 'south humber nhs foundation', id: 'rotherham' },
   ];
@@ -44,7 +37,6 @@
   function getJoinConfigId() {
     var ods = (document.getElementById('joinTrustOds') || {}).value || '';
     if (ods && ODS_TO_CONFIG_ID[ods.toUpperCase()]) return ODS_TO_CONFIG_ID[ods.toUpperCase()];
-    /* fall back to name substring match */
     var name = ((document.getElementById('joinTrustInput') || {}).value || '').trim().toLowerCase();
     for (var i = 0; i < NAME_TO_CONFIG_ID.length; i++) {
       if (name.indexOf(NAME_TO_CONFIG_ID[i].substr) !== -1) return NAME_TO_CONFIG_ID[i].id;
@@ -52,167 +44,62 @@
     return null;
   }
 
-  function parseJwtPayload(jwt) {
-    if (!jwt || typeof jwt !== 'string' || jwt.split('.').length < 2) return null;
-    try {
-      var b64 = jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
-      var pad = b64.length % 4 ? '='.repeat(4 - (b64.length % 4)) : '';
-      var json = decodeURIComponent(escape(atob(b64 + pad)));
-      return JSON.parse(json);
-    } catch (e) {
-      return null;
-    }
+  function tagClassForTopic(t) {
+    if (t.status === 'expiring') return 'tag-partial';
+    var label = t.status_label || '';
+    if (label.indexOf('Met') === 0) return 'tag-met';
+    if (label === 'Needs review') return 'tag-partial';
+    return 'tag-miss';
   }
 
-  function credMatchesRequirement(req, pl) {
-    if (!pl) return false;
-    var code = (pl.module_code || '').toLowerCase();
-    var name = (pl.module_name || '').toLowerCase();
-    var codes = req.match_module_codes || [];
-    for (var i = 0; i < codes.length; i++) {
-      if (code === String(codes[i]).toLowerCase()) return true;
+  function statusLabelForTopic(t) {
+    if (t.status === 'expiring' && (t.status_label || '').indexOf('Met') === 0) {
+      return (t.status_label || 'Met') + ' (expiring soon)';
     }
-    var subs = req.match_name_substrings || [];
-    for (var j = 0; j < subs.length; j++) {
-      if (name.indexOf(String(subs[j]).toLowerCase()) !== -1) return true;
-    }
-    return false;
+    return t.status_label || t.status || '—';
   }
 
-  function credMatchesPartialOnly(req, pl) {
-    if (!pl || credMatchesRequirement(req, pl)) return false;
-    var codes = req.partial_module_codes || [];
-    var code = (pl.module_code || '').toLowerCase();
-    var k;
-    for (k = 0; k < codes.length; k++) {
-      if (code === String(codes[k]).toLowerCase()) return true;
-    }
-    var ps = req.partial_name_substrings || [];
-    var name = (pl.module_name || '').toLowerCase();
-    for (k = 0; k < ps.length; k++) {
-      if (name.indexOf(String(ps[k]).toLowerCase()) !== -1) return true;
-    }
-    return false;
+  function portabilityBadge(portability) {
+    if (portability === 'portable') return ' <span class="moving-tag tag-met" style="font-size:0.6875rem;">Portable</span>';
+    if (portability === 'local_only') return ' <span class="moving-tag tag-miss" style="font-size:0.6875rem;">Local only</span>';
+    if (portability === 'conditional') return ' <span class="moving-tag tag-partial" style="font-size:0.6875rem;">Conditional</span>';
+    return '';
   }
 
-  function isFromLeavingTrust(pl, rec) {
-    if (!rec || !pl) return false;
-    var n = ((pl.issuing_trust_name || '') + ' ' + (pl.issuing_trust_ods || '')).toLowerCase();
-    var hints = rec.issuer_trust_name_hints || [];
-    for (var i = 0; i < hints.length; i++) {
-      if (n.indexOf(String(hints[i]).toLowerCase()) !== -1) return true;
-    }
-    var ods = rec.issuer_ods_hints || [];
-    for (var j = 0; j < ods.length; j++) {
-      if ((pl.issuing_trust_ods || '').toUpperCase() === String(ods[j]).toUpperCase()) return true;
-    }
-    return false;
-  }
-
-  function todayIso() {
-    var d = new Date();
-    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
-  }
-
-  function notExpired(expiryDate) {
-    if (!expiryDate) return true;
-    return String(expiryDate) >= todayIso();
-  }
-
-  function walletTable(reqs, recHints) {
-    var list = [];
-    try {
-      list = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
-    } catch (e) {
-      list = [];
-    }
-    var payloads = [];
-    list.forEach(function (c) {
-      var pl = parseJwtPayload(c.jwt);
-      if (pl) payloads.push({ wallet: c, pl: pl });
-    });
-
-    if (payloads.length === 0) {
+  function renderWalletPreview(preview) {
+    var topics = (preview && preview.topics) || [];
+    if (!topics.length) {
       return '<p class="moving-muted"><a href="/static/staff/#list">Add or import your previously completed training</a>.</p>';
     }
 
-    var nMet = 0;
-    var nPartial = 0;
-    var nGap = 0;
-    var body = (reqs || [])
-      .map(function (req) {
-        var best = null;
-        var bestPl = null;
-        var i;
-        for (i = 0; i < payloads.length; i++) {
-          if (credMatchesRequirement(req, payloads[i].pl)) {
-            best = payloads[i].wallet;
-            bestPl = payloads[i].pl;
-            break;
-          }
+    var sum = preview.summary || {};
+    var body = topics
+      .map(function (t) {
+        var tagClass = tagClassForTopic(t);
+        var label = statusLabelForTopic(t);
+        var detail = t.reason ? escapeHtml(t.reason) : '—';
+        if (t.module_name) {
+          detail +=
+            '<br><span class="moving-muted">' +
+            escapeHtml(t.module_name) +
+            (t.expiry_date ? ' · expires ' + escapeHtml(t.expiry_date) : '') +
+            (t.hr_status ? ' · HR ' + escapeHtml(t.hr_status) : '') +
+            '</span>';
         }
-        var status, tagClass, detail;
-        if (best && bestPl) {
-          var ok = notExpired(best.expiry_date);
-          var fromLeave = recHints && isFromLeavingTrust(bestPl, recHints);
-          if (!ok) {
-            status = 'Expired on your list';
-            tagClass = 'tag-miss';
-            nGap++;
-          } else {
-            status = fromLeave ? 'Met (issuer matches "leaving" trust hints)' : 'Met';
-            tagClass = 'tag-met';
-            nMet++;
-          }
-          detail =
-            escapeHtml(bestPl.module_name || '') +
-            ' · expires ' +
-            escapeHtml(best.expiry_date || '') +
-            ' · issued by ' +
-            escapeHtml(bestPl.issuing_trust_name || bestPl.issuing_trust_ods || '?');
-        } else {
-          var part = null;
-          var partPl = null;
-          for (i = 0; i < payloads.length; i++) {
-            if (credMatchesPartialOnly(req, payloads[i].pl)) {
-              part = payloads[i].wallet;
-              partPl = payloads[i].pl;
-              break;
-            }
-          }
-          if (part && partPl) {
-            var okp = notExpired(part.expiry_date);
-            if (!okp) {
-              status = 'Partial — expired';
-              tagClass = 'tag-miss';
-              nGap++;
-            } else {
-              status = 'Partial — related / lower level only';
-              tagClass = 'tag-partial';
-              nPartial++;
-            }
-            var hint = req.partial_hint ? escapeHtml(req.partial_hint) + ' ' : '';
-            detail =
-              hint +
-              '<span class="moving-muted">' +
-              escapeHtml(partPl.module_name || '') +
-              ' · expires ' +
-              escapeHtml(part.expiry_date || '') +
-              '</span>';
-          } else {
-            status = 'Gap — not in your list';
-            tagClass = 'tag-miss';
-            nGap++;
-            detail = '—';
-          }
+        if (t.confidence_label && t.match_type !== 'none') {
+          detail +=
+            '<br><span class="moving-muted">' +
+            escapeHtml(t.confidence_label.charAt(0).toUpperCase() + t.confidence_label.slice(1)) +
+            ' confidence</span>';
         }
         return (
           '<tr><td>' +
-          escapeHtml(req.label) +
+          escapeHtml(t.topic_name) +
+          portabilityBadge(t.portability) +
           '</td><td><span class="moving-tag ' +
           tagClass +
           '">' +
-          escapeHtml(status) +
+          escapeHtml(label) +
           '</span></td><td>' +
           detail +
           '</td></tr>'
@@ -222,27 +109,27 @@
 
     var summary =
       '<p class="moving-gap-summary" role="status"><strong>Gap analysis (illustrative):</strong> ' +
-      nMet +
+      Number(sum.met || 0) +
       ' met · ' +
-      nPartial +
-      ' partial · ' +
-      nGap +
+      Number(sum.needs_review || 0) +
+      ' need review · ' +
+      Number(sum.gap || 0) +
       ' gap or expired</p>';
+
+    var recNote = preview.recognition_summary
+      ? '<p class="moving-muted">' + escapeHtml(preview.recognition_summary) + '</p>'
+      : '';
 
     return (
       summary +
+      recNote +
       '<table class="moving-table"><thead><tr><th>Required topic (pack)</th><th>Your training list</th><th>Detail</th></tr></thead><tbody>' +
       body +
-      '</tbody></table><p class="moving-muted moving-footnote">Green = plausible match to this pack. Amber = related training that may not meet the stated requirement. Red = missing or expired. Not formal acceptance by your new trust.</p>'
+      '</tbody></table><p class="moving-muted moving-footnote">Green = exact or alias match. Amber = partial match or expiring soon — confirm with HR. Red = missing or expired. Not formal acceptance by your new trust.</p>'
     );
   }
 
-  function getRecognitionHints(cfg) {
-    var map = cfg.recognition_when_joining || {};
-    return map._default || {};
-  }
-
-  function render(cfg) {
+  function render(cfg, preview) {
     var rows = (cfg.mandatory_examples || []).map(function (req) {
       return (
         '<tr><td>' +
@@ -253,10 +140,11 @@
       );
     }).join('');
     document.getElementById('movingMandatoryWrap').innerHTML =
-      '<table class="moving-table"><thead><tr><th>Topic</th><th>Category</th></tr></thead><tbody>' + rows + '</tbody></table>';
+      '<table class="moving-table"><thead><tr><th>Topic</th><th>Category</th></tr></thead><tbody>' +
+      rows +
+      '</tbody></table>';
 
-    var recHints = getRecognitionHints(cfg);
-    document.getElementById('movingWalletWrap').innerHTML = walletTable(cfg.mandatory_examples || [], recHints);
+    document.getElementById('movingWalletWrap').innerHTML = renderWalletPreview(preview);
 
     document.getElementById('movingResults').hidden = false;
     document.getElementById('movingResults').setAttribute('aria-hidden', 'false');
@@ -273,6 +161,20 @@
         cache[configId] = j;
         return j;
       });
+  }
+
+  function loadChecklistPreview(configId) {
+    return fetch(
+      '/api/me/trust-move/checklist-preview?pack_id=' + encodeURIComponent(configId),
+      { credentials: 'include' }
+    ).then(function (r) {
+      if (!r.ok) {
+        return r.json().catch(function () { return {}; }).then(function (data) {
+          throw new Error((data && data.detail) || 'Could not load checklist preview');
+        });
+      }
+      return r.json();
+    });
   }
 
   function isSignedInForPlanner() {
@@ -319,10 +221,10 @@
       btnRefresh.classList.add('is-loading');
       btnRefresh.setAttribute('aria-busy', 'true');
     }
-    loadConfig(configId)
-      .then(function (cfg) {
+    Promise.all([loadConfig(configId), loadChecklistPreview(configId)])
+      .then(function (results) {
         if (seq !== checklistReqSeq) return;
-        render(cfg);
+        render(results[0], results[1].preview);
       })
       .catch(function (err) {
         if (seq !== checklistReqSeq) return;

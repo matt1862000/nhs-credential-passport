@@ -15,6 +15,7 @@ from jose import jwt as jose_jwt
 
 from . import db
 from . import mandatory_matching
+from . import trust_packs
 
 
 def _parse_wallet(raw: str) -> list[dict]:
@@ -106,6 +107,131 @@ def _summary_counts(topic_rows: list[dict]) -> dict[str, int]:
     }
 
 
+def _topic_result_row(
+    t: dict,
+    result: dict[str, Any],
+    verified_map: dict,
+    *,
+    rec_hints: Optional[dict] = None,
+) -> dict[str, Any]:
+    cid = result.get("credential_id")
+    hr_st = _hr_status_for_credential(verified_map, cid)
+    reason = result.get("reason") or ""
+    from_leaving = False
+    cred = result.get("credential")
+    if cred and rec_hints:
+        pl = _cred_payload(cred)
+        if pl and _credential_from_leaving_trust(pl, rec_hints):
+            from_leaving = True
+            if (result.get("status_label") or "").startswith("Met") and "leaving trust" not in reason.lower():
+                reason = f"{reason} Issuer matches your leaving trust."
+    return {
+        "topic_id": t.get("id"),
+        "topic_name": t.get("topic_name"),
+        "category": t.get("category"),
+        "delivery_channel": t.get("delivery_channel"),
+        "resource_url": t.get("resource_url"),
+        "status": result.get("status"),
+        "status_label": result.get("status_label"),
+        "match_type": result.get("match_type"),
+        "confidence_score": result.get("confidence_score"),
+        "confidence_label": result.get("confidence_label"),
+        "reason": reason,
+        "portability": result.get("portability"),
+        "partial_hint": result.get("partial_hint"),
+        "credential_id": cid,
+        "module_name": result.get("module_name"),
+        "expiry_date": result.get("expiry_date"),
+        "expiry_status": result.get("expiry_status"),
+        "hr_status": hr_st,
+        "from_leaving_trust": from_leaving,
+    }
+
+
+def _pack_example_to_topic(ex: dict) -> dict:
+    label = (ex.get("label") or ex.get("id") or "").strip()
+    subs = list(ex.get("match_name_substrings") or [])
+    if label and label not in subs:
+        subs.insert(0, label)
+    return {
+        "topic_name": label,
+        "category": ex.get("category"),
+        "match_hints": {
+            "match_module_codes": ex.get("match_module_codes") or [],
+            "match_name_substrings": subs,
+            "partial_module_codes": ex.get("partial_module_codes") or [],
+            "partial_name_substrings": ex.get("partial_name_substrings") or [],
+            "partial_hint": ex.get("partial_hint"),
+        },
+    }
+
+
+def _recognition_hints_for_leaving(pack: dict, leaving_trust: Optional[str]) -> dict:
+    rec_map = pack.get("recognition_when_joining") or {}
+    leaving = (leaving_trust or "").strip()
+    if leaving:
+        leave_pack = trust_packs.pack_id_for_trust_name(leaving)
+        if leave_pack and leave_pack in rec_map:
+            return rec_map[leave_pack] or {}
+        low = leaving.lower()
+        for key, val in rec_map.items():
+            if str(key).startswith("_"):
+                continue
+            if str(key).lower() in low or low in str(key).lower():
+                return val or {}
+    return rec_map.get("_default") or {}
+
+
+def _credential_from_leaving_trust(pl: dict, rec_hints: dict) -> bool:
+    if not pl or not rec_hints:
+        return False
+    blob = f"{pl.get('issuing_trust_name') or ''} {pl.get('issuing_trust_ods') or ''}".lower()
+    for hint in rec_hints.get("issuer_trust_name_hints") or []:
+        if str(hint).lower() in blob:
+            return True
+    ods = (pl.get("issuing_trust_ods") or "").upper()
+    for hint in rec_hints.get("issuer_ods_hints") or []:
+        if ods == str(hint).upper():
+            return True
+    return False
+
+
+def pack_checklist_preview(
+    doctor_user_id: int,
+    pack_id: str,
+    *,
+    leaving_trust: Optional[str] = None,
+) -> Optional[dict]:
+    """Match destination trust pack mandatory examples against clinician wallet."""
+    pack = trust_packs.load_trust_pack((pack_id or "").strip())
+    if not pack:
+        return None
+    wallet = _parse_wallet(db.user_wallet_get(int(doctor_user_id)))
+    payloads = _wallet_payloads(wallet)
+    verified_map = db.doctor_verified_map(int(doctor_user_id))
+    rec_hints = _recognition_hints_for_leaving(pack, leaving_trust)
+
+    topic_rows: list[dict] = []
+    for ex in pack.get("mandatory_examples") or []:
+        topic = _pack_example_to_topic(ex)
+        result = mandatory_matching.match_topic_to_wallet(topic, payloads)
+        topic_rows.append(_topic_result_row(topic, result, verified_map, rec_hints=rec_hints))
+
+    summary = _summary_counts(topic_rows)
+    summary["total_topics"] = len(topic_rows)
+    rec = _recognition_hints_for_leaving(pack, leaving_trust)
+
+    return {
+        "pack_id": (pack_id or "").strip(),
+        "display_name": pack.get("display_name"),
+        "disclaimer": pack.get("disclaimer"),
+        "leaving_trust": (leaving_trust or "").strip() or None,
+        "recognition_summary": rec.get("summary"),
+        "topics": topic_rows,
+        "summary": summary,
+    }
+
+
 def doctor_compliance_snapshot(doctor_user_id: int, trust_name: str) -> dict:
     """Mandatory topics vs wallet for one clinician at a trust."""
     trust = (trust_name or "").strip()
@@ -117,30 +243,7 @@ def doctor_compliance_snapshot(doctor_user_id: int, trust_name: str) -> dict:
     topic_rows: list[dict] = []
     for t in topics:
         result = mandatory_matching.match_topic_to_wallet(t, payloads)
-        cid = result.get("credential_id")
-        hr_st = _hr_status_for_credential(verified_map, cid)
-        topic_rows.append(
-            {
-                "topic_id": t.get("id"),
-                "topic_name": t.get("topic_name"),
-                "category": t.get("category"),
-                "delivery_channel": t.get("delivery_channel"),
-                "resource_url": t.get("resource_url"),
-                "status": result.get("status"),
-                "status_label": result.get("status_label"),
-                "match_type": result.get("match_type"),
-                "confidence_score": result.get("confidence_score"),
-                "confidence_label": result.get("confidence_label"),
-                "reason": result.get("reason"),
-                "portability": result.get("portability"),
-                "partial_hint": result.get("partial_hint"),
-                "credential_id": cid,
-                "module_name": result.get("module_name"),
-                "expiry_date": result.get("expiry_date"),
-                "expiry_status": result.get("expiry_status"),
-                "hr_status": hr_st,
-            }
-        )
+        topic_rows.append(_topic_result_row(t, result, verified_map))
 
     summary = _summary_counts(topic_rows)
     summary["total_topics"] = len(topics)
