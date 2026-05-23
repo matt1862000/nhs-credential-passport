@@ -498,54 +498,55 @@
       parts.push('</div>');
     }
 
-    parts.push('<div class="nhsuk-topnav__msg-preview-section">');
-    parts.push('<p class="nhsuk-topnav__msg-preview-subhead">Alerts</p>');
-    if (!alertItems.length) {
-      parts.push('<p class="nhsuk-topnav__msg-preview-empty">No alerts yet.</p>');
-    } else {
-      parts.push(
-        alertItems
-          .slice(0, PREVIEW_LIMIT)
-          .map(function (it) {
-            var unread = !!it.unread;
-            var href = it.link_path || ALERTS_PATH;
-            var time = fmtPreviewTime(it.created_at);
-            var meta = time ? '<span class="nhsuk-topnav__msg-preview-time">' + esc(time) + '</span>' : '';
-            return (
-              '<a class="nhsuk-topnav__msg-preview-item' +
-              (unread ? ' nhsuk-topnav__msg-preview-item--unread' : '') +
-              '" href="' +
-              esc(href) +
-              '">' +
-              '<span class="nhsuk-topnav__msg-preview-title">' +
-              esc(it.title || 'Alert') +
-              '</span>' +
-              '<span class="nhsuk-topnav__msg-preview-snippet">' +
-              esc(previewSnippet(it.body)) +
-              '</span>' +
-              meta +
-              '</a>'
-            );
-          })
-          .join('')
-      );
+    if (!isHr) {
+      parts.push('<div class="nhsuk-topnav__msg-preview-section">');
+      parts.push('<p class="nhsuk-topnav__msg-preview-subhead">Alerts</p>');
+      if (!alertItems.length) {
+        parts.push('<p class="nhsuk-topnav__msg-preview-empty">No alerts yet.</p>');
+      } else {
+        parts.push(
+          alertItems
+            .slice(0, PREVIEW_LIMIT)
+            .map(function (it) {
+              var unread = !!it.unread;
+              var href = it.link_path || ALERTS_PATH;
+              var time = fmtPreviewTime(it.created_at);
+              var meta = time ? '<span class="nhsuk-topnav__msg-preview-time">' + esc(time) + '</span>' : '';
+              return (
+                '<a class="nhsuk-topnav__msg-preview-item' +
+                (unread ? ' nhsuk-topnav__msg-preview-item--unread' : '') +
+                '" href="' +
+                esc(href) +
+                '">' +
+                '<span class="nhsuk-topnav__msg-preview-title">' +
+                esc(it.title || 'Alert') +
+                '</span>' +
+                '<span class="nhsuk-topnav__msg-preview-snippet">' +
+                esc(previewSnippet(it.body)) +
+                '</span>' +
+                meta +
+                '</a>'
+              );
+            })
+            .join('')
+        );
+      }
+      parts.push('</div>');
     }
-    parts.push('</div>');
     body.innerHTML = parts.join('');
   }
 
   function renderNotificationsPreviewFeet(isHr) {
     var feet = document.getElementById('navAlertsPreviewFeet');
     if (!feet) return;
-    var html = '';
     if (isHr) {
-      html +=
-        '<a class="nhsuk-topnav__msg-preview-foot" href="' +
-        HR_INBOX_PATH +
-        '">Open verification inbox</a>';
+      feet.innerHTML = '';
+      feet.hidden = true;
+      return;
     }
-    html += '<a class="nhsuk-topnav__msg-preview-foot" href="' + ALERTS_PATH + '">View all alerts</a>';
-    feet.innerHTML = html;
+    feet.hidden = false;
+    feet.innerHTML =
+      '<a class="nhsuk-topnav__msg-preview-foot" href="' + ALERTS_PATH + '">View all alerts</a>';
   }
 
   async function fetchAlertsPreviewItems() {
@@ -595,10 +596,13 @@
     if (body) {
       body.innerHTML = '<p class="nhsuk-topnav__msg-preview-loading">Loading…</p>';
     }
-    if (feet) feet.innerHTML = '';
+    if (feet) {
+      feet.innerHTML = '';
+      if (NHSAuth.user.premium) feet.hidden = true;
+    }
     var isHr = !!NHSAuth.user.premium;
     try {
-      var alertItems = await fetchAlertsPreviewItems();
+      var alertItems = isHr ? [] : await fetchAlertsPreviewItems();
       var verifyGroups = isHr ? await fetchVerifyPreviewGroups() : [];
       renderNotificationsPreviewBody(verifyGroups, alertItems, isHr);
       renderNotificationsPreviewFeet(isHr);
@@ -790,15 +794,18 @@
   async function refreshNotificationsBadge() {
     var link = document.getElementById('navAlertsLink');
     if (!link || !global.NHSAuth || !NHSAuth.user) return;
+    var isHr = !!NHSAuth.user.premium;
     var alertsN = 0;
     var verifyN = 0;
     try {
-      var r = await fetch('/api/me/notifications/unread-count', { credentials: 'include' });
-      if (r.ok) {
-        var data = await r.json();
-        alertsN = Number(data.count || 0);
+      if (!isHr) {
+        var r = await fetch('/api/me/notifications/unread-count', { credentials: 'include' });
+        if (r.ok) {
+          var data = await r.json();
+          alertsN = Number(data.count || 0);
+        }
       }
-      if (NHSAuth.user.premium) {
+      if (isHr) {
         var res = await fetch('/api/hr/shares?limit=200', { credentials: 'include' });
         if (res.ok) {
           var payload = await res.json();
@@ -946,7 +953,10 @@
 
     var alertsLink = document.getElementById('navAlertsLink');
     if (alertsLink) {
-      if (window.location.pathname.indexOf('/static/notifications') === 0) {
+      alertsLink.href = isHr ? HR_INBOX_PATH : ALERTS_PATH;
+      if (isHr && window.location.pathname.indexOf('/static/hr') === 0) {
+        alertsLink.setAttribute('aria-current', 'page');
+      } else if (!isHr && window.location.pathname.indexOf('/static/notifications') === 0) {
         alertsLink.setAttribute('aria-current', 'page');
       } else {
         alertsLink.removeAttribute('aria-current');
