@@ -2422,6 +2422,48 @@
     sel.addEventListener('change', syncCustomModuleTitleField);
     syncCustomModuleTitleField();
 
+    var lastAutoExpiryFromCompletion = '';
+
+    function addOneYearToIsoDate(isoDate) {
+      var s = String(isoDate || '').trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return '';
+      var parts = s.split('-');
+      var d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+      if (isNaN(d.getTime())) return '';
+      d.setFullYear(d.getFullYear() + 1);
+      var y = d.getFullYear();
+      var m = String(d.getMonth() + 1).padStart(2, '0');
+      var day = String(d.getDate()).padStart(2, '0');
+      return y + '-' + m + '-' + day;
+    }
+
+    function syncExpiryFromCompletion() {
+      var compEl = document.getElementById('completion_date');
+      var expEl = document.getElementById('expiry_date');
+      if (!compEl || !expEl) return;
+      var comp = String(compEl.value || '').trim();
+      if (!comp) return;
+      var suggested = addOneYearToIsoDate(comp);
+      if (!suggested) return;
+      var current = String(expEl.value || '').trim();
+      if (!current || current === lastAutoExpiryFromCompletion) {
+        expEl.value = suggested;
+        lastAutoExpiryFromCompletion = suggested;
+      }
+    }
+
+    (function wireCompletionExpiryAutofill() {
+      var compEl = document.getElementById('completion_date');
+      var expEl = document.getElementById('expiry_date');
+      if (!compEl || !expEl) return;
+      compEl.addEventListener('change', syncExpiryFromCompletion);
+      compEl.addEventListener('input', syncExpiryFromCompletion);
+      expEl.addEventListener('input', function () {
+        var val = String(expEl.value || '').trim();
+        if (val !== lastAutoExpiryFromCompletion) lastAutoExpiryFromCompletion = '';
+      });
+    })();
+
     function statusClass(expiryDate, revoked) {
       if (revoked) return 'revoked';
       const exp = new Date(expiryDate);
@@ -2991,6 +3033,7 @@
       if (hid) hid.value = '';
       if (panel) panel.hidden = true;
       if (titleEl) titleEl.value = '';
+      lastAutoExpiryFromCompletion = '';
       syncCustomModuleTitleField();
       var submitBtn = document.querySelector('#addForm button[type="submit"]');
       if (submitBtn) submitBtn.textContent = 'Add training';
@@ -3019,6 +3062,7 @@
       exp.setFullYear(exp.getFullYear() + 1);
       document.getElementById('completion_date').value = comp;
       document.getElementById('expiry_date').value = exp.toISOString().slice(0, 10);
+      lastAutoExpiryFromCompletion = exp.toISOString().slice(0, 10);
       void applyProfileToAddForm();
       document.querySelector('.nhsuk-tabs button[data-tab="add"]').click();
       var submitBtn = document.querySelector('#addForm button[type="submit"]');
@@ -3252,6 +3296,7 @@
         setStored(list);
         clearRenewal();
         e.target.reset();
+        lastAutoExpiryFromCompletion = '';
         syncCustomModuleTitleField();
         lastAutoOdsSuggested = { name: '', ods: '' };
         void applyProfileToAddForm();
