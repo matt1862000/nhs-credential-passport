@@ -1491,6 +1491,34 @@
 
         var searchDoctorItemsCache = [];
         var searchDoctorViewId = '';
+        var searchDoctorViewName = '';
+
+        function confirmDeleteDoctor(name) {
+          var label = (name || '').trim() || 'this clinician';
+          return window.confirm(
+            'Permanently delete ' + label + '?\n\n' +
+            'This removes their DocPass account, all training records, and membership in any cohorts they belong to. This cannot be undone.'
+          );
+        }
+
+        async function deleteDoctorAccount(doctorId, doctorName) {
+          if (!doctorId) return false;
+          if (!confirmDeleteDoctor(doctorName)) return false;
+          try {
+            await apiJson('/api/hr/doctors/' + encodeURIComponent(String(doctorId)), { method: 'DELETE' });
+            return true;
+          } catch (err) {
+            window.alert(err.message || 'Could not delete clinician.');
+            return false;
+          }
+        }
+
+        function hideSearchDoctorDetailActions() {
+          var addTr = document.getElementById('btnSearchDoctorAddTraining');
+          if (addTr) addTr.hidden = true;
+          var delTr = document.getElementById('btnSearchDoctorDelete');
+          if (delTr) delTr.hidden = true;
+        }
 
         var bulkMod = document.getElementById('bulkModule');
         if (bulkMod) fillHrModuleSelect(bulkMod);
@@ -2035,6 +2063,48 @@
                 addBtn.getAttribute('data-add-doctor-id'),
                 addBtn.getAttribute('data-add-doctor-name') || ''
               );
+              return;
+            }
+            var delBtn = e.target && e.target.closest('button[data-delete-doctor-id]');
+            if (delBtn) {
+              e.preventDefault();
+              var delId = delBtn.getAttribute('data-delete-doctor-id');
+              var delName = delBtn.getAttribute('data-delete-doctor-name') || '';
+              var ok = await deleteDoctorAccount(delId, delName);
+              if (!ok) return;
+              var row = delBtn.closest('.hr-search-result-row');
+              if (row) row.remove();
+              var statusEl = document.getElementById('searchStatus');
+              if (statusEl) statusEl.textContent = 'Clinician deleted.';
+              if (searchDoctorViewId && String(searchDoctorViewId) === String(delId)) {
+                searchDoctorViewId = '';
+                searchDoctorViewName = '';
+                hideSearchDoctorDetailActions();
+                show(document.getElementById('searchDoctorView'), false);
+                show(document.getElementById('searchView'), true);
+                if (HR_PAGE === 'search') {
+                  try { window.history.replaceState({}, '', '/static/hr/search.html'); } catch (eHistDel) {}
+                }
+              }
+            }
+          });
+        }
+
+        var btnSearchDoctorDelete = document.getElementById('btnSearchDoctorDelete');
+        if (btnSearchDoctorDelete) {
+          btnSearchDoctorDelete.addEventListener('click', async function () {
+            if (!searchDoctorViewId) return;
+            var ok = await deleteDoctorAccount(searchDoctorViewId, searchDoctorViewName);
+            if (!ok) return;
+            searchDoctorViewId = '';
+            searchDoctorViewName = '';
+            hideSearchDoctorDetailActions();
+            show(document.getElementById('searchDoctorView'), false);
+            show(document.getElementById('searchView'), true);
+            var statusEl = document.getElementById('searchStatus');
+            if (statusEl) statusEl.textContent = 'Clinician deleted.';
+            if (HR_PAGE === 'search') {
+              try { window.history.replaceState({}, '', '/static/hr/search.html'); } catch (eHistDel2) {}
             }
           });
         }
@@ -2296,8 +2366,7 @@
         var btnBackToSearch = document.getElementById('btnBackToSearch');
         if (btnBackToSearch) {
           btnBackToSearch.addEventListener('click', function () {
-            var addTr = document.getElementById('btnSearchDoctorAddTraining');
-            if (addTr) addTr.hidden = true;
+            hideSearchDoctorDetailActions();
             show(document.getElementById('searchDoctorView'), false);
             show(document.getElementById('searchView'), true);
             if (HR_PAGE === 'search') {
@@ -2336,6 +2405,7 @@
                   '<div class="hr-search-result-actions">' +
                   '<button type="button" class="nhsuk-button hr-btn-small" data-search-doctor-id="' + esc(String(doc.id)) + '" data-search-doctor-name="' + esc(doc.display_name || doc.email || '') + '">View training</button>' +
                   '<button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" data-add-doctor-id="' + esc(String(doc.id)) + '" data-add-doctor-name="' + esc(doc.display_name || doc.email || '') + '">Add training</button>' +
+                  '<button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small cohort-delete-btn" data-delete-doctor-id="' + esc(String(doc.id)) + '" data-delete-doctor-name="' + esc(doc.display_name || doc.email || '') + '">Delete</button>' +
                   '<a class="nhsuk-button nhsuk-button--secondary hr-btn-small" href="/static/hr/messages/?doctor=' + encodeURIComponent(String(doc.id)) + '">Message</a>' +
                   '</div>' +
                   '</div>'
@@ -2350,6 +2420,7 @@
 
         async function openSearchDoctorView(doctorId, doctorName) {
           searchDoctorViewId = String(doctorId || '');
+          searchDoctorViewName = doctorName || '';
           if (HR_PAGE === 'search') {
             try {
               window.history.replaceState({}, '', '/static/hr/search.html?doctor=' + encodeURIComponent(String(doctorId)));
@@ -2364,6 +2435,12 @@
             addTr.hidden = false;
             addTr.setAttribute('data-doctor-id', String(doctorId));
             addTr.setAttribute('data-doctor-name', doctorName || '');
+          }
+          var delTr = document.getElementById('btnSearchDoctorDelete');
+          if (delTr) {
+            delTr.hidden = false;
+            delTr.setAttribute('data-doctor-id', String(doctorId));
+            delTr.setAttribute('data-doctor-name', doctorName || '');
           }
           var metaBlock = document.getElementById('searchDoctorMetaBlock');
           if (metaBlock) metaBlock.innerHTML = '';

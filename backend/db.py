@@ -3320,6 +3320,59 @@ def cohort_member_remove(cohort_id: int, user_id: int, hr_trust: str) -> bool:
         return cur.rowcount > 0
 
 
+def hr_doctor_delete(doctor_user_id: int, hr_trust: str) -> Optional[dict]:
+    """
+    Permanently delete a non-premium clinician account visible to hr_trust.
+    Cohort memberships and related records are removed via ON DELETE CASCADE.
+    """
+    hr_trust = (hr_trust or "").strip()
+    if not hr_trust:
+        return None
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_visibility_tables(conn)
+        _ensure_hr_cohorts_tables(conn)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            """
+            SELECT id, email, display_name, gmc_number, premium
+            FROM users WHERE id = ?
+            """,
+            (int(doctor_user_id),),
+        ).fetchone()
+        if not row or int(row["premium"] or 0) != 0:
+            return None
+        if not _doctor_visible_to_trust(int(doctor_user_id), hr_trust, conn):
+            return None
+        cohort_rows = conn.execute(
+            """
+            SELECT c.id, c.name, c.hr_trust
+            FROM hr_cohort_members m
+            JOIN hr_cohorts c ON c.id = m.cohort_id
+            WHERE m.user_id = ?
+            ORDER BY c.name
+            """,
+            (int(doctor_user_id),),
+        ).fetchall()
+        cohorts = [
+            {"id": int(r["id"]), "name": r["name"], "hr_trust": r["hr_trust"]}
+            for r in cohort_rows
+        ]
+        cur = conn.execute(
+            "DELETE FROM users WHERE id = ? AND COALESCE(premium, 0) = 0",
+            (int(doctor_user_id),),
+        )
+        if cur.rowcount <= 0:
+            return None
+        conn.commit()
+        return {
+            "deleted_user_id": int(doctor_user_id),
+            "email": row["email"],
+            "display_name": row["display_name"],
+            "gmc_number": row["gmc_number"],
+            "cohorts_removed": cohorts,
+        }
+
+
 def cohort_member_update_profile(
     cohort_id: int,
     user_id: int,

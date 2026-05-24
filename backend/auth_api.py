@@ -1240,6 +1240,44 @@ def hr_issuing_defaults(request: Request):
     return _hr_issuing_defaults_payload(hr)
 
 
+@router.delete("/hr/doctors/{doctor_user_id}")
+def hr_doctor_delete(request: Request, doctor_user_id: int):
+    """Permanently delete a clinician account (removes all cohort memberships)."""
+    hr = require_premium_user(request)
+    trust = (hr.get("current_trust") or "").strip()
+    if not trust:
+        raise HTTPException(
+            status_code=400,
+            detail="Your HR account must have a current trust set.",
+        )
+    result = db.hr_doctor_delete(int(doctor_user_id), trust)
+    if not result:
+        raise HTTPException(
+            status_code=404,
+            detail="Clinician not found or cannot be deleted.",
+        )
+    label = (
+        (result.get("display_name") or "").strip()
+        or (result.get("email") or "").strip()
+        or f"user {doctor_user_id}"
+    )
+    cohorts = result.get("cohorts_removed") or []
+    detail = f"Deleted DocPass account for {label}"
+    if cohorts:
+        names = ", ".join(c.get("name") or f"Cohort {c.get('id')}" for c in cohorts[:8])
+        if len(cohorts) > 8:
+            names += f" (+{len(cohorts) - 8} more)"
+        detail += f"; removed from cohorts: {names}"
+    _audit_hr_action(
+        hr,
+        "doctor_delete",
+        doctor_user_id=int(doctor_user_id),
+        detail=detail,
+        meta={"cohorts_removed": cohorts},
+    )
+    return {"ok": True, **result}
+
+
 @router.get("/hr/doctors/{doctor_user_id}/training")
 def hr_doctor_training(request: Request, doctor_user_id: int):
     """Read-only verified training for a doctor found via search.
