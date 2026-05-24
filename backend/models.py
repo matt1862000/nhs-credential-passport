@@ -87,6 +87,7 @@ class VerifyResponse(BaseModel):
 class CsvImportInvalidRow(BaseModel):
     row: int
     message: str
+    module_label: Optional[str] = None
 
 
 class CsvImportSkippedRow(BaseModel):

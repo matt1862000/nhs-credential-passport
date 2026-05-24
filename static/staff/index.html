@@ -354,6 +354,37 @@
     .staff-verify-all-banner__title { margin: 0 0 0.35rem 0; font-size: 1.0625rem; font-weight: 700; color: var(--nhsuk-text); }
     .staff-verify-all-banner__desc { margin: 0; font-size: 0.9375rem; color: var(--nhsuk-secondary-text); line-height: 1.45; }
     .staff-verify-all-banner .nhsuk-button { flex-shrink: 0; white-space: nowrap; }
+    .staff-summary-needs-fix .nhsuk-summary-list__key,
+    .staff-summary-needs-fix .nhsuk-summary-list__value { color: var(--nhsuk-error); font-weight: 700; }
+    .staff-esr-needs-fix {
+      margin: 0 0 1.25rem 0;
+      padding: 1rem 1.1rem;
+      border: 2px solid var(--nhsuk-error);
+      border-left-width: 6px;
+      background: #fff8f8;
+    }
+    .staff-esr-needs-fix__head {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 0.75rem 1rem;
+      margin-bottom: 0.75rem;
+    }
+    .staff-esr-needs-fix__title { margin: 0; font-size: 1.0625rem; font-weight: 700; color: var(--nhsuk-error); }
+    .staff-esr-needs-fix__lead { margin: 0.35rem 0 0 0; font-size: 0.9375rem; color: var(--nhsuk-secondary-text); line-height: 1.45; max-width: 42rem; }
+    .staff-esr-needs-fix__actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; flex-shrink: 0; }
+    .staff-esr-needs-fix__list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.65rem; }
+    .staff-esr-needs-fix__item {
+      padding: 0.75rem 0.85rem;
+      background: #fff;
+      border: 1px solid rgba(212, 53, 56, 0.35);
+      border-radius: 4px;
+    }
+    .staff-esr-needs-fix__item-main { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; }
+    .staff-esr-needs-fix__tag { margin: 0; }
+    .staff-esr-needs-fix__meta { margin: 0.35rem 0 0 0; font-size: 0.875rem; color: var(--nhsuk-secondary-text); line-height: 1.4; }
+    .staff-esr-needs-fix__row { opacity: 0.85; }
     .auth-panel h4 { margin: 0 0 0.75rem 0; font-size: 1.125rem; font-weight: 600; color: var(--nhsuk-text); }
     .auth-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; align-items: start; }
     @media (max-width: 720px) { .auth-grid { grid-template-columns: 1fr; } }
@@ -577,6 +608,10 @@
         <div class="nhsuk-summary-list__row"><span class="nhsuk-summary-list__key">In date</span><span class="nhsuk-summary-list__value" id="countValid">0</span></div>
         <div class="nhsuk-summary-list__row"><span class="nhsuk-summary-list__key">Expiring soon</span><span class="nhsuk-summary-list__value" id="countExpiring">0</span></div>
         <div class="nhsuk-summary-list__row"><span class="nhsuk-summary-list__key">Expired</span><span class="nhsuk-summary-list__value" id="countExpired">0</span></div>
+        <div class="nhsuk-summary-list__row staff-summary-needs-fix" id="summaryNeedsFixRow" hidden>
+          <span class="nhsuk-summary-list__key">Needs fixing</span>
+          <span class="nhsuk-summary-list__value" id="countNeedsFix">0</span>
+        </div>
       </div>
       <div class="nhsuk-filter-bar">
         <div class="nhsuk-form-group staff-training-search-group">
@@ -619,6 +654,19 @@
         </div>
       </div>
       <p id="supersededHiddenNotice" class="nhsuk-hint" style="margin:0 0 1rem 0;" hidden></p>
+      <div id="esrNeedsFixPanel" class="staff-esr-needs-fix" hidden role="region" aria-label="ESR rows that need fixing">
+        <div class="staff-esr-needs-fix__head">
+          <div>
+            <p class="staff-esr-needs-fix__title" id="esrNeedsFixTitle">Training from ESR needs fixing</p>
+            <p class="staff-esr-needs-fix__lead">These rows could not be imported — usually missing completion or expiry dates in ESR. Complete them in ESR and re-import, or add the training manually.</p>
+          </div>
+          <div class="staff-esr-needs-fix__actions">
+            <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnEsrNeedsFixImport">Import from ESR</button>
+            <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnDismissEsrNeedsFix">Dismiss</button>
+          </div>
+        </div>
+        <ul id="esrNeedsFixList" class="staff-esr-needs-fix__list"></ul>
+      </div>
       <div id="verifyAllHrBanner" class="staff-verify-all-banner" hidden>
         <div class="staff-verify-all-banner__text">
           <p class="staff-verify-all-banner__title">Send outstanding records to HR</p>
@@ -1527,6 +1575,92 @@
     var _esrPreviewData = null;
     var _esrAnalyzeData = null;
     var _esrColumnMapping = null;
+    var ESR_NEEDS_FIX_KEY = 'nhs_esr_needs_fix';
+
+    function esrNeedsFixStorageKey() {
+      var uid = (window.NHSAuth && NHSAuth.user && NHSAuth.user.id) ? String(NHSAuth.user.id) : 'anon';
+      return ESR_NEEDS_FIX_KEY + '_' + uid;
+    }
+
+    function loadEsrNeedsFixItems() {
+      try {
+        var raw = localStorage.getItem(esrNeedsFixStorageKey());
+        if (!raw) return [];
+        var data = JSON.parse(raw);
+        return Array.isArray(data.items) ? data.items : [];
+      } catch (eLoad) {
+        return [];
+      }
+    }
+
+    function saveEsrNeedsFixItems(items) {
+      try {
+        localStorage.setItem(esrNeedsFixStorageKey(), JSON.stringify({
+          items: items || [],
+          updatedAt: new Date().toISOString(),
+        }));
+      } catch (eSave) {}
+    }
+
+    function applyEsrNeedsFixFromImport(data) {
+      if (!data || !data.invalid || !data.invalid.length) return;
+      var items = data.invalid.map(function (row) {
+        return {
+          row: row.row,
+          module: (row.module_label || '').trim(),
+          message: row.message || '',
+        };
+      });
+      saveEsrNeedsFixItems(items);
+      renderEsrNeedsFixUi();
+    }
+
+    function clearEsrNeedsFixItems() {
+      try { localStorage.removeItem(esrNeedsFixStorageKey()); } catch (eClr) {}
+      renderEsrNeedsFixUi();
+    }
+
+    function renderEsrNeedsFixUi() {
+      var items = loadEsrNeedsFixItems();
+      var n = items.length;
+      var summaryRow = document.getElementById('summaryNeedsFixRow');
+      var countEl = document.getElementById('countNeedsFix');
+      var panel = document.getElementById('esrNeedsFixPanel');
+      var listEl = document.getElementById('esrNeedsFixList');
+      var titleEl = document.getElementById('esrNeedsFixTitle');
+      if (countEl) countEl.textContent = String(n);
+      if (summaryRow) summaryRow.hidden = n === 0;
+      if (titleEl) {
+        titleEl.textContent = n === 1
+          ? '1 training item from ESR needs fixing'
+          : (n + ' training items from ESR need fixing');
+      }
+      if (!panel || !listEl) return;
+      if (n === 0) {
+        panel.hidden = true;
+        listEl.innerHTML = '';
+        return;
+      }
+      panel.hidden = false;
+      listEl.innerHTML = items.map(function (item) {
+        var title = item.module || ('ESR row ' + item.row);
+        var meta = item.message || 'Missing required dates';
+        return '<li class="staff-esr-needs-fix__item">'
+          + '<div class="staff-esr-needs-fix__item-main">'
+          + '<strong>' + escapeHtml(title) + '</strong>'
+          + '<span class="nhsuk-tag nhsuk-tag--expired staff-esr-needs-fix__tag">Needs fixing</span>'
+          + '</div>'
+          + '<p class="staff-esr-needs-fix__meta">' + escapeHtml(meta)
+          + (item.row ? ' <span class="staff-esr-needs-fix__row">(CSV row ' + escapeHtml(String(item.row)) + ')</span>' : '')
+          + '</p>'
+          + '</li>';
+      }).join('');
+    }
+
+    function openStaffImportTab() {
+      var tab = document.getElementById('tab-import');
+      if (tab) tab.click();
+    }
 
     var ESR_MAP_TARGETS = [
       { value: '', label: '(ignore column)' },
@@ -1587,11 +1721,13 @@
         html += '<p class="nhsuk-hint">' + data.skipped_other_person_count + ' row(s) skipped (learner column shows someone else).</p>';
       }
       if (data.invalid && data.invalid.length) {
-        html += '<table class="esr-preview-table" aria-label="Rows with issues"><thead><tr><th>Row</th><th>Issue</th></tr></thead><tbody>';
+        html += '<table class="esr-preview-table" aria-label="Rows with issues"><thead><tr><th>Training</th><th>Row</th><th>Issue</th></tr></thead><tbody>';
         data.invalid.slice(0, 12).forEach(function (r) {
-          html += '<tr><td>' + escapeHtml(String(r.row)) + '</td><td>' + escapeHtml(r.message) + '</td></tr>';
+          var label = (r.module_label && String(r.module_label).trim()) || '—';
+          html += '<tr><td>' + escapeHtml(label) + '</td><td>' + escapeHtml(String(r.row)) + '</td><td>' + escapeHtml(r.message) + '</td></tr>';
         });
         html += '</tbody></table>';
+        html += '<p class="nhsuk-hint" style="margin:0.75rem 0 0 0;">These also appear on the <strong>My training</strong> tab until you fix or dismiss them.</p>';
       }
       wrap.innerHTML = html;
     }
@@ -1836,6 +1972,14 @@
     }
 
     document.getElementById('btnEsrNext').addEventListener('click', function () { void esrWizardNext(); });
+    var btnDismissEsrNeedsFix = document.getElementById('btnDismissEsrNeedsFix');
+    if (btnDismissEsrNeedsFix) {
+      btnDismissEsrNeedsFix.addEventListener('click', function () { clearEsrNeedsFixItems(); });
+    }
+    var btnEsrNeedsFixImport = document.getElementById('btnEsrNeedsFixImport');
+    if (btnEsrNeedsFixImport) {
+      btnEsrNeedsFixImport.addEventListener('click', function () { openStaffImportTab(); });
+    }
     document.getElementById('btnEsrBack').addEventListener('click', function () {
       if (_esrWizardStep > 1) setEsrWizardStep(_esrWizardStep - 1);
     });
@@ -1866,6 +2010,9 @@
     }
 
     function renderCsvResult(data, opts) {
+      if (data && data.invalid && data.invalid.length) {
+        applyEsrNeedsFixFromImport(data);
+      }
       var el = document.getElementById('csvImportResult');
       if (csvResultViz()) csvResultViz().esrImport(el, data, opts || {});
     }
@@ -2406,6 +2553,7 @@
       document.getElementById('countValid').textContent = valid;
       document.getElementById('countExpiring').textContent = expiring;
       document.getElementById('countExpired').textContent = expired;
+      renderEsrNeedsFixUi();
 
       var hiddenSuperseded = countSupersededHidden(list);
       var supersededNotice = document.getElementById('supersededHiddenNotice');

@@ -1,7 +1,7 @@
 # DocPass — product overview (shareable reference)
 
 > **Purpose of this document:** Single reference for Copilot, stakeholders, or new contributors.  
-> **Last updated:** May 2026 (Oracle production deploy, HR email notifications, security headers)  
+> **Last updated:** May 2026 (HR copy refresh, Add doctors page, dashboard CTAs, All Doctors search)  
 > **Live demo:** https://docpass.co.uk (Oracle Cloud VM — Docker + Caddy)  
 > **Source repo:** https://github.com/matt1862000/nhs-credential-passport.git
 
@@ -26,36 +26,36 @@ The concept is **designed in line with the direction of** NHS England’s **Stat
 
 | Type | How identified | Primary experience |
 |------|----------------|-------------------|
-| **Clinician (doctor)** | Standard account | Training wallet, share with HR, requirements checklist, trust move planning |
+| **Doctor** | Standard account | Training wallet, share with HR, requirements checklist, trust move planning |
 | **HR / trust account** | `premium` flag on user | Verification inbox, cohort management, bulk training issue, compliance reports |
 
 Both types share: dashboard, profile, header nav (bell + envelope), authentication.
 
-### Notifications bell (clinician vs HR)
+### Notifications bell (doctor vs HR)
 
 | User | Bell shows | Bell links to |
 |------|------------|---------------|
-| **Clinician** | Unread **alerts** (HR actions on their training) | `/static/notifications/` |
+| **Doctor** | Unread **alerts** (HR actions on their training) | `/static/notifications/` |
 | **HR** | **Pending verifications** count (records awaiting HR review) | `/static/hr/` (verification inbox) |
 
 HR accounts do **not** receive in-app alert notifications — the bell is verification-inbox only (no empty “Alerts” section).
 
 ### HR email notifications (optional SMTP)
 
-When SMTP is configured, HR users can receive **email** digests and instant alerts (see §6.11). Clinicians remain **in-app only** for notifications.
+When SMTP is configured, HR users can receive **email** digests and instant alerts (see §6.11). Doctors remain **in-app only** for notifications.
 
 ---
 
 ## 3. How it works (end-to-end)
 
-1. **Clinician** creates account and completes profile (name, GMC, current trust, etc.)
-2. **Clinician** adds training manually or imports from **ESR CSV export**, optionally attaching certificate evidence (PDF/screenshot)
+1. **Doctor** creates account and completes profile (name, GMC, current trust, etc.)
+2. **Doctor** adds training manually or imports from **ESR CSV export**, optionally attaching certificate evidence (PDF/screenshot)
 3. Records are stored in a **server-side wallet**; each can become a signed **verifiable credential** (JWT + PDF with QR)
-4. **Clinician shares** records with current-trust HR for verification (auto-share when profile is complete)
+4. **Doctor shares** records with current-trust HR for verification (auto-share when profile is complete)
 5. **HR** reviews in verification inbox → marks each record **Verified**, **Declined** (with reason), or later **Unverified**
-6. **Clinician** sees outcomes via alerts, can download verified PDFs, compare against trust mandatory requirements (with explainable matching), and plan a move to a new trust’s checklist pack
-7. **HR and clinician** can message each other in-app
-8. **HR** (optional) receives email when clinicians share for verification, or a daily inbox summary
+6. **Doctor** sees outcomes via alerts, can download verified PDFs, compare against trust mandatory requirements (with explainable matching), and plan a move to a new trust’s checklist pack
+7. **HR and doctor** can message each other in-app
+8. **HR** (optional) receives email when doctors share for verification, or a daily inbox summary
 
 ---
 
@@ -98,18 +98,18 @@ Trust topics and pack JSON can also store `match_module_codes`, `match_name_subs
 
 ---
 
-## 5. Features for clinicians (doctors)
+## 5. Features for doctors
 
 ### 5.1 Dashboard (`/static/dashboard/`)
 
 - Training summary stats: in date, expiring (90 days), expired, total
 - Trust requirements compliance banner (gaps, needs review, expiring)
-- Getting-started guide (profile, add training, share with HR, etc.)
-- Quick links to all clinician tools
+- Getting-started guide (profile, add training, share with HR, etc.) with **personalised “what to explore next”** suggestions (unused features only; up to 4 cards)
+- Quick links to all doctor tools
 
 ### 5.2 Training wallet (`/static/staff/`)
 
-- **View my training** — list with expiry status and HR verification state
+- **View my training** — list with expiry status and HR verification state; sort **A–Z** or by **expiry date** (soonest first)
 - **Add a record** — manual entry; optional certificate upload
 - **Import from ESR** — bulk import from ESR export file
 - **Filters** — e.g. not shared with HR, pending, verified, declined
@@ -119,7 +119,7 @@ Trust topics and pack JSON can also store `match_module_codes`, `match_name_subs
 - **Download verified PDFs** — ZIP export of HR-verified evidence only
 - **Revoke** credentials where applicable
 
-### 5.3 HR verification (clinician side)
+### 5.3 HR verification (doctor side)
 
 - Share individual or multiple records to trust HR inbox
 - Track status per record: **not shared → pending → verified / declined**
@@ -130,7 +130,7 @@ Trust topics and pack JSON can also store `match_module_codes`, `match_name_subs
 - Loads **`/api/me/compliance-snapshot`** (server wallet — not client-side matching)
 - Colour-coded status labels with **reason** text and portability/confidence badges
 - Summary pills: Met, Expiring soon, Needs review, Gap / expired
-- Driven by HR-configured mandatory topics at clinician’s **current trust**
+- Driven by HR-configured mandatory topics at the doctor’s **current trust**
 
 ### 5.5 Plan a trust move (`/static/plan-move/`)
 
@@ -142,14 +142,14 @@ Trust topics and pack JSON can also store `match_module_codes`, `match_name_subs
 
 ### 5.6 Alerts (`/static/notifications/`)
 
-In-app notifications sent **to clinicians only** when HR acts on their training:
+In-app notifications sent **to doctors only** when HR acts on their training:
 
 | Alert kind | When triggered |
 |------------|----------------|
 | Training verified | HR verifies a record |
 | Training declined | HR declines (optional reason) |
 | Verification reverted | HR unverifies a record |
-| Training recorded by HR | HR adds/issues training on clinician’s behalf |
+| Training recorded by HR | HR adds/issues training on a doctor’s behalf |
 
 ### 5.7 Messages (`/static/messages/`)
 
@@ -160,26 +160,27 @@ In-app notifications sent **to clinicians only** when HR acts on their training:
 ### 5.8 Profile (`/static/profile/`)
 
 - Display name, GMC, current trust
-- **Visibility settings** (clinicians only) — who can see verified training
+- **Visibility settings** (doctors only) — who can see verified training
 - **HR:** default welcome message template for new cohort members
 - **HR:** email notification preferences (daily digest + instant share alerts) — see §6.11
+- **HR:** automatic expiry reminders toggle (in-app messages to doctors at 30 days, 7 days, and after expiry)
 - Profile completeness gates auto-share and some flows
 
-### 5.9 Verifiable credentials & public verifier
+### 5.9 Verifiable credentials & PDF export
 
-- Each completion can be issued as signed JWT (W3C-style VC) + PDF with QR
-- **Verifier portal** (`/static/verifier/`) — paste credential ID or URL → VALID / EXPIRED / REVOKED / UNVERIFIED
-- Public key via `/.well-known/did.json` (did:web)
+- Each completion can be issued as a signed JWT (W3C-style VC) + PDF with QR for **download within DocPass** (verified training export)
+- Signing uses RS256 and `did:web` (`/.well-known/did.json`) — infrastructure for issued credentials, not a public-facing verifier UI
+- **No public verifier portal** — external parties do not verify credentials via a standalone DocPass page in the pilot
 
 ---
 
 ## 6. Features for HR / trust accounts
 
-HR accounts see **Trust tools** on the dashboard instead of the clinician wallet.
+HR accounts see **Trust tools** on the dashboard instead of the doctor wallet. Card titles use full labels; bottom **action links** are shortened (e.g. **Onboard**, **Open**, **Review**, **Add**, **Manage**).
 
 ### 6.1 Verify shared training (`/static/hr/`)
 
-- Inbox of **shared sets** from clinicians grouped by doctor
+- Inbox of **shared sets** from doctors grouped by doctor
 - Filter: needs action / completed; by module; by record status
 - Per-record actions: **Verify**, **Decline** (with reason), **Unverify**
 - Bulk verify / bulk decline within a set
@@ -188,35 +189,39 @@ HR accounts see **Trust tools** on the dashboard instead of the clinician wallet
 ### 6.2 Search doctors (`/static/hr/search.html`)
 
 - Search by name, email, or GMC (autocomplete)
-- View clinician’s verified training
+- View a doctor’s verified training
 - Add a single completion with evidence for a doctor
+- Row actions order: View training → Add training → Message → **Delete** (last)
+- Deep-link support: `?doctor=<user_id>&name=…` opens a doctor directly; `?q=` auto-opens on single match
 
-### 6.3 Add training for doctor(s) (`/static/hr/bulk.html`)
+### 6.3 Add training for doctors (`/static/hr/bulk.html`)
 
 - Wizard: search/select doctors, pick cohort, or upload roster
 - Issue same module and dates for all selected
-- Records created as HR-verified; clinician gets alert
+- Records created as HR-verified; doctor gets alert
 
-### 6.4 Cohorts (`/static/hr/cohorts/`)
+### 6.4 Add doctors (`/static/hr/cohorts/`)
 
-- Create cohorts; provision clinicians using **personal email** as login
-- Add/remove members; roster import
+- Page title **Add doctors**; list heading **Your groups** (cohorts remain the underlying grouping model)
+- On-board doctors using **personal email** as login; create groups and add/remove members; roster import
+- **Create cohort wizard:** when adding from **All Doctors**, search with **autosuggest** (name, email, GMC) filters the picker locally; selections preserved while filtering
 - Send welcome messages (queued until profile complete)
-- Broadcast message to cohort
-- Compliance snapshot / export per cohort (uses shared matcher)
-- Pending verification view per cohort
+- Broadcast message to a group
+- Compliance snapshot / export per group (uses shared matcher)
+- Pending verification view per group
 
-### 6.5 Mandatory requirements (`/static/hr/mandatory/`)
+### 6.5 Mandatory training requirements (`/static/hr/mandatory/`)
 
 - Define mandatory training topics the trust expects (with optional `match_hints`)
 - Seed from trust checklist pack
 - Reorder topics
-- Used for clinician requirements view and compliance snapshots
+- Used for doctor requirements view and compliance snapshots
 
 ### 6.6 Expiring training (`/static/hr/expiring.html`)
 
-- Report of clinicians at the trust with wallet records expiring in **7, 30, or 90 days**
-- Dashboard widget: count of affected clinicians (90-day window)
+- Report of doctors at the trust with wallet records expiring in **7, 30, or 90 days**
+- Mandatory topics: automatic in-app reminders to doctors at 30 days, 7 days, and expiry (HR toggle in Profile)
+- Dashboard widget: count of affected doctors (90-day window)
 
 ### 6.7 Audit log (`/static/hr/audit.html`)
 
@@ -225,7 +230,7 @@ HR accounts see **Trust tools** on the dashboard instead of the clinician wallet
 
 ### 6.8 Messages (`/static/hr/messages/`)
 
-- Conversations with clinicians at the trust
+- Conversations with doctors at the trust
 - Start conversation with doctor (search)
 - Broadcast to multiple doctors
 - Attachments supported
@@ -235,20 +240,16 @@ HR accounts see **Trust tools** on the dashboard instead of the clinician wallet
 
 - Trust expiring report
 - Cohort compliance snapshot and CSV export (status labels in matrix)
-- Clinician compliance snapshot (`/me/compliance-snapshot`)
+- Doctor compliance snapshot (`/me/compliance-snapshot`)
 
-### 6.10 Verifier links (HR)
-
-- HR can create time-limited public verifier links for external parties (API: `/hr/verifier-links`)
-
-### 6.11 Email notifications (HR — Profile)
+### 6.10 Email notifications (HR — Profile)
 
 Configured in **Profile** (`/static/profile/#email-notifications`) when SMTP is set on the server.
 
 | Type | Trigger | Default |
 |------|---------|---------|
 | **Daily digest** | Cron (e.g. 7am UTC) — pending verifications + unread messages per HR trust | On |
-| **Instant alert** | Clinician shares training for **verification** (not portfolio/reference pack) | On |
+| **Instant alert** | Doctor shares training for **verification** (not portfolio/reference pack) | On |
 
 - Emails sent to the HR account’s login email (or `HR_EMAIL_OVERRIDE` during pilot)
 - Opt-out via Profile checkboxes; saved with **Save and go to dashboard**
@@ -264,7 +265,7 @@ Configured in **Profile** (`/static/profile/#email-notifications`) when SMTP is 
 - **NHS-style** header with DocPass logo
 - **Menu** — Dashboard, Profile, Sign out
 - **Bell** — hover preview (stable hover bridge; no reload flicker)  
-  - Clinicians: alerts preview  
+  - Doctors: alerts preview  
   - HR: **Training to verify** only (no alerts footer)  
 - **Envelope** — messages preview on hover; unread badges
 - **Landing page** (`/static/index.html`) — StatMand-aligned pitch; redirects signed-in users to dashboard
@@ -293,10 +294,10 @@ Each pack includes `mandatory_examples` with labels, categories, match hints, an
 | Auth | Session cookies (httponly, secure, SameSite=Lax), bcrypt passwords |
 | Credentials | RS256 JWT, did:web public key, ReportLab PDF + QR |
 | Frontend | Vanilla HTML/CSS/JS (no React) |
-| Production | Docker on Oracle Cloud VM; **Caddy** reverse proxy (TLS, security headers) |
+| Production | **Oracle Cloud VM only** — Docker + **Caddy** reverse proxy (TLS, security headers). Render is **not** used. |
 | Email | SMTP (Resend) — optional; HR notifications only |
 
-### Production infrastructure (Oracle)
+### Production infrastructure (Oracle — sole production host)
 
 | Component | Detail |
 |-----------|--------|
@@ -350,7 +351,7 @@ Each pack includes `mandatory_examples` with labels, categories, match hints, an
 | `static/hr/hr-app.js` | HR inbox and verification UI |
 | `static/moving/trust-mover.js` | Plan-a-move checklist (calls checklist-preview API) |
 | `static/requirements/index.html` | Trust requirements UI (calls compliance-snapshot API) |
-| `static/staff/index.html` | Main clinician wallet app |
+| `static/staff/index.html` | Main doctor training wallet app |
 | `static/profile/index.html` | Profile, visibility, HR welcome template, HR email prefs |
 
 ### Environment variables (production)
@@ -380,22 +381,18 @@ See `deploy/email.env.example` for a template.
 
 **Production deploy (Oracle SSH):**
 ```bash
-cd ~/docpass/app && git pull
+cd ~/docpass/app && git pull origin main
 sudo docker build -t docpass .
 sudo docker rm -f docpass
 sudo docker run -d --name docpass --restart unless-stopped \
   -p 127.0.0.1:8000:8000 \
-  -e BASE_URL=https://docpass.co.uk \
-  -e SESSION_SECRET=... \
-  -e SMTP_HOST=smtp.resend.com -e SMTP_PORT=587 \
-  -e SMTP_USER=resend -e SMTP_PASSWORD=re_... \
-  -e SMTP_USE_TLS=true \
-  -e EMAIL_FROM="DocPass <noreply@docpass.co.uk>" \
-  -e HR_EMAIL_OVERRIDE=... \
+  --env-file /var/lib/docpass/docpass.env \
   -v /var/lib/docpass/data:/app/data \
   -v /var/lib/docpass/keys:/app/keys \
   docpass
 ```
+
+Production env file `/var/lib/docpass/docpass.env` includes `BASE_URL`, `SESSION_SECRET`, SMTP settings, `HR_EMAIL_OVERRIDE`, `CRON_SECRET`, `HR_EXPIRY_REMINDERS_ENABLED`, etc.
 
 Caddy config lives on the VM at `/etc/caddy/Caddyfile` (not in git).
 
@@ -420,22 +417,21 @@ Caddy config lives on the VM at `/etc/caddy/Caddyfile` (not in git).
 | `/static/dashboard/` | All | Home hub |
 | `/static/profile/` | All | Profile, visibility, HR welcome + **email prefs** |
 | `/static/profile/#email-notifications` | HR | Email notification settings (anchor) |
-| `/static/staff/` | Clinician | Training wallet |
-| `/static/requirements/` | Clinician | Current trust checklist (smart matching) |
-| `/static/plan-move/` | Clinician | Destination trust comparison (smart matching) |
-| `/static/notifications/` | Clinician | Alerts history |
-| `/static/messages/` | Clinician | HR messaging |
+| `/static/staff/` | Doctor | Training wallet |
+| `/static/requirements/` | Doctor | Current trust checklist (smart matching) |
+| `/static/plan-move/` | Doctor | Destination trust comparison (smart matching) |
+| `/static/notifications/` | Doctor | Alerts history |
+| `/static/messages/` | Doctor | HR messaging |
 | `/static/hr/` | HR | Verification inbox |
 | `/static/hr/search.html` | HR | Doctor search |
-| `/static/hr/bulk.html` | HR | Bulk add training |
-| `/static/hr/cohorts/` | HR | Cohort management |
-| `/static/hr/mandatory/` | HR | Mandatory topics |
+| `/static/hr/bulk.html` | HR | Add training for doctors |
+| `/static/hr/cohorts/` | HR | Add doctors / group management |
+| `/static/hr/mandatory/` | HR | Mandatory training requirements |
 | `/static/hr/expiring.html` | HR | Expiring report |
 | `/static/hr/audit.html` | HR | Audit log |
 | `/static/hr/messages/` | HR | Messaging |
 | `/static/hr/welcome-templates.html` | HR | Message templates |
 | `/static/hr/email-notifications.html` | HR | Redirect → Profile `#email-notifications` |
-| `/static/verifier/` | Public | Credential verification |
 | `/docs` | Dev | OpenAPI / Swagger |
 
 ---
@@ -447,7 +443,7 @@ Caddy config lives on the VM at `/etc/caddy/Caddyfile` (not in git).
 - `GET /auth/me`, `POST /auth/change-password`
 - Rate limited: login and register (10/min per IP)
 
-### Clinician wallet & sharing
+### Doctor wallet & sharing
 - `GET /me/wallet`, `PUT /me/wallet`, `GET /me/verified-map`
 - `POST /me/shares`, `POST /me/shares/withdraw`
 - Instant HR email triggered on share for verification (background task)
@@ -458,7 +454,7 @@ Caddy config lives on the VM at `/etc/caddy/Caddyfile` (not in git).
 - `GET /me/trust-move/checklist-preview?pack_id=sheffield` — destination pack vs wallet (same matcher)
 - `GET /me/trust-move/candidates`, `POST /me/trust-move/complete`
 
-### Notifications (clinicians only)
+### Notifications (doctors only)
 - `GET /me/notifications`, `GET /me/notifications/unread-count`
 - `POST /me/notifications/{id}/read`, `POST /me/notifications/read-all`
 
@@ -480,7 +476,7 @@ Caddy config lives on the VM at `/etc/caddy/Caddyfile` (not in git).
 - `GET /hr/cohorts/{id}/compliance-snapshot`, compliance CSV export
 
 ### Messaging
-- `GET/POST /me/messages/*` (clinician)
+- `GET/POST /me/messages/*` (doctor)
 - `GET/POST /hr/messages/*` (HR, including broadcast)
 
 ### Cohorts
@@ -505,8 +501,9 @@ DocPass demonstrates ideas aligned with StatMand direction:
 
 - Live ESR API integration  
 - National NHS identity (CIS2, NHSmail SSO, etc.)  
-- Push notifications or email alerts **for clinicians** (in-app only)  
+- Push notifications or email alerts **for doctors** (in-app only)  
 - HR in-app alert notifications (HR bell = verification inbox only)  
+- **Public verifier portal** or HR **verifier links** for third parties (removed from pilot scope)  
 - Canonical national module registry / ML fuzzy matching (alias map + hints only)  
 - Strict CSP without `'unsafe-inline'` (would require frontend refactor)  
 - Legal/compliance sign-off as an NHS product  
@@ -517,7 +514,7 @@ DocPass demonstrates ideas aligned with StatMand direction:
 
 | Term | Meaning |
 |------|---------|
-| **Wallet** | Clinician’s stored training records on the server |
+| **Wallet** | Doctor’s stored training records on the server |
 | **Credential** | Signed JWT + optional PDF representing one completion |
 | **Share / share set** | Batch of records sent to HR for verification |
 | **Verified map** | Per-credential HR status (shared, pending, verified, declined) |
@@ -525,7 +522,7 @@ DocPass demonstrates ideas aligned with StatMand direction:
 | **Match hints** | Per-topic codes/substrings HR or pack JSON use to match wallet records |
 | **Alias map** | Built-in synonyms (Fire Awareness → Fire Safety, etc.) |
 | **Premium account** | HR/trust user |
-| **Cohort** | Group of provisioned clinicians for bulk HR actions |
+| **Cohort / group** | Named group of on-boarded doctors for bulk HR actions (UI: **Your groups** on Add doctors page) |
 | **StatMand** | NHS England Statutory and Mandatory Training programme |
 | **Portfolio / reference pack** | Share of already HR-verified records when moving trusts |
 | **Daily digest** | Scheduled email summarising HR pending verifications and unread messages |
@@ -536,7 +533,17 @@ DocPass demonstrates ideas aligned with StatMand direction:
 
 | Change | Summary |
 |--------|---------|
-| Oracle Cloud production | Migrated from Render to Oracle VM; Docker + Caddy; `docpass.co.uk` |
+| HR terminology refresh | User-facing **doctor** (not clinician) across HR UI, messages, and API error text |
+| Add doctors page | `/static/hr/cohorts/` retitled **Add doctors**; list **Your groups**; on-board copy on dashboard |
+| Dashboard HR CTAs | Short action links: Onboard, Open, Review, Add, Manage |
+| All Doctors search | Create-cohort step 3: local search + autosuggest when copying from All Doctors |
+| Mandatory training requirements | Page and dashboard card renamed from “Mandatory requirements” |
+| Add training for doctors | Bulk page title aligned with dashboard card |
+| Staff training sort | My training list: A–Z or expiry (soonest first) |
+| HR inbox counts | Pending verification badge reconciled with actionable inbox items |
+| HR expiry reminders | Profile toggle; automatic in-app messages to doctors (30d / 7d / expired) |
+| Personalised getting started | Dashboard suggests unused features only (ESR vs add record, etc.) |
+| Oracle Cloud production | Production on Oracle VM only (Docker + Caddy); `docpass.co.uk` — **Render not used** |
 | Auth & CORS hardening | Rate limit on login/register; CORS whitelist; session cookie flags |
 | Server backup | `deploy/backup.sh` + daily cron |
 | HR email notifications | Daily digest + instant share alerts via Resend SMTP |

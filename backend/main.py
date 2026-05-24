@@ -359,7 +359,11 @@ async def api_import_csv(
         return CsvImportResponse(dry_run=dry_run, fatal_error=fatal)
 
     invalid_rows = [
-        CsvImportInvalidRow(row=p.row_number, message=p.error)
+        CsvImportInvalidRow(
+            row=p.row_number,
+            message=p.error,
+            module_label=p.module_label,
+        )
         for p in parsed
         if p.error and not p.skipped
     ]

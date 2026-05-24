@@ -986,6 +986,7 @@ class ParsedCsvRow:
     record: Optional[CompletionRecord]
     error: Optional[str]
     skipped: bool = False
+    module_label: Optional[str] = None
 
 
 def _row_to_record(
@@ -1272,8 +1273,17 @@ def parse_completion_csv(
                 ParsedCsvRow(row_number=file_row_num, record=None, error=msg, skipped=True)
             )
         else:
+            module_label = None
+            if err and is_esr_layout:
+                module_label = _esr_infer_module_display(row_dict, profile) or None
             out.append(
-                ParsedCsvRow(row_number=file_row_num, record=rec, error=err, skipped=skipped)
+                ParsedCsvRow(
+                    row_number=file_row_num,
+                    record=rec,
+                    error=err,
+                    skipped=skipped,
+                    module_label=module_label,
+                )
             )
 
     return out, None

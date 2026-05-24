@@ -560,6 +560,8 @@
       detailsHtml = detailParts.join('');
     }
     var errors = (data.invalid || []).slice(0, 8).map(function (row) {
+      var label = (row.module_label && String(row.module_label).trim()) || '';
+      if (label) return label + ' (row ' + row.row + '): ' + (row.message || '');
       return 'Row ' + row.row + ': ' + (row.message || '');
     });
     if (data.invalid && data.invalid.length > 8) {
@@ -580,6 +582,9 @@
     }
     if (skippedDup > 0) {
       notes.push('Skipped <strong>' + skippedDup + '</strong> duplicate row(s) already in your list.');
+    }
+    if (invalidN > 0) {
+      notes.push('Rows that need fixing are listed on the <strong>My training</strong> tab.');
     }
     render(el, {
       total: total,
