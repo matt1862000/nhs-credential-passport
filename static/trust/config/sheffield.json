@@ -57,6 +57,20 @@
       "match_name_substrings": ["corporate induction", "local induction", "sheffield induction"]
     }
   ],
+  "esr_import": {
+    "format_id": "esr_compliance_competency",
+    "label": "ESR Compliance & Competency",
+    "assign_all_rows_to_signed_in_user": true,
+    "person_columns_are_audit_only": true,
+    "notes": [
+      "Last Updated By is usually an audit field (who updated the row), not the learner.",
+      "Personal compliance exports are assigned to your signed-in DocPass profile."
+    ],
+    "extra_column_aliases": {
+      "competancy_name": "esr_competency_name",
+      "renewal_date": "expiry_date"
+    }
+  },
   "recognition_when_joining": {
     "rotherham": {
       "issuer_trust_name_hints": ["Rotherham", "rotherham"],

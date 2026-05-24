@@ -70,6 +70,7 @@ HEADER_ALIASES: dict[str, tuple[str, ...]] = {
         "valid_until",
         "renew_by",
         "expiry",
+        "expiry date",
     ),
     "issuing_trust_ods_code": (
         "issuing_trust_ods_code",
@@ -310,6 +311,234 @@ class ImportProfileContext:
     staff_identifier: str = ""  # GMC or ESR person number
     current_trust: str = ""
     personal_scope: bool = True  # when True, scope import to signed-in user
+    esr_import_config: Optional[dict] = None  # trust pack esr_import section
+
+
+# Human labels for column-mapping UI (canonical field -> label).
+CANONICAL_FIELD_LABELS: dict[str, str] = {
+    "staff_full_name": "Learner name",
+    "staff_identifier": "Learner ID / GMC",
+    "module_code": "Module code (CSTF)",
+    "module_name": "Module / course title",
+    "esr_competency_name": "Competency name",
+    "completion_date": "Completion date",
+    "expiry_date": "Expiry date",
+    "next_review_date": "Next review date",
+    "date_last_awarded": "Date last awarded",
+    "date_start": "Date started",
+    "certification_date": "Certification date",
+    "issuing_trust_ods_code": "Issuing trust ODS",
+    "issuing_trust_name": "Issuing trust name",
+    "esr_description": "Description",
+    "esr_vpd": "Organisation VPD / ODS",
+    "compliance_status": "Compliance status (RAG)",
+    "esr_person_line": "Learner (person column)",
+}
+
+ESR_MODULE_CANONICAL = frozenset({"module_name", "esr_competency_name", "esr_description"})
+ESR_EXPIRY_CANONICAL = frozenset({"expiry_date", "next_review_date"})
+ESR_COMPLETION_CANONICAL = frozenset(
+    {"completion_date", "date_last_awarded", "date_start", "certification_date"}
+)
+
+_FUZZY_HEADER_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"expir|renew|valid_until", re.I), "expiry_date"),
+    (
+        re.compile(r"competen(?:cy|cy_name|ancy)(?:_|$)|^competency", re.I),
+        "esr_competency_name",
+    ),
+    (re.compile(r"^title$|course_title|training_name|module_name", re.I), "module_name"),
+    (re.compile(r"description|details", re.I), "esr_description"),
+    (re.compile(r"last_awarded|date_awarded|certification", re.I), "date_last_awarded"),
+    (re.compile(r"date_start|start_date|started", re.I), "date_start"),
+    (re.compile(r"completion|completed|achieved", re.I), "completion_date"),
+    (re.compile(r"compliance_status|rag_status|^status$", re.I), "compliance_status"),
+    (re.compile(r"staff_full|employee_name|learner_name|^name$", re.I), "staff_full_name"),
+    (re.compile(r"gmc|person_number|employee_number|assignment", re.I), "staff_identifier"),
+    (re.compile(r"^vpd$|organisation_vpd|org_vpd", re.I), "esr_vpd"),
+    (re.compile(r"trust_name|employer_name|organisation_name", re.I), "issuing_trust_name"),
+    (re.compile(r"ods|organisation_code", re.I), "issuing_trust_ods_code"),
+]
+
+
+def _extra_aliases_from_config(cfg: Optional[dict]) -> dict[str, str]:
+    if not cfg:
+        return {}
+    raw = cfg.get("extra_column_aliases") or {}
+    out: dict[str, str] = {}
+    if isinstance(raw, dict):
+        for k, v in raw.items():
+            nk = _norm(str(k))
+            if nk and v:
+                out[nk] = str(v)
+    return out
+
+
+def _suggest_canonical_for_header(
+    header: str,
+    *,
+    trust_extra: Optional[dict[str, str]] = None,
+) -> tuple[Optional[str], str]:
+    """Returns (canonical_field, confidence: auto|suggested|unmapped)."""
+    key = _norm(header)
+    if not key:
+        return None, "unmapped"
+    if trust_extra and key in trust_extra:
+        return trust_extra[key], "auto"
+    if key in _ALIAS_TO_CANONICAL:
+        return _ALIAS_TO_CANONICAL[key], "auto"
+    for pat, canonical in _FUZZY_HEADER_PATTERNS:
+        if pat.search(key):
+            return canonical, "suggested"
+    return None, "unmapped"
+
+
+def _build_col_map(
+    header_cells: list[str],
+    *,
+    column_mapping: Optional[dict[str, str]] = None,
+    trust_extra: Optional[dict[str, str]] = None,
+) -> tuple[dict[int, str], Optional[str]]:
+    """
+    Map CSV column indices to canonical fields.
+    column_mapping uses original header text -> canonical (or '' to ignore).
+    When auto-detection maps multiple columns to the same field, the highest-
+    confidence match wins (user > exact alias > fuzzy); lower matches are skipped.
+    """
+    user_map_norm: dict[str, str] = {}
+    if column_mapping:
+        for src, canon in column_mapping.items():
+            src_key = (src or "").strip()
+            if not src_key:
+                continue
+            canon_val = (canon or "").strip()
+            user_map_norm[src_key.lower()] = canon_val
+
+    candidates: list[tuple[int, int, str]] = []  # priority, column index, canonical
+    user_canonical_cols: dict[str, int] = {}
+    for i, cell in enumerate(header_cells):
+        raw = (cell or "").strip()
+        if not raw:
+            continue
+        canonical: Optional[str] = None
+        priority = 0
+        if raw.lower() in user_map_norm:
+            chosen = user_map_norm[raw.lower()]
+            if not chosen:
+                continue
+            canonical = chosen
+            priority = 3
+            if canonical in user_canonical_cols and user_canonical_cols[canonical] != i:
+                return {}, f"duplicate column for {canonical}"
+            user_canonical_cols[canonical] = i
+        else:
+            suggested, conf = _suggest_canonical_for_header(
+                raw, trust_extra=trust_extra
+            )
+            canonical = suggested
+            priority = 2 if conf == "auto" else 1 if conf == "suggested" else 0
+        if not canonical:
+            continue
+        candidates.append((priority, i, canonical))
+
+    candidates.sort(key=lambda item: (-item[0], item[1]))
+    col_map: dict[int, str] = {}
+    seen_canonical: set[str] = set()
+    for _priority, col_idx, canonical in candidates:
+        if canonical in seen_canonical:
+            continue
+        seen_canonical.add(canonical)
+        col_map[col_idx] = canonical
+    return col_map, None
+
+
+def _esr_missing_required(present: set[str]) -> list[str]:
+    missing: list[str] = []
+    if not (present & ESR_EXPIRY_CANONICAL):
+        missing.append("expiry_date")
+    if not (present & ESR_MODULE_CANONICAL):
+        missing.append("module / competency name")
+    if not (present & ESR_COMPLETION_CANONICAL):
+        missing.append("completion date")
+    return missing
+
+
+def analyze_csv_import(
+    text: str,
+    profile: Optional[ImportProfileContext] = None,
+) -> dict:
+    """Inspect headers and suggest column mapping before import."""
+    trust_cfg = (profile.esr_import_config if profile else None) or {}
+    trust_extra = _extra_aliases_from_config(trust_cfg)
+    if len(text.encode("utf-8")) > MAX_CSV_BYTES:
+        return {"fatal_error": "file too large"}
+    stream = io.StringIO(text)
+    reader = csv.reader(stream)
+    try:
+        header_cells = next(reader)
+    except StopIteration:
+        return {"fatal_error": "empty file"}
+    headers = [(h or "").strip() for h in header_cells if (h or "").strip()]
+    columns: list[dict] = []
+    for h in headers:
+        canonical, confidence = _suggest_canonical_for_header(h, trust_extra=trust_extra)
+        columns.append(
+            {
+                "source_header": h,
+                "canonical": canonical,
+                "canonical_label": CANONICAL_FIELD_LABELS.get(canonical or "", ""),
+                "confidence": confidence,
+            }
+        )
+    col_map, dup_err = _build_col_map(header_cells, trust_extra=trust_extra)
+    if dup_err:
+        return {"fatal_error": dup_err}
+    winning_by_header: dict[str, str] = {}
+    for idx, canonical in col_map.items():
+        raw = (header_cells[idx] or "").strip()
+        if raw:
+            winning_by_header[raw] = canonical
+    detected_mapping = dict(winning_by_header)
+    for col in columns:
+        h = col["source_header"]
+        if h in winning_by_header:
+            col["canonical"] = winning_by_header[h]
+            col["canonical_label"] = CANONICAL_FIELD_LABELS.get(
+                winning_by_header[h], ""
+            )
+        elif col.get("canonical"):
+            col["canonical"] = None
+            col["canonical_label"] = ""
+            col["confidence"] = "skipped"
+    present = set(col_map.values())
+    is_esr = _detect_esr_layout(present)
+    notes: list[str] = []
+    if isinstance(trust_cfg.get("notes"), list):
+        notes.extend(str(n) for n in trust_cfg["notes"] if n)
+    elif trust_cfg.get("notes"):
+        notes.append(str(trust_cfg["notes"]))
+    if trust_cfg.get("person_columns_are_audit_only"):
+        notes.append(
+            "Columns like Last Updated By are not used as learner identity for your trust."
+        )
+    pack_label = (trust_cfg.get("label") or "").strip()
+    return {
+        "headers": headers,
+        "esr_layout": is_esr,
+        "trust_format": {
+            "format_id": trust_cfg.get("format_id"),
+            "label": pack_label or None,
+            "assign_all_rows_to_signed_in_user": bool(
+                trust_cfg.get("assign_all_rows_to_signed_in_user", True)
+            ),
+        }
+        if trust_cfg
+        else None,
+        "columns": columns,
+        "notes": notes,
+        "missing_required": _esr_missing_required(present) if is_esr else [],
+        "detected_mapping": detected_mapping,
+    }
 
 
 def _normalize_gmc_digits(raw: str) -> str:
@@ -636,11 +865,15 @@ def _profile_from_dict(data: Optional[dict]) -> Optional[ImportProfileContext]:
         staff_identifier=str(data.get("staff_identifier") or data.get("gmc_number") or "").strip(),
         current_trust=str(data.get("current_trust") or "").strip(),
         personal_scope=bool(data.get("personal_scope", True)),
+        esr_import_config=data.get("esr_import_config") if isinstance(data.get("esr_import_config"), dict) else None,
     )
 
 
 def parse_completion_csv(
-    text: str, profile: Optional[ImportProfileContext] = None
+    text: str,
+    profile: Optional[ImportProfileContext] = None,
+    *,
+    column_mapping: Optional[dict[str, str]] = None,
 ) -> tuple[list[ParsedCsvRow], Optional[str]]:
     """
     Returns (parsed_rows, fatal_error). Each data row is a ParsedCsvRow.
@@ -656,18 +889,16 @@ def parse_completion_csv(
     except StopIteration:
         return [], "empty file"
 
-    col_map: dict[int, str] = {}
-    seen_canonical: set[str] = set()
-    for i, cell in enumerate(header_cells):
-        key = _norm(cell)
-        if not key:
-            continue
-        canonical = _ALIAS_TO_CANONICAL.get(key)
-        if canonical:
-            if canonical in seen_canonical:
-                return [], f"duplicate column for {canonical}"
-            seen_canonical.add(canonical)
-            col_map[i] = canonical
+    trust_extra = _extra_aliases_from_config(
+        profile.esr_import_config if profile else None
+    )
+    col_map, dup_err = _build_col_map(
+        header_cells,
+        column_mapping=column_mapping,
+        trust_extra=trust_extra,
+    )
+    if dup_err:
+        return [], dup_err
 
     present = set(col_map.values())
     is_esr_layout = _detect_esr_layout(present)

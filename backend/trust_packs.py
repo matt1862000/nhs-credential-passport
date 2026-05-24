@@ -109,6 +109,18 @@ def mandatory_examples_to_rows(pack: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
+def esr_import_config_for_trust(trust_name: str) -> Optional[dict[str, Any]]:
+    """Trust-specific ESR CSV import hints from static pack config."""
+    pack_id = pack_id_for_trust_name(trust_name)
+    if not pack_id:
+        return None
+    pack = load_trust_pack(pack_id)
+    if not pack:
+        return None
+    cfg = pack.get("esr_import")
+    return cfg if isinstance(cfg, dict) else None
+
+
 def _title_case_trust_name(name: str) -> str:
     """Turn ODS-style ALL CAPS trust names into readable title case (keep NHS, etc.)."""
     acronyms = {"nhs", "uk", "gp", "ods", "icu", "it"}

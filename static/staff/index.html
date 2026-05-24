@@ -452,6 +452,19 @@
     .esr-wizard-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 1.25rem; }
     .esr-import-feedback { margin-top: 1rem; min-height: 0; }
     .esr-import-feedback:not(:empty) { min-height: 4.5rem; }
+    .esr-map-trust {
+      margin: 0 0 0.75rem 0; padding: 0.65rem 0.85rem; background: #e8f4fd;
+      border-left: 4px solid var(--nhsuk-link); font-size: 0.875rem;
+    }
+    .esr-map-notes { margin: 0 0 0.85rem 0; padding-left: 1.1rem; font-size: 0.875rem; color: var(--nhsuk-secondary-text); }
+    .esr-map-notes li { margin: 0.25rem 0; }
+    .esr-map-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; margin-top: 0.5rem; }
+    .esr-map-table th, .esr-map-table td { padding: 0.45rem 0.5rem; border-bottom: 1px solid var(--nhsuk-border); text-align: left; vertical-align: middle; }
+    .esr-map-table th { background: #f0f4f5; font-weight: 700; }
+    .esr-map-table select { max-width: 100%; font-size: 0.875rem; }
+    .esr-map-conf { font-size: 0.75rem; color: var(--nhsuk-secondary-text); white-space: nowrap; }
+    .esr-map-conf--auto { color: #00703c; }
+    .esr-map-conf--suggested { color: #856404; }
     .staff-renew-panel {
       margin-bottom: 1rem; padding: 0.85rem 1rem;
       background: #f0f7fb; border: 1px solid var(--nhsuk-border); border-left: 4px solid var(--nhsuk-link);
@@ -598,13 +611,14 @@
     <section id="import" role="tabpanel" aria-labelledby="tab-import" aria-hidden="true">
       <div class="nhsuk-bulk-export-panel">
         <h3 class="nhsuk-bulk-export-panel__title">Import from ESR</h3>
-        <p class="nhsuk-bulk-export-panel__desc">Step-by-step import: we match <strong>your</strong> rows only (name and GMC from Profile). Team exports skip other people&rsquo;s training.</p>
+        <p class="nhsuk-bulk-export-panel__desc">Step-by-step import: we detect your trust&rsquo;s ESR format, confirm column mapping, then import rows to your wallet.</p>
         <p class="esr-wizard-steps" id="esrWizardStepLabel" aria-live="polite">
           <span class="esr-wizard-steps__on" data-step-label="1">1. Help</span> &rarr;
           <span data-step-label="2">2. CSV</span> &rarr;
-          <span data-step-label="3">3. Preview</span> &rarr;
-          <span data-step-label="4">4. Evidence</span> &rarr;
-          <span data-step-label="5">5. Import</span>
+          <span data-step-label="3">3. Map columns</span> &rarr;
+          <span data-step-label="4">4. Preview</span> &rarr;
+          <span data-step-label="5">5. Evidence</span> &rarr;
+          <span data-step-label="6">6. Import</span>
         </p>
 
         <div id="esrStep1" class="esr-wizard-panel">
@@ -645,11 +659,16 @@
         </div>
 
         <div id="esrStep3" class="esr-wizard-panel" hidden>
+          <p class="nhsuk-hint" style="margin-top:0;">Confirm how CSV columns map to training fields. Adjust anything that looks wrong, then continue.</p>
+          <div id="esrMappingWrap"></div>
+        </div>
+
+        <div id="esrStep4" class="esr-wizard-panel" hidden>
           <p class="nhsuk-hint" style="margin-top:0;">Rows we will import for you (from your CSV):</p>
           <div id="esrPreviewWrap"></div>
         </div>
 
-        <div id="esrStep4" class="esr-wizard-panel" hidden>
+        <div id="esrStep5" class="esr-wizard-panel" hidden>
           <div class="nhsuk-form-group nhsuk-file-upload">
             <label class="nhsuk-label" for="csv_evidence">Evidence of completion</label>
             <div class="nhsuk-file-upload__stack">
@@ -661,7 +680,7 @@
           </div>
         </div>
 
-        <div id="esrStep5" class="esr-wizard-panel" hidden>
+        <div id="esrStep6" class="esr-wizard-panel" hidden>
           <p id="esrConfirmSummary" class="nhsuk-body-s" style="margin-top:0;"></p>
           <button type="button" class="nhsuk-button" id="btnCsvUpload" disabled>Import into my wallet</button>
         </div>
@@ -1384,21 +1403,40 @@
     }
     var _esrWizardStep = 1;
     var _esrPreviewData = null;
+    var _esrAnalyzeData = null;
+    var _esrColumnMapping = null;
+
+    var ESR_MAP_TARGETS = [
+      { value: '', label: '(ignore column)' },
+      { value: 'esr_competency_name', label: 'Competency name' },
+      { value: 'module_name', label: 'Module / course title' },
+      { value: 'esr_description', label: 'Description' },
+      { value: 'expiry_date', label: 'Expiry date' },
+      { value: 'next_review_date', label: 'Next review date' },
+      { value: 'date_last_awarded', label: 'Date last awarded' },
+      { value: 'date_start', label: 'Date started' },
+      { value: 'completion_date', label: 'Completion date' },
+      { value: 'staff_full_name', label: 'Learner name' },
+      { value: 'staff_identifier', label: 'Learner ID / GMC' },
+      { value: 'compliance_status', label: 'Compliance status' },
+      { value: 'esr_vpd', label: 'Organisation VPD / ODS' },
+      { value: 'issuing_trust_name', label: 'Issuing trust name' }
+    ];
 
     function setEsrWizardStep(step) {
       _esrWizardStep = step;
-      for (var i = 1; i <= 5; i++) {
+      for (var i = 1; i <= 6; i++) {
         var panel = document.getElementById('esrStep' + i);
         if (panel) panel.hidden = i !== step;
       }
       var backBtn = document.getElementById('btnEsrBack');
       var nextBtn = document.getElementById('btnEsrNext');
       if (backBtn) backBtn.hidden = step <= 1;
-      if (nextBtn) nextBtn.hidden = step >= 5;
+      if (nextBtn) nextBtn.hidden = step >= 6;
       document.querySelectorAll('[data-step-label]').forEach(function (sp) {
         sp.classList.toggle('esr-wizard-steps__on', Number(sp.getAttribute('data-step-label')) === step);
       });
-      if (step === 5) updateEsrConfirmSummary();
+      if (step === 6) updateEsrConfirmSummary();
     }
 
     function updateEsrConfirmSummary() {
@@ -1420,8 +1458,11 @@
       }
       var n = Number(data.valid_row_count || 0);
       var html = '<p style="margin:0.5rem 0;"><strong>' + n + '</strong> row' + (n === 1 ? '' : 's') + ' matched your profile and will be imported.</p>';
+      if (data.import_format_label) {
+        html += '<p class="nhsuk-hint">Format: ' + escapeHtml(data.import_format_label) + '</p>';
+      }
       if (data.skipped_other_person_count > 0) {
-        html += '<p class="nhsuk-hint">' + data.skipped_other_person_count + ' row(s) skipped (other people in the export).</p>';
+        html += '<p class="nhsuk-hint">' + data.skipped_other_person_count + ' row(s) skipped (learner column shows someone else).</p>';
       }
       if (data.invalid && data.invalid.length) {
         html += '<table class="esr-preview-table" aria-label="Rows with issues"><thead><tr><th>Row</th><th>Issue</th></tr></thead><tbody>';
@@ -1431,6 +1472,74 @@
         html += '</tbody></table>';
       }
       wrap.innerHTML = html;
+    }
+
+    function renderEsrMappingPanel(data) {
+      var wrap = document.getElementById('esrMappingWrap');
+      if (!wrap) return;
+      if (!data) { wrap.innerHTML = ''; return; }
+      if (data.fatal_error) {
+        wrap.innerHTML = '<p style="color:var(--nhsuk-error);">' + escapeHtml(data.fatal_error) + '</p>';
+        return;
+      }
+      var html = '';
+      if (data.trust_format && data.trust_format.label) {
+        html += '<p class="esr-map-trust"><strong>Detected format:</strong> ' + escapeHtml(data.trust_format.label) + '</p>';
+      }
+      if (data.notes && data.notes.length) {
+        html += '<ul class="esr-map-notes">';
+        data.notes.forEach(function (n) { html += '<li>' + escapeHtml(n) + '</li>'; });
+        html += '</ul>';
+      }
+      if (data.missing_required && data.missing_required.length) {
+        html += '<p style="color:var(--nhsuk-error);">Missing required fields: ' +
+          escapeHtml(data.missing_required.join(', ')) + '. Adjust mapping below.</p>';
+      }
+      html += '<table class="esr-map-table" aria-label="Column mapping"><thead><tr>' +
+        '<th>CSV column</th><th>Maps to</th><th>Match</th></tr></thead><tbody>';
+      (data.columns || []).forEach(function (col, idx) {
+        var conf = col.confidence || 'unmapped';
+        var confCls = conf === 'auto' ? ' esr-map-conf--auto' : (conf === 'suggested' ? ' esr-map-conf--suggested' : '');
+        html += '<tr><td>' + escapeHtml(col.source_header) + '</td><td>' +
+          '<select class="nhsuk-select esr-map-select" data-map-idx="' + idx + '" aria-label="Map ' + escapeHtml(col.source_header) + '">';
+        ESR_MAP_TARGETS.forEach(function (opt) {
+          var sel = (col.canonical || '') === opt.value ? ' selected' : '';
+          html += '<option value="' + escapeHtml(opt.value) + '"' + sel + '>' + escapeHtml(opt.label) + '</option>';
+        });
+        html += '</select></td><td class="esr-map-conf' + confCls + '">' + escapeHtml(conf) + '</td></tr>';
+      });
+      html += '</tbody></table>';
+      wrap.innerHTML = html;
+    }
+
+    function collectColumnMappingFromForm() {
+      var out = {};
+      var data = _esrAnalyzeData;
+      if (!data || !data.columns) return out;
+      document.querySelectorAll('.esr-map-select').forEach(function (sel) {
+        var idx = parseInt(sel.getAttribute('data-map-idx'), 10);
+        if (isNaN(idx) || !data.columns[idx]) return;
+        var header = data.columns[idx].source_header;
+        out[header] = sel.value || '';
+      });
+      return out;
+    }
+
+    async function analyzeCsvFile() {
+      var input = document.getElementById('csv_upload');
+      if (!input.files || !input.files[0]) return null;
+      var fd = new FormData();
+      fd.append('file', input.files[0], input.files[0].name || 'import.csv');
+      var res = await fetch('/api/credentials/import-csv/analyze', {
+        method: 'POST',
+        body: fd,
+        credentials: 'include',
+      });
+      if (!res.ok) {
+        var t = await res.text();
+        throw new Error(t || res.statusText);
+      }
+      return res.json();
     }
 
     async function esrWizardNext() {
@@ -1445,31 +1554,51 @@
           return;
         }
         setEsrWizardStep(3);
-        showCsvImportLoading('Checking which rows match your profile…');
+        showCsvImportLoading('Analysing CSV columns…');
         try {
-          _esrPreviewData = await postCsv(true);
-          renderEsrPreviewSummary(_esrPreviewData);
-          renderCsvResult(_esrPreviewData, {});
+          _esrAnalyzeData = await analyzeCsvFile();
+          _esrColumnMapping = (_esrAnalyzeData && _esrAnalyzeData.detected_mapping) ? _esrAnalyzeData.detected_mapping : null;
+          renderEsrMappingPanel(_esrAnalyzeData);
+          document.getElementById('csvImportResult').innerHTML = '';
         } catch (e) {
-          document.getElementById('esrPreviewWrap').innerHTML = '<p style="color:var(--nhsuk-error);">' + escapeHtml(e.message) + '</p>';
+          document.getElementById('esrMappingWrap').innerHTML =
+            '<p style="color:var(--nhsuk-error);">' + escapeHtml(e.message) + '</p>';
         }
         return;
       }
       if (_esrWizardStep === 3) {
-        if (!_esrPreviewData || _esrPreviewData.fatal_error || !(_esrPreviewData.valid_row_count > 0)) {
-          alert('Fix your CSV or profile (name and GMC) before continuing.');
+        if (!_esrAnalyzeData || _esrAnalyzeData.fatal_error) {
+          alert('Fix column mapping or choose a different CSV.');
           return;
         }
+        _esrColumnMapping = collectColumnMappingFromForm();
         setEsrWizardStep(4);
+        showCsvImportLoading('Checking rows with your column mapping…');
+        try {
+          _esrPreviewData = await postCsv(true, _esrColumnMapping);
+          renderEsrPreviewSummary(_esrPreviewData);
+          renderCsvResult(_esrPreviewData, {});
+        } catch (e) {
+          document.getElementById('esrPreviewWrap').innerHTML =
+            '<p style="color:var(--nhsuk-error);">' + escapeHtml(e.message) + '</p>';
+        }
         return;
       }
       if (_esrWizardStep === 4) {
+        if (!_esrPreviewData || _esrPreviewData.fatal_error || !(_esrPreviewData.valid_row_count > 0)) {
+          alert('Fix your CSV or column mapping before continuing.');
+          return;
+        }
+        setEsrWizardStep(5);
+        return;
+      }
+      if (_esrWizardStep === 5) {
         var evEl = document.getElementById('csv_evidence');
         if (!evEl.files || !evEl.files[0]) {
           alert('Choose evidence of completion before continuing.');
           return;
         }
-        setEsrWizardStep(5);
+        setEsrWizardStep(6);
         updateCsvImportButtonState();
       }
     }
@@ -1484,6 +1613,8 @@
       document.getElementById('csv_filename').textContent = this.files.length ? 'Chosen: ' + this.files[0].name : '';
       document.getElementById('csvImportResult').innerHTML = '';
       _esrPreviewData = null;
+      _esrAnalyzeData = null;
+      _esrColumnMapping = null;
       updateCsvImportButtonState();
     });
     document.getElementById('csv_evidence').addEventListener('change', function() {
@@ -1514,7 +1645,7 @@
       return d.innerHTML;
     }
 
-    async function postCsv(dryRun) {
+    async function postCsv(dryRun, columnMapping) {
       var input = document.getElementById('csv_upload');
       var evInput = document.getElementById('csv_evidence');
       if (!input.files || !input.files[0]) {
@@ -1529,6 +1660,10 @@
       fd.append('file', input.files[0], input.files[0].name || 'import.csv');
       if (!dryRun && evInput.files && evInput.files[0]) {
         fd.append('evidence', evInput.files[0], evInput.files[0].name || 'evidence');
+      }
+      var mapping = columnMapping || _esrColumnMapping;
+      if (mapping && Object.keys(mapping).length) {
+        fd.append('column_mapping', JSON.stringify(mapping));
       }
       var url = '/api/credentials/import-csv?dry_run=' + (dryRun ? 'true' : 'false');
       var resultEl = document.getElementById('csvImportResult');
@@ -1570,7 +1705,7 @@
         var checked = _esrPreviewData;
         if (!checked || checked.fatal_error || !(checked.valid_row_count > 0)) {
           showCsvImportLoading('Checking which rows match your profile…');
-          checked = await postCsv(true);
+          checked = await postCsv(true, _esrColumnMapping);
           _esrPreviewData = checked;
         }
         if (!checked) {

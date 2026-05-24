@@ -94,6 +94,24 @@ class CsvImportSkippedRow(BaseModel):
     message: str
 
 
+class CsvImportColumnMapping(BaseModel):
+    source_header: str
+    canonical: Optional[str] = None
+    canonical_label: Optional[str] = None
+    confidence: str = "unmapped"
+
+
+class CsvImportAnalyzeResponse(BaseModel):
+    fatal_error: Optional[str] = None
+    headers: list[str] = []
+    esr_layout: bool = False
+    trust_format: Optional[dict] = None
+    columns: list[CsvImportColumnMapping] = []
+    notes: list[str] = []
+    missing_required: list[str] = []
+    detected_mapping: dict[str, str] = {}
+
+
 class CsvImportResponse(BaseModel):
     """Bulk CSV import: validate and optionally issue."""
 
@@ -105,6 +123,7 @@ class CsvImportResponse(BaseModel):
     skipped: list[CsvImportSkippedRow] = []
     skipped_other_person_count: int = 0
     multi_person_export: bool = False
+    import_format_label: Optional[str] = None
     credentials: list[IssuedCredentialInfo] = []
     skipped_duplicate_count: int = 0
 
@@ -134,5 +153,6 @@ class HrBulkTrainingResponse(BaseModel):
 
 
 IssueResponse.model_rebuild()
+CsvImportAnalyzeResponse.model_rebuild()
 CsvImportResponse.model_rebuild()
 HrBulkTrainingResponse.model_rebuild()

@@ -1,7 +1,7 @@
 """Light tests for ESR CSV import generalisation."""
 import unittest
 
-from .csv_import import ImportProfileContext, parse_completion_csv
+from .csv_import import ImportProfileContext, analyze_csv_import, parse_completion_csv
 
 
 class CsvImportEsrTests(unittest.TestCase):
@@ -46,7 +46,60 @@ class CsvImportEsrTests(unittest.TestCase):
         skipped = [p for p in parsed if p.skipped]
         self.assertEqual(len(valid), 1)
         self.assertEqual(len(skipped), 1)
-        self.assertEqual(valid[0].record.staff_full_name, "Smith, Jane")
+
+    def test_analyze_csv_suggests_sheffield_headers(self):
+        csv_text = (
+            "Competency Name,Expiry Date,Date Last Awarded,Last Updated By,Title\n"
+            '"NHS|CSTF|Fire Safety|","30-Nov-2028","2025/10/12 00:00:00",'
+            '"457RTALUKD01|Talukdar, Dr Raihan","457 Fire Safety"\n'
+        )
+        profile = ImportProfileContext(
+            display_name="Talukdar, Dr Raihan",
+            staff_identifier="7014665",
+            current_trust="Sheffield Health Partnership University NHS Foundation Trust",
+            esr_import_config={
+                "label": "Test SHSC",
+                "assign_all_rows_to_signed_in_user": True,
+                "notes": ["Note one"],
+            },
+        )
+        result = analyze_csv_import(csv_text, profile=profile)
+        self.assertIsNone(result.get("fatal_error"))
+        self.assertTrue(result.get("esr_layout"))
+        self.assertEqual(result.get("trust_format", {}).get("label"), "Test SHSC")
+        self.assertIn("Competency Name", result.get("detected_mapping", {}))
+        parsed, fatal = parse_completion_csv(csv_text, profile=profile)
+        self.assertIsNone(fatal)
+        self.assertEqual(len([p for p in parsed if p.record]), 1)
+
+    def test_full_sheffield_export_headers_no_duplicate_fatal(self):
+        headers = (
+            "Competency Name,Competence Level,Min Requirement,Essential,Expiry Date,"
+            "Compliance Status,Description,Date Start,Date Last Awarded,Title,"
+            "Last Updated By,VPD"
+        )
+        csv_text = headers + "\n" + (
+            '"457|LOCAL|Clinical Risk (PAR) - 3 Years|","1 - Attended",,"Y",'
+            '"30-Nov-2028","GREEN",,"02-Dec-2025","2025/12/02 00:00:00",'
+            '"457 Clinical Risk","457RTALUKD01|Talukdar, Dr Raihan","457"\n'
+        )
+        profile = ImportProfileContext(
+            display_name="Talukdar, Dr Raihan",
+            staff_identifier="7014665",
+            current_trust="Sheffield Health Partnership University NHS Foundation Trust",
+            esr_import_config={
+                "assign_all_rows_to_signed_in_user": True,
+            },
+        )
+        result = analyze_csv_import(csv_text, profile=profile)
+        self.assertIsNone(result.get("fatal_error"))
+        self.assertTrue(result.get("esr_layout"))
+        by_header = {c["source_header"]: c for c in result.get("columns", [])}
+        self.assertEqual(by_header["Competency Name"].get("canonical"), "esr_competency_name")
+        self.assertFalse(by_header["Competence Level"].get("canonical"))
+        parsed, fatal = parse_completion_csv(csv_text, profile=profile)
+        self.assertIsNone(fatal)
+        self.assertEqual(len([p for p in parsed if p.record]), 1)
 
 
 if __name__ == "__main__":

@@ -198,6 +198,22 @@
       "match_name_substrings": ["sexual misconduct", "misconduct in the workplace"]
     }
   ],
+  "esr_import": {
+    "format_id": "esr_compliance_competency_457",
+    "label": "ESR Compliance & Competency (Sheffield SHSC / 457)",
+    "assign_all_rows_to_signed_in_user": true,
+    "person_columns_are_audit_only": true,
+    "notes": [
+      "In this export, Last Updated By shows who last updated the record in ESR (often a trainer or admin), not the learner.",
+      "If you exported View My Compliance, every row is your training — DocPass assigns them to your profile.",
+      "Awarded By values like CER or H are audit codes, not people."
+    ],
+    "extra_column_aliases": {
+      "competancy_name": "esr_competency_name",
+      "renewal_date": "expiry_date",
+      "valid_until": "expiry_date"
+    }
+  },
   "recognition_when_joining": {
     "_default": {
       "issuer_trust_name_hints": [],

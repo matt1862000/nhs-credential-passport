@@ -2,12 +2,13 @@
 DocPass — Phase 2 MVP API.
 Issuing service, verification endpoint, revoke, and did:web public key.
 """
+import json
 import os
 import re
 from contextlib import asynccontextmanager
 from typing import Iterator, Optional
 
-from fastapi import FastAPI, Request, HTTPException, File, UploadFile, Query
+from fastapi import FastAPI, Request, HTTPException, File, UploadFile, Query, Form
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -37,14 +38,17 @@ from .models import (
     CsvImportResponse,
     CsvImportInvalidRow,
     CsvImportSkippedRow,
+    CsvImportAnalyzeResponse,
 )
 from .csv_import import (
     ImportProfileContext,
     parse_completion_csv,
+    analyze_csv_import,
     csv_template_header,
     MAX_CSV_BYTES,
     MAX_CSV_EVIDENCE_BYTES,
 )
+from . import trust_packs
 from .auth_api import (
     NDJSON_STREAM_HEADERS,
     _ndjson_complete_line,
@@ -194,6 +198,61 @@ def api_csv_template(request: Request):
     )
 
 
+def _csv_import_profile(doctor: Optional[dict]) -> Optional[ImportProfileContext]:
+    if not doctor:
+        return None
+    trust = str(doctor.get("current_trust") or "").strip()
+    gmc = re.sub(r"\D", "", str(doctor.get("gmc_number") or ""))
+    return ImportProfileContext(
+        display_name=str(doctor.get("display_name") or "").strip(),
+        staff_identifier=gmc[-7:] if len(gmc) >= 7 else gmc,
+        current_trust=trust,
+        personal_scope=True,
+        esr_import_config=trust_packs.esr_import_config_for_trust(trust),
+    )
+
+
+def _parse_column_mapping_form(raw: Optional[str]) -> Optional[dict[str, str]]:
+    if not raw or not str(raw).strip():
+        return None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="column_mapping must be valid JSON")
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail="column_mapping must be a JSON object")
+    out: dict[str, str] = {}
+    for k, v in data.items():
+        sk = str(k or "").strip()
+        if not sk:
+            continue
+        out[sk] = str(v or "").strip()
+    return out or None
+
+
+@app.post("/api/credentials/import-csv/analyze")
+async def api_import_csv_analyze(
+    request: Request,
+    file: UploadFile = File(...),
+):
+    """Suggest column mapping and trust-specific import notes before dry-run."""
+    uid = require_user_id(request)
+    doctor = db.user_get_by_id(uid)
+    raw = await file.read()
+    if len(raw) > MAX_CSV_BYTES:
+        raise HTTPException(status_code=413, detail="CSV file too large")
+    text = _decode_csv_bytes(raw)
+    if text is None:
+        raise HTTPException(status_code=400, detail="CSV encoding not recognised (try UTF-8 or Windows-1252)")
+    profile = _csv_import_profile(doctor)
+    result = analyze_csv_import(text, profile=profile)
+    if result.get("fatal_error"):
+        return CsvImportAnalyzeResponse(fatal_error=result["fatal_error"])
+    return CsvImportAnalyzeResponse(**{k: result[k] for k in (
+        "headers", "esr_layout", "trust_format", "columns", "notes", "missing_required", "detected_mapping"
+    ) if k in result})
+
+
 def _csv_import_issue_stream(
     *,
     uid: int,
@@ -273,6 +332,7 @@ async def api_import_csv(
     evidence: Optional[UploadFile] = File(None),
     dry_run: bool = Query(False),
     stream: bool = Query(False),
+    column_mapping: Optional[str] = Form(None),
 ):
     """
     Upload UTF-8 CSV: validate rows, optionally issue all valid rows (dry_run=false).
@@ -288,17 +348,10 @@ async def api_import_csv(
         raise HTTPException(status_code=400, detail="CSV encoding not recognised (try UTF-8 or Windows-1252)")
 
     doctor = db.user_get_by_id(uid)
-    profile = None
-    if doctor:
-        gmc = re.sub(r"\D", "", str(doctor.get("gmc_number") or ""))
-        profile = ImportProfileContext(
-            display_name=str(doctor.get("display_name") or "").strip(),
-            staff_identifier=gmc[-7:] if len(gmc) >= 7 else gmc,
-            current_trust=str(doctor.get("current_trust") or "").strip(),
-            personal_scope=True,
-        )
+    profile = _csv_import_profile(doctor)
+    mapping = _parse_column_mapping_form(column_mapping)
 
-    parsed, fatal = parse_completion_csv(text, profile=profile)
+    parsed, fatal = parse_completion_csv(text, profile=profile, column_mapping=mapping)
     if fatal:
         return CsvImportResponse(dry_run=dry_run, fatal_error=fatal)
 
@@ -313,12 +366,17 @@ async def api_import_csv(
         if p.skipped
     ]
     skipped_other = sum(
-        1 for p in parsed if p.skipped and p.error and "another person" in (p.error or "")
+        1
+        for p in parsed
+        if p.skipped and p.error and "learner column" in (p.error or "")
     )
     valid = [p for p in parsed if p.record is not None]
     multi_person = skipped_other > 0 or len(
         {p.record.staff_full_name for p in valid if p.record}
     ) > 1
+    format_label = None
+    if profile and profile.esr_import_config:
+        format_label = (profile.esr_import_config.get("label") or "").strip() or None
     base = str(request.base_url).rstrip("/")
 
     def _csv_response(**kwargs):
@@ -329,6 +387,7 @@ async def api_import_csv(
             skipped=skipped_rows,
             skipped_other_person_count=skipped_other,
             multi_person_export=multi_person,
+            import_format_label=format_label,
         )
         base_fields.update(kwargs)
         return CsvImportResponse(**base_fields)
@@ -377,6 +436,7 @@ async def api_import_csv(
         skipped=[r.model_dump() for r in skipped_rows],
         skipped_other_person_count=skipped_other,
         multi_person_export=multi_person,
+        import_format_label=format_label,
     )
 
     if stream:
