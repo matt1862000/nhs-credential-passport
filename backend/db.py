@@ -1613,6 +1613,30 @@ def csv_import_evidence_save(
         return int(cur.lastrowid)
 
 
+def csv_import_evidence_get(user_id: int, evidence_id: int) -> Optional[dict]:
+    """Return one stored CSV import evidence file for the signed-in user."""
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        _ensure_csv_import_evidence_table(conn)
+        row = conn.execute(
+            """
+            SELECT id, filename, content_type, size_bytes, data
+            FROM csv_import_evidence
+            WHERE id = ? AND user_id = ?
+            """,
+            (int(evidence_id), int(user_id)),
+        ).fetchone()
+    if not row:
+        return None
+    return {
+        "id": int(row["id"]),
+        "filename": row["filename"],
+        "content_type": row["content_type"],
+        "size_bytes": int(row["size_bytes"]),
+        "data": bytes(row["data"]),
+    }
+
+
 def _ensure_share_tables(conn: sqlite3.Connection) -> None:
     conn.execute("""
         CREATE TABLE IF NOT EXISTS share_sessions (

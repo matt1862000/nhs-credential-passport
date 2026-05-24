@@ -569,7 +569,7 @@
         var usedAdd = false;
         (wallet || []).forEach(function (c) {
           if (!c || c.revoked) return;
-          if (c.import_evidence_batch) usedEsr = true;
+          if (c.import_evidence_batch || c.import_evidence_id) usedEsr = true;
           else usedAdd = true;
         });
         return { usedEsr: usedEsr, usedAdd: usedAdd };

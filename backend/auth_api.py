@@ -845,6 +845,43 @@ def me_trust_requirements(request: Request):
     return {"topics": db.mandatory_topics_list(trust), "trust": trust}
 
 
+def _sanitize_wallet_entry(entry: dict) -> dict:
+    """Drop bulky local-only fields when evidence lives on the server."""
+    if not isinstance(entry, dict):
+        return entry
+    out = dict(entry)
+    if out.get("import_evidence_id"):
+        out.pop("certificate_base64", None)
+        out.pop("import_evidence_batch", None)
+    return out
+
+
+def _wallet_batch_evidence_b64(
+    uid: int,
+    wallet_by_id: dict,
+    credential_ids: list[str],
+) -> tuple[Optional[str], Optional[str]]:
+    """One evidence file shared across a CSV import batch."""
+    for cid in credential_ids:
+        w = wallet_by_id.get(cid) or {}
+        b64 = w.get("certificate_base64")
+        if b64:
+            return str(b64), w.get("certificate_filename")
+    for cid in credential_ids:
+        w = wallet_by_id.get(cid) or {}
+        raw_id = w.get("import_evidence_id")
+        if raw_id is None:
+            continue
+        try:
+            ev_id = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+        row = db.csv_import_evidence_get(uid, ev_id)
+        if row and row.get("data"):
+            return base64.b64encode(row["data"]).decode("ascii"), row.get("filename")
+    return None, None
+
+
 @router.get("/me/wallet")
 def me_wallet_get(request: Request):
     uid = _current_user_id(request)
@@ -876,6 +913,7 @@ async def me_wallet_put(request: Request):
         data = data["credentials"]
     if not isinstance(data, list):
         raise HTTPException(status_code=400, detail="Expected a JSON array of credentials")
+    data = [_sanitize_wallet_entry(c) if isinstance(c, dict) else c for c in data]
     if len(data) > 5000:
         raise HTTPException(status_code=400, detail="Too many credentials")
     try:
@@ -900,6 +938,20 @@ async def me_wallet_put(request: Request):
         withdrawn = db.share_withdraw_pending_for_doctor(uid, list(removed_ids))
     db.user_wallet_put(uid, json.dumps(data))
     return {"ok": True, "count": len(data), "withdrawn_pending_shares": withdrawn}
+
+
+@router.get("/me/import-evidence/{evidence_id}")
+def me_import_evidence_get(request: Request, evidence_id: int):
+    """Fetch ESR import evidence stored on the server (not in browser storage)."""
+    uid = require_user_id(request)
+    row = db.csv_import_evidence_get(uid, evidence_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Evidence not found")
+    return {
+        "filename": row.get("filename") or "evidence",
+        "content_type": row.get("content_type") or "application/octet-stream",
+        "base64": base64.b64encode(row["data"]).decode("ascii"),
+    }
 
 
 @router.post("/me/shares/withdraw")
@@ -961,14 +1013,7 @@ async def me_shares_post(request: Request, background_tasks: BackgroundTasks):
             wallet_by_id[str(c.get("credential_id"))] = c
 
     # One wallet row may hold batch evidence (e.g. CSV import); copy to every share item for HR.
-    fallback_b64 = None
-    fallback_fn = None
-    for cid in ids:
-        w = wallet_by_id.get(cid) or {}
-        if w.get("certificate_base64"):
-            fallback_b64 = w.get("certificate_base64")
-            fallback_fn = w.get("certificate_filename")
-            break
+    fallback_b64, fallback_fn = _wallet_batch_evidence_b64(uid, wallet_by_id, ids)
 
     portfolio = bool(body.get("portfolio"))
     if portfolio:

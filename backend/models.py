@@ -141,6 +141,7 @@ class CsvImportResponse(BaseModel):
     import_format_label: Optional[str] = None
     credentials: list[IssuedCredentialInfo] = []
     skipped_duplicate_count: int = 0
+    import_evidence_id: Optional[int] = None
 
 
 class HrBulkTrainingRow(BaseModel):

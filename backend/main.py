@@ -308,9 +308,10 @@ def _csv_import_issue_stream(
             )
         )
     issued_count = len(credentials_out)
+    import_evidence_id = None
     if ev_bytes is not None:
         try:
-            db.csv_import_evidence_save(
+            import_evidence_id = db.csv_import_evidence_save(
                 uid,
                 ev_name,
                 ev_ct,
@@ -318,12 +319,13 @@ def _csv_import_issue_stream(
                 credentials_issued=issued_count,
             )
         except Exception:
-            pass
+            import_evidence_id = None
     payload = dict(response_fields)
     payload.update(
         dry_run=False,
         credentials=[c.model_dump() for c in credentials_out],
         skipped_duplicate_count=skipped_dups,
+        import_evidence_id=import_evidence_id,
     )
     yield _ndjson_complete_line(payload)
 
@@ -489,9 +491,10 @@ async def api_import_csv(
         )
 
     issued_count = len(credentials_out)
+    import_evidence_id = None
     if ev_bytes is not None:
         try:
-            db.csv_import_evidence_save(
+            import_evidence_id = db.csv_import_evidence_save(
                 uid,
                 ev_name,
                 ev_ct,
@@ -499,12 +502,13 @@ async def api_import_csv(
                 credentials_issued=issued_count,
             )
         except Exception:
-            pass
+            import_evidence_id = None
 
     return _csv_response(
         dry_run=False,
         credentials=credentials_out,
         skipped_duplicate_count=skipped_dups,
+        import_evidence_id=import_evidence_id,
     )
 
 
