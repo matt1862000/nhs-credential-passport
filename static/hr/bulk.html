@@ -6,7 +6,7 @@
   <meta name="application-name" content="DocPass">
   <meta name="theme-color" content="#005eb8">
 
-  <title>Add training for doctor(s) &mdash; DocPass</title>
+  <title>Add training for doctors &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
   <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260529-1">
   <link rel="stylesheet" href="/static/shared/training-add-form.css?v=20260526-2">
@@ -37,8 +37,8 @@
   </header>
 
   <main class="nhsuk-main hr-wrap" id="maincontent" role="main">
-    <h1 class="nhsuk-page-heading">Add training for doctor(s)</h1>
-    <p class="nhsuk-lead">Issue the same module completion to one or more clinicians — search individually, use a cohort, or upload a roster file.</p>
+    <h1 class="nhsuk-page-heading">Add training for doctors</h1>
+    <p class="nhsuk-lead">Issue the same module completion to one or more doctors — search individually, use a cohort, or upload a roster file.</p>
 
     <div id="notPremium" class="hr-card" hidden>
       <p style="margin:0; font-weight:700;">This page is only for HR accounts.</p>
@@ -49,18 +49,18 @@
       <div class="hr-inbox-head">
         <h2>Add training</h2>
       </div>
-      <p class="hr-muted" style="margin:0 0 0.75rem 0;">Choose who receives the training, optionally attach class evidence, then enter module and dates. Only clinicians who have permitted your trust receive a record.</p>
+      <p class="hr-muted" style="margin:0 0 0.75rem 0;">Choose who receives the training, optionally attach class evidence, then enter module and dates. Only doctors who have permitted your trust receive a record.</p>
       <div class="hr-bulk-panel">
         <p class="cohort-wizard-step-label" id="bulkWizardStepLabel" aria-live="polite">Step 1 of 4 — Who receives this?</p>
         <form id="bulkForm" class="hr-bulk-form training-add-form" novalidate>
           <div id="bulkStepMethod" class="cohort-wizard-step-panel">
-            <p class="cohort-method-intro">How would you like to choose the clinician(s)?</p>
+            <p class="cohort-method-intro">How would you like to choose the doctor(s)?</p>
             <div class="cohort-method-grid" role="group" aria-label="Recipient source">
               <button type="button" class="cohort-method-card" data-bulk-method="search">
                 <span class="cohort-method-card__icon" aria-hidden="true">
                   <svg width="22" height="22" viewBox="0 0 24 24" focusable="false"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C8.01 14 6 11.99 6 9.5S8.01 5 10.5 5 15 7.01 15 9.5 12.99 14 10.5 14z"/></svg>
                 </span>
-                <span class="cohort-method-card__title">Search for clinicians</span>
+                <span class="cohort-method-card__title">Search for doctors</span>
                 <span class="cohort-method-card__desc">Find people by name, email, or GMC and add one or more individuals.</span>
               </button>
               <button type="button" class="cohort-method-card" data-bulk-method="cohort">
@@ -82,12 +82,12 @@
 
           <div id="bulkStepDoctors" class="cohort-wizard-step-panel" hidden>
             <div class="nhsuk-form-group">
-              <label class="nhsuk-label" for="bulkDoctorSearchInput">Search clinicians</label>
+              <label class="nhsuk-label" for="bulkDoctorSearchInput">Search doctors</label>
               <span class="nhsuk-hint" id="bulkDoctorSearchHint">Search by name, email, or GMC number. Only people who have permitted your trust appear.</span>
               <div class="hr-search-box-wrap">
                 <div class="nhs-ac-wrap hr-doctor-search-ac" id="bulkDoctorSearchAcWrap">
                   <input class="nhsuk-input" type="search" id="bulkDoctorSearchInput" placeholder="Name, email or GMC number…" autocomplete="off" aria-describedby="bulkDoctorSearchHint bulkStepDoctorsError" role="combobox" aria-autocomplete="list" aria-controls="bulkDoctorSearchSuggestList" aria-expanded="false">
-                  <ul id="bulkDoctorSearchSuggestList" class="nhs-suggest-list" role="listbox" hidden aria-label="Matching clinicians"></ul>
+                  <ul id="bulkDoctorSearchSuggestList" class="nhs-suggest-list" role="listbox" hidden aria-label="Matching doctors"></ul>
                 </div>
                 <button type="button" class="nhsuk-button hr-btn-small" id="bulkDoctorSearchBtn">Search</button>
               </div>
@@ -95,9 +95,9 @@
               <div id="bulkDoctorSearchResults" class="hr-search-results"></div>
             </div>
             <div class="cohort-roster-added">
-              <p class="cohort-roster-added__heading">Selected clinicians</p>
-              <span class="cohort-email-count cohort-email-count--empty" id="bulkDoctorCount" aria-live="polite">0 clinicians</span>
-              <p class="cohort-list-empty" id="bulkDoctorListEmpty">No clinicians selected yet — search and add them above.</p>
+              <p class="cohort-roster-added__heading">Selected doctors</p>
+              <span class="cohort-email-count cohort-email-count--empty" id="bulkDoctorCount" aria-live="polite">0 doctors</span>
+              <p class="cohort-list-empty" id="bulkDoctorListEmpty">No doctors selected yet — search and add them above.</p>
               <div id="bulkDoctorList" class="cohort-email-list" aria-live="polite"></div>
             </div>
             <p class="cohort-email-error" id="bulkStepDoctorsError" hidden role="alert"></p>

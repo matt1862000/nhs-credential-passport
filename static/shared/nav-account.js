@@ -289,7 +289,7 @@
 
   function conversationTitle(c, isHr) {
     if (isHr) {
-      return (c.doctor_name && String(c.doctor_name).trim()) || c.doctor_email || 'Clinician';
+      return (c.doctor_name && String(c.doctor_name).trim()) || c.doctor_email || 'Doctor';
     }
     return (c.hr_trust_display && String(c.hr_trust_display).trim())
       || (c.hr_trust && String(c.hr_trust).trim())
@@ -310,7 +310,7 @@
 
     if (!conversations.length) {
       body.innerHTML = isHr
-        ? '<p class="nhsuk-topnav__msg-preview-empty">No unread messages. Open Messages to search clinicians or cohorts.</p>'
+        ? '<p class="nhsuk-topnav__msg-preview-empty">No unread messages. Open Messages to search doctors or cohorts.</p>'
         : '<p class="nhsuk-topnav__msg-preview-empty">No conversations yet.</p>';
       return;
     }
@@ -718,7 +718,7 @@
   }
 
   function doctorGroupTitle(g) {
-    return (g.doctor_name && String(g.doctor_name).trim()) || g.doctor_email || 'Clinician';
+    return (g.doctor_name && String(g.doctor_name).trim()) || g.doctor_email || 'Doctor';
   }
 
   function reviewHrefForGroup(g) {

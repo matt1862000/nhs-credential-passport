@@ -306,13 +306,13 @@
     <section id="premiumTrustTools" style="margin-top:2.25rem;" hidden aria-label="HR tools">
       <div class="nhs-action-grid" role="list">
         <a class="nhs-action-card" href="/static/hr/mandatory/" role="listitem">
-          <div class="nhs-action-title">Mandatory requirements</div>
+          <div class="nhs-action-title">Mandatory training requirements</div>
           <p class="nhs-action-desc">Set the mandatory training topics your trust expects for staff.</p>
           <span class="nhs-action-cta">Manage &rsaquo;</span>
         </a>
         <a class="nhs-action-card" href="/static/hr/cohorts/" role="listitem">
           <div class="nhs-action-title">Add doctors</div>
-          <p class="nhs-action-desc">Provision a new clinician with their personal email and add them to a cohort.</p>
+          <p class="nhs-action-desc">On-board a new doctor with their personal email and add them to a cohort.</p>
           <span class="nhs-action-cta">Add doctors &rsaquo;</span>
         </a>
         <a class="nhs-action-card" href="/static/hr/messages/" role="listitem" id="hrMsgCard">
@@ -320,7 +320,7 @@
             <span>Messages</span>
             <span id="hrMsgBadge" class="nhs-inbox-pending-badge" hidden aria-live="polite"></span>
           </div>
-          <p class="nhs-action-desc">Conversations with clinicians at your trust.</p>
+          <p class="nhs-action-desc">Conversations with doctors at your trust.</p>
           <span class="nhs-action-cta">Open messages &rsaquo;</span>
         </a>
         <a class="nhs-action-card" href="/static/hr/" role="listitem" id="hrInboxCard">
@@ -328,7 +328,7 @@
             <span>Verify shared training</span>
             <span id="hrInboxPendingBadge" class="nhs-inbox-pending-badge" hidden aria-live="polite">&mdash;</span>
           </div>
-          <p class="nhs-action-desc" id="hrInboxCardDesc">Review credentials clinicians have shared with your trust for verification.</p>
+          <p class="nhs-action-desc" id="hrInboxCardDesc">Review credentials doctors have shared with your trust for verification.</p>
           <span class="nhs-action-cta">Review shared training &rsaquo;</span>
         </a>
         <a class="nhs-action-card" href="/static/hr/search.html" role="listitem">
@@ -406,7 +406,7 @@
           if (desc) {
             desc.textContent =
               total === 0
-                ? 'Nothing in the inbox right now. When clinicians share credentials for review, they will appear here.'
+                ? 'Nothing in the inbox right now. When doctors share credentials for review, they will appear here.'
                 : total === 1
                   ? '1 shared record is waiting for verification in your inbox.'
                   : total + ' shared records are waiting for verification in your inbox.';
@@ -785,7 +785,7 @@
         var dashboardTrainingStats = document.getElementById('dashboardTrainingStats');
         if (dashboardTrainingStats) dashboardTrainingStats.hidden = !!NHSAuth.user.premium;
 
-        /* Clinician wallet stats — not shown for premium (trust/HR) accounts. */
+        /* Doctor wallet stats — not shown for premium (trust/HR) accounts. */
         if (!NHSAuth.user.premium) {
           await NHSAuth.pullWalletMerge();
           renderStats(await fetchServerWallet());

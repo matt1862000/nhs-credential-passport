@@ -171,7 +171,7 @@ def send_automatic_expiry_reminders(
     topic_id: Optional[int] = None,
 ) -> dict:
     """
-    Daily job: message clinicians when mandatory training hits 30d, 7d, or expired milestones.
+    Daily job: message doctors when mandatory training hits 30d, 7d, or expired milestones.
     """
     if os.environ.get("HR_EXPIRY_REMINDERS_ENABLED", "1").strip().lower() in (
         "0",
@@ -206,8 +206,8 @@ def send_automatic_expiry_reminders(
         if not sender:
             continue
 
-        for clinician in db.clinicians_at_trust(trust):
-            uid = int(clinician["id"])
+        for doctor in db.clinicians_at_trust(trust):
+            uid = int(doctor["id"])
             doc = db.user_get_by_id(uid)
             if not doc:
                 continue
@@ -274,18 +274,18 @@ def send_manual_expiry_reminders(
     if not trust:
         return {"sent": 0, "failed": [], "scope": "other"}
 
-    clinicians = _clinicians_in_scope(
+    doctors = _clinicians_in_scope(
         trust, cohort_id=cohort_id, doctor_user_ids=doctor_user_ids
     )
     sent = 0
     failed: list[dict] = []
     credentials_included = 0
 
-    for clinician in clinicians:
-        uid = int(clinician["id"])
+    for doctor in doctors:
+        uid = int(doctor["id"])
         doc = db.user_get_by_id(uid)
         if not doc:
-            failed.append({"doctor_user_id": uid, "error": "clinician not found"})
+            failed.append({"doctor_user_id": uid, "error": "doctor not found"})
             continue
 
         snap = compliance_snapshot.doctor_compliance_snapshot(uid, trust)

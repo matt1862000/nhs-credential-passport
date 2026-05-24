@@ -152,10 +152,10 @@
         <div class="msg-sidebar">
           <div class="msg-conv-list">
             <div class="msg-search-panel" id="msgDoctorSearchPanel">
-              <label class="nhsuk-label" for="msgDoctorSearchInput">Search clinicians or cohorts</label>
+              <label class="nhsuk-label" for="msgDoctorSearchInput">Search doctors or cohorts</label>
               <span class="nhsuk-hint nhsuk-hint--secondary" style="display:block;margin:0 0 0.35rem 0;font-size:0.8125rem;">Name, email, GMC number, or cohort name</span>
               <input type="text" class="nhsuk-input" id="msgDoctorSearchInput" placeholder="e.g. jane.smith@gmail.com or February 2026…" autocomplete="off" aria-autocomplete="list" aria-controls="msgDoctorSearchResults">
-              <p id="msgSearchStatus" class="msg-search-status" role="status" aria-live="polite">Search to message a clinician, open a cohort, or view read history.</p>
+              <p id="msgSearchStatus" class="msg-search-status" role="status" aria-live="polite">Search to message a doctor, open a cohort, or view read history.</p>
               <div class="msg-search-toolbar" id="msgSearchToolbar" hidden>
                 <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnSelectAllResults">Add all to selection</button>
               </div>
@@ -166,7 +166,7 @@
                 <span id="msgSelectedCount" aria-live="polite">0 selected</span>
                 <button type="button" class="msg-selected-clear" id="btnClearSelected">Clear all</button>
               </div>
-              <ul class="msg-selected-list" id="msgSelectedList" aria-label="Selected clinicians"></ul>
+              <ul class="msg-selected-list" id="msgSelectedList" aria-label="Selected doctors"></ul>
               <div class="msg-selected-actions">
                 <button type="button" class="nhsuk-button" id="btnOpenBroadcast" disabled>Message selected</button>
               </div>
@@ -182,7 +182,7 @@
                 <div class="msg-thread-header-name" id="threadName">Select a conversation</div>
                 <div class="msg-thread-header-meta" id="threadMeta"></div>
               </div>
-              <div class="msg-bubbles" id="bubbles"><p class="msg-empty">Choose a conversation on the left, tick clinicians to message several at once, or search above.</p></div>
+              <div class="msg-bubbles" id="bubbles"><p class="msg-empty">Choose a conversation on the left, tick doctors to message several at once, or search above.</p></div>
               <div class="msg-compose" id="composeArea" hidden>
                 <div class="msg-compose-row">
                   <input type="file" id="msgFileInput" multiple hidden
@@ -208,8 +208,8 @@
             </div>
             <div class="msg-broadcast-panel" id="broadcastPanel" hidden>
               <div class="msg-thread-header">
-                <div class="msg-thread-header-name" id="broadcastTitle">Message selected clinicians</div>
-                <div class="msg-thread-header-meta" id="broadcastMeta">Each person gets a private thread. Use <strong>{name}</strong> and <strong>{trust}</strong> in templates — filled in per clinician when sent.</div>
+                <div class="msg-thread-header-name" id="broadcastTitle">Message selected doctors</div>
+                <div class="msg-thread-header-meta" id="broadcastMeta">Each person gets a private thread. Use <strong>{name}</strong> and <strong>{trust}</strong> in templates — filled in per doctor when sent.</div>
               </div>
               <div class="msg-broadcast-compose">
                 <label class="nhsuk-label" for="broadcastBody">Your message</label>
@@ -220,7 +220,7 @@
                       accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp">
                     <button type="button" class="msg-attach-btn" id="btnBroadcastAttach" aria-label="Attach file" title="Attach file"></button>
                     <div class="msg-compose-field">
-                      <textarea id="broadcastBody" rows="8" placeholder="Write your message…" aria-label="Message to selected clinicians"></textarea>
+                      <textarea id="broadcastBody" rows="8" placeholder="Write your message…" aria-label="Message to selected doctors"></textarea>
                     </div>
                   </div>
                   <ul class="msg-pending-files" id="broadcastPendingFiles" hidden aria-label="Files to send"></ul>
@@ -322,7 +322,7 @@
           document.getElementById('bubbles'),
           messages,
           _myId,
-          'Clinician'
+          'Doctor'
         );
       }
 
@@ -334,7 +334,7 @@
         var threadMeta = document.getElementById('threadMeta');
         var compose = document.getElementById('composeArea');
         if (threadName) {
-          threadName.textContent = _activeConv ? (_activeConv.doctor_name || _activeConv.doctor_email || 'Clinician') : 'Conversation';
+          threadName.textContent = _activeConv ? (_activeConv.doctor_name || _activeConv.doctor_email || 'Doctor') : 'Conversation';
         }
         if (threadMeta && _activeConv) {
           var meta = [];
@@ -370,13 +370,13 @@
         if (!container) return;
         _convs = sidebarConversations();
         if (!_convs.length) {
-          container.innerHTML = '<p class="msg-no-conv">No unread messages. Search above to find a clinician or open a past conversation.</p>';
+          container.innerHTML = '<p class="msg-no-conv">No unread messages. Search above to find a doctor or open a past conversation.</p>';
           return;
         }
         container.innerHTML = _convs.map(function (c) {
           var active = c.id === _activeConvId ? ' active' : '';
           var unread = c.unread_count > 0 ? '<span class="msg-unread-dot" aria-label="' + c.unread_count + ' unread"></span>' : '';
-          var name = c.doctor_name || c.doctor_email || 'Clinician';
+          var name = c.doctor_name || c.doctor_email || 'Doctor';
           var gmcBit = c.doctor_gmc ? ' · GMC ' + esc(c.doctor_gmc) : '';
           var preview = c.last_body ? esc(String(c.last_body).slice(0, 55)) : '<em>No messages yet</em>';
           return (
@@ -570,7 +570,7 @@
         }
         var sample = renderMessageTemplate(text, sampleDocForBroadcastPreview());
         preview.hidden = false;
-        preview.innerHTML = '<strong>Preview</strong> (first selected clinician): ' + esc(sample);
+        preview.innerHTML = '<strong>Preview</strong> (first selected doctor): ' + esc(sample);
       }
 
       function applyMessageTemplate(selectId, textareaId, sampleDoc) {
@@ -622,7 +622,7 @@
       }
 
       function doctorLabel(doc) {
-        return (doc.display_name || doc.email || 'Clinician').trim();
+        return (doc.display_name || doc.email || 'Doctor').trim();
       }
 
       function isDoctorSelected(id) {
@@ -634,7 +634,7 @@
         var key = String(doc.id);
         if (_selectedDoctors[key]) return true;
         if (selectedCount() >= MAX_BROADCAST_RECIPIENTS) {
-          alert('You can message at most ' + MAX_BROADCAST_RECIPIENTS + ' clinicians at once.');
+          alert('You can message at most ' + MAX_BROADCAST_RECIPIENTS + ' doctors at once.');
           return false;
         }
         _selectedDoctors[key] = {
@@ -706,8 +706,8 @@
         show(document.getElementById('broadcastPanel'), true);
         var title = document.getElementById('broadcastTitle');
         var meta = document.getElementById('broadcastMeta');
-        if (title) title.textContent = 'Message ' + n + ' clinician' + (n === 1 ? '' : 's');
-        if (meta) meta.innerHTML = 'Each person gets a private thread. Use <strong>{name}</strong> and <strong>{trust}</strong> in templates — filled in per clinician when sent.';
+        if (title) title.textContent = 'Message ' + n + ' doctor' + (n === 1 ? '' : 's');
+        if (meta) meta.innerHTML = 'Each person gets a private thread. Use <strong>{name}</strong> and <strong>{trust}</strong> in templates — filled in per doctor when sent.';
         clearBroadcastResult();
         updateBroadcastTemplatePreview();
       }
@@ -716,7 +716,7 @@
         var preview = members.slice(0, 5).map(doctorLabel);
         var extra = members.length > 5 ? '\n…and ' + (members.length - 5) + ' more.' : '';
         return confirm(
-          'Send this message to ' + members.length + ' clinician' + (members.length === 1 ? '' : 's') + '?\n\n'
+          'Send this message to ' + members.length + ' doctor' + (members.length === 1 ? '' : 's') + '?\n\n'
           + 'Each person gets their own private thread.\n\n'
           + preview.join('\n') + extra
         );
@@ -742,7 +742,7 @@
           html += (
             '<li role="option" tabindex="0" class="msg-search-cohort" data-cohort-idx="' + i + '">' +
               '<span class="msg-doctor-results-primary">Cohort: ' + esc(n) + '</span>' +
-              '<span class="msg-doctor-results-meta">' + mc + ' clinician' + (mc === 1 ? '' : 's') +
+              '<span class="msg-doctor-results-meta">' + mc + ' doctor' + (mc === 1 ? '' : 's') +
               ' — click to list</span></li>'
           );
         });
@@ -787,7 +787,7 @@
 
       async function loadCohortMembersForSearch(cohort) {
         if (!cohort || !cohort.id) return;
-        setDoctorSearchStatus('Loading clinicians…');
+        setDoctorSearchStatus('Loading doctors…');
         try {
           var data = await apiJson('/api/hr/cohorts/' + encodeURIComponent(String(cohort.id)));
           var members = (data.members || []).map(function (m) {
@@ -803,7 +803,7 @@
           _lastCohortSearch = [];
           _lastDoctorSearch = members;
           if (!members.length) {
-            renderSearchResults([], [], 'No clinicians in this cohort yet.');
+            renderSearchResults([], [], 'No doctors in this cohort yet.');
             return;
           }
           renderSearchResults(
@@ -827,7 +827,7 @@
           _lastDoctorSearch = [];
           _lastCohortSearch = [];
           _searchCohortContext = null;
-          setDoctorSearchStatus('Search to message a clinician, open a cohort, or view read history.');
+          setDoctorSearchStatus('Search to message a doctor, open a cohort, or view read history.');
           return;
         }
         _searchCohortContext = null;
@@ -841,7 +841,7 @@
           if (!results.length && !cohorts.length) {
             listEl.hidden = true;
             listEl.innerHTML = '';
-            setDoctorSearchStatus('No matching clinicians or cohorts found.');
+            setDoctorSearchStatus('No matching doctors or cohorts found.');
             return;
           }
           var parts = [];
@@ -849,7 +849,7 @@
             parts.push(cohorts.length + ' cohort' + (cohorts.length === 1 ? '' : 's'));
           }
           if (results.length) {
-            parts.push(results.length + ' clinician' + (results.length === 1 ? '' : 's'));
+            parts.push(results.length + ' doctor' + (results.length === 1 ? '' : 's'));
           }
           renderSearchResults(results, cohorts, parts.join(', ') + ' — tick to select, Open for one-to-one, or list a cohort.');
         } catch (e) {
@@ -976,7 +976,7 @@
         var resultEl = document.getElementById('broadcastResult');
         if (btn) btn.disabled = true;
         clearBroadcastResult();
-        if (viz()) viz().showLoading(resultEl, 'Sending to ' + members.length + ' clinician' + (members.length === 1 ? '' : 's') + '…');
+        if (viz()) viz().showLoading(resultEl, 'Sending to ' + members.length + ' doctor' + (members.length === 1 ? '' : 's') + '…');
         try {
           var ids = members.map(function (m) { return m.id; });
           var out = await NHSMessages.sendBroadcast('/api/hr/messages/broadcast', ids, body, files, resultEl);

@@ -93,7 +93,7 @@
         return '<div class="hr-count-row">' + parts.join('') + '</div>';
       }
 
-      /** Merge inbox rows that belong to the same clinician (multiple share sessions). */
+      /** Merge inbox rows that belong to the same doctor (multiple share sessions). */
       function aggregateDoctorGroups(sessions) {
         var m = Object.create(null);
         sessions.forEach(function (s) {
@@ -462,7 +462,7 @@
             li.id = listId + '-opt-' + i;
             li.dataset.index = String(i);
             var nameSpan = document.createElement('span');
-            nameSpan.textContent = doc.display_name || doc.email || 'Clinician';
+            nameSpan.textContent = doc.display_name || doc.email || 'Doctor';
             li.appendChild(nameSpan);
             var metaText = doctorSuggestMeta(doc);
             if (metaText) {
@@ -690,7 +690,7 @@
 
       async function runBulkDecline(entries) {
         if (!entries.length) return;
-        var reason = (prompt('Why are you declining these records? (Sent back to the clinician)') || '').trim();
+        var reason = (prompt('Why are you declining these records? (Sent back to the doctor)') || '').trim();
         if (!reason) return;
         var btn = document.getElementById('btnItemsDeclineSelected');
         if (btn) {
@@ -970,14 +970,14 @@
             if (groups.length === 0) {
               summaryEl.innerHTML = 'Nothing waiting — <strong>all caught up</strong> for now.';
             } else if (groups.length === 1) {
-              summaryEl.innerHTML = '<strong>1</strong> clinician still has records to verify.';
+              summaryEl.innerHTML = '<strong>1</strong> doctor still has records to verify.';
             } else {
-              summaryEl.innerHTML = '<strong>' + String(groups.length) + '</strong> clinicians still have records to verify.';
+              summaryEl.innerHTML = '<strong>' + String(groups.length) + '</strong> doctors still have records to verify.';
             }
           } else {
             summaryEl.innerHTML = groups.length === 0
               ? 'No completed sets in this list yet.'
-              : '<strong>' + String(groups.length) + '</strong> clinician(s) with every submission fully verified or declined.';
+              : '<strong>' + String(groups.length) + '</strong> doctor(s) with every submission fully verified or declined.';
           }
         }
         var rows = groups.map(function (g) {
@@ -1004,7 +1004,7 @@
           '<tr><td colspan="4" class="hr-muted">' +
             (inboxTab === 'new' ? 'No sets need action right now.' : 'No completed sets to show.') +
             (lastInboxGroups.length && groups.length < lastInboxGroups.length
-              ? ' (filters hide ' + (lastInboxGroups.length - groups.length) + ' clinician' +
+              ? ' (filters hide ' + (lastInboxGroups.length - groups.length) + ' doctor' +
                 (lastInboxGroups.length - groups.length === 1 ? '' : 's') + '.)'
               : '') +
             '</td></tr>';
@@ -1023,19 +1023,19 @@
           if (inboxTab === 'new') {
             if (groups.length === 0) {
               summaryEl.innerHTML = lastInboxGroups.length
-                ? 'No clinicians match the current filters.'
+                ? 'No doctors match the current filters.'
                 : 'Nothing waiting — <strong>all caught up</strong> for now.';
             } else if (groups.length === 1) {
-              summaryEl.innerHTML = '<strong>1</strong> clinician still has records to verify.';
+              summaryEl.innerHTML = '<strong>1</strong> doctor still has records to verify.';
             } else {
               summaryEl.innerHTML =
-                '<strong>' + String(groups.length) + '</strong> clinicians still have records to verify.';
+                '<strong>' + String(groups.length) + '</strong> doctors still have records to verify.';
             }
           } else {
             summaryEl.innerHTML =
               groups.length === 0
-                ? (lastInboxGroups.length ? 'No clinicians match the current filters.' : 'No completed sets in this list yet.')
-                : '<strong>' + String(groups.length) + '</strong> clinician(s) with every submission fully verified or declined.';
+                ? (lastInboxGroups.length ? 'No doctors match the current filters.' : 'No completed sets in this list yet.')
+                : '<strong>' + String(groups.length) + '</strong> doctor(s) with every submission fully verified or declined.';
           }
         }
         var rows = groups.map(function (g) {
@@ -1104,7 +1104,7 @@
           if (showPortfolioBanner) {
             tail +=
               '<div class="hr-muted" style="text-align:right; max-width:24rem; margin:0.5rem 0 0 auto; font-size:0.875rem; line-height:1.45;">' +
-              '<strong>Reference pack</strong> — already verified by HR at the clinician&rsquo;s other employer. View-only here; no verify or decline.</div>';
+              '<strong>Reference pack</strong> — already verified by HR at the doctor&rsquo;s other employer. View-only here; no verify or decline.</div>';
           }
           if (merged && (s.session_ids || []).length > 1) {
             tail += '<div class="hr-date-sub" style="text-align:right;">' + String(s.session_ids.length) + ' submissions combined</div>';
@@ -1286,7 +1286,7 @@
       async function loadDoctorQueue(doctorUserId) {
         var tbody = document.getElementById('itemsTbody');
         var titleEl = document.getElementById('sessionViewTitle');
-        if (titleEl) titleEl.textContent = 'E-learning from this clinician';
+        if (titleEl) titleEl.textContent = 'E-learning from this doctor';
         tbody.innerHTML = '<tr><td colspan="5" class="hr-muted">Loading…</td></tr>';
         lastSessionPayload = await apiJson('/api/hr/doctors/' + encodeURIComponent(String(doctorUserId)) + '/queue');
         renderItemsTable(lastSessionPayload, null);
@@ -1337,7 +1337,7 @@
             if (u) {
               if (
                 !confirm(
-                  'Revert this record to awaiting decision? The clinician will no longer see it as verified by HR at your trust.'
+                  'Revert this record to awaiting decision? The doctor will no longer see it as verified by HR at your trust.'
                 )
               ) {
                 actionInFlight = false;
@@ -1539,7 +1539,7 @@
           if (!m || !form) return;
           addTrainingDoctorId = String(doctorId || '');
           var dname = doctorName || '';
-          if (t) t.textContent = 'Add training — ' + (dname || 'Clinician');
+          if (t) t.textContent = 'Add training — ' + (dname || 'Doctor');
           form.reset();
           var nm = document.getElementById('addTrainingEvidenceName');
           if (nm) nm.textContent = '';
@@ -1560,7 +1560,7 @@
         var searchDoctorViewName = '';
 
         function confirmDeleteDoctor(name) {
-          var label = (name || '').trim() || 'this clinician';
+          var label = (name || '').trim() || 'this doctor';
           return window.confirm(
             'Permanently delete ' + label + '?\n\n' +
             'This removes their DocPass account, all training records, and membership in any cohorts they belong to. This cannot be undone.'
@@ -1574,7 +1574,7 @@
             await apiJson('/api/hr/doctors/' + encodeURIComponent(String(doctorId)), { method: 'DELETE' });
             return true;
           } catch (err) {
-            window.alert(err.message || 'Could not delete clinician.');
+            window.alert(err.message || 'Could not delete doctor.');
             return false;
           }
         }
@@ -1605,7 +1605,7 @@
           var countEl = document.getElementById('bulkDoctorCount');
           var n = bulkSelectedDoctors.length;
           if (countEl) {
-            countEl.textContent = n + ' clinician' + (n === 1 ? '' : 's');
+            countEl.textContent = n + ' doctor' + (n === 1 ? '' : 's');
             countEl.classList.toggle('cohort-email-count--empty', n === 0);
           }
           if (empty) empty.hidden = n > 0;
@@ -1621,10 +1621,10 @@
             return (
               '<div class="cohort-email-row">' +
               '<div class="cohort-email-row__body">' +
-              '<span class="cohort-email-row__addr">' + esc(d.name || d.email || 'Clinician') + '</span>' +
+              '<span class="cohort-email-row__addr">' + esc(d.name || d.email || 'Doctor') + '</span>' +
               (meta.length ? '<span class="cohort-email-row__sub">' + meta.join(' · ') + '</span>' : '') +
               '</div>' +
-              '<button type="button" class="cohort-email-row__remove" data-bulk-remove-doctor="' + esc(String(d.id)) + '" aria-label="Remove ' + esc(d.name || d.email || 'clinician') + '">&times;</button>' +
+              '<button type="button" class="cohort-email-row__remove" data-bulk-remove-doctor="' + esc(String(d.id)) + '" aria-label="Remove ' + esc(d.name || d.email || 'doctor') + '">&times;</button>' +
               '</div>'
             );
           }).join('');
@@ -1634,12 +1634,12 @@
           if (!doc || doc.id == null) return false;
           if (bulkDoctorById(doc.id)) return false;
           if (bulkSelectedDoctors.length >= BULK_MAX_DOCTORS) {
-            setBulkStepError('bulkStepDoctorsError', 'Maximum ' + BULK_MAX_DOCTORS + ' clinicians per upload.');
+            setBulkStepError('bulkStepDoctorsError', 'Maximum ' + BULK_MAX_DOCTORS + ' doctors per upload.');
             return false;
           }
           bulkSelectedDoctors.push({
             id: Number(doc.id),
-            name: (doc.display_name || doc.email || 'Clinician').trim(),
+            name: (doc.display_name || doc.email || 'Doctor').trim(),
             email: doc.email || '',
             gmc_number: doc.gmc_number || '',
           });
@@ -1671,7 +1671,7 @@
           try {
             var data = await apiJson('/api/hr/doctors/search?q=' + encodeURIComponent(q) + '&limit=30');
             var results = data.results || [];
-            if (statusEl) statusEl.textContent = results.length ? '' : 'No matching clinicians found.';
+            if (statusEl) statusEl.textContent = results.length ? '' : 'No matching doctors found.';
             if (!results.length || !resultsEl) return;
             resultsEl.innerHTML = results.map(function (doc) {
               var name = esc(doc.display_name || doc.email || '—');
@@ -1810,7 +1810,7 @@
             var docNames = bulkSelectedDoctors.map(function (d) { return d.name; });
             var docLabel = docNames.length === 1
               ? '“' + docNames[0] + '”'
-              : docNames.length + ' clinicians (“' + docNames.slice(0, 3).join('”, “') + (docNames.length > 3 ? '”, …' : '') + '”)';
+              : docNames.length + ' doctors (“' + docNames.slice(0, 3).join('”, “') + (docNames.length > 3 ? '”, …' : '') + '”)';
             el.textContent = 'Recipients: ' + docLabel + '.';
           } else {
             el.textContent = '';
@@ -1819,7 +1819,7 @@
 
         function bulkStepTwoLabel() {
           if (bulkRecipientMethod === 'cohort') return 'Step 2 of 4 — Choose cohorts';
-          if (bulkRecipientMethod === 'search') return 'Step 2 of 4 — Choose clinicians';
+          if (bulkRecipientMethod === 'search') return 'Step 2 of 4 — Choose doctors';
           return 'Step 2 of 4 — Upload roster';
         }
 
@@ -1961,7 +1961,7 @@
           if (bulkNextDoctors) {
             bulkNextDoctors.addEventListener('click', function () {
               if (!bulkSelectedDoctors.length) {
-                setBulkStepError('bulkStepDoctorsError', 'Add at least one clinician to continue.');
+                setBulkStepError('bulkStepDoctorsError', 'Add at least one doctor to continue.');
                 var searchInp = document.getElementById('bulkDoctorSearchInput');
                 if (searchInp) searchInp.focus();
                 return;
@@ -2075,7 +2075,7 @@
               if (!searchDoctorViewId || !cidU) return;
               if (
                 !confirm(
-                  'Remove HR verification for this record? The clinician will no longer see it as verified by HR at your trust.'
+                  'Remove HR verification for this record? The doctor will no longer see it as verified by HR at your trust.'
                 )
               ) {
                 return;
@@ -2141,7 +2141,7 @@
               var row = delBtn.closest('.hr-search-result-row');
               if (row) row.remove();
               var statusEl = document.getElementById('searchStatus');
-              if (statusEl) statusEl.textContent = 'Clinician deleted.';
+              if (statusEl) statusEl.textContent = 'Doctor deleted.';
               if (searchDoctorViewId && String(searchDoctorViewId) === String(delId)) {
                 searchDoctorViewId = '';
                 searchDoctorViewName = '';
@@ -2168,7 +2168,7 @@
             show(document.getElementById('searchDoctorView'), false);
             show(document.getElementById('searchView'), true);
             var statusEl = document.getElementById('searchStatus');
-            if (statusEl) statusEl.textContent = 'Clinician deleted.';
+            if (statusEl) statusEl.textContent = 'Doctor deleted.';
             if (HR_PAGE === 'search') {
               try { window.history.replaceState({}, '', '/static/hr/search.html'); } catch (eHistDel2) {}
             }
@@ -2329,7 +2329,7 @@
             var hasRoster = bulkRecipientMethod === 'roster' && rosterEl && rosterEl.files && rosterEl.files[0];
             var hasDoctors = bulkRecipientMethod === 'search' && bulkSelectedDoctors.length > 0;
             if (!hasCohorts && !hasRoster && !hasDoctors) {
-              setBulkStatusMessage('Complete the recipient steps: search for clinicians, select a cohort, or upload a roster file.', 'error');
+              setBulkStatusMessage('Complete the recipient steps: search for doctors, select a cohort, or upload a roster file.', 'error');
               setBulkWizardStep(2);
               return;
             }
@@ -2353,7 +2353,7 @@
             } else if (hasDoctors) {
               bulkStartMsg = bulkSelectedDoctors.length === 1
                 ? 'Issuing training for ' + bulkSelectedDoctors[0].name + '…'
-                : 'Issuing training for ' + bulkSelectedDoctors.length + ' clinicians…';
+                : 'Issuing training for ' + bulkSelectedDoctors.length + ' doctors…';
             }
             if (batchViz()) batchViz().showLoading(bulkVizEl, bulkStartMsg);
             if (wrap) wrap.hidden = true;
@@ -2455,7 +2455,7 @@
           try {
             var data = await apiJson('/api/hr/doctors/search?q=' + encodeURIComponent(q) + '&limit=30');
             var results = data.results || [];
-            if (statusEl) statusEl.textContent = results.length ? '' : 'No matching clinicians found.';
+            if (statusEl) statusEl.textContent = results.length ? '' : 'No matching doctors found.';
             if (!results.length) { if (resultsEl) resultsEl.innerHTML = ''; return; }
             if (results.length === 1 && opts.autoOpenSingle) {
               await openSearchDoctorView(results[0].id, results[0].display_name || results[0].email || '');
@@ -2524,7 +2524,7 @@
             });
             searchDoctorItemsCache = items;
             if (!items.length) {
-              if (tbody) tbody.innerHTML = '<tr><td colspan="4" class="hr-muted">No verified records for this clinician yet.</td></tr>';
+              if (tbody) tbody.innerHTML = '<tr><td colspan="4" class="hr-muted">No verified records for this doctor yet.</td></tr>';
               return;
             }
             if (tbody) {
@@ -2601,7 +2601,7 @@
           show(document.getElementById('searchView'), true);
           show(document.getElementById('searchDoctorView'), false);
           if (doctorId) {
-            await openSearchDoctorView(doctorId, qs().get('name') || 'Clinician');
+            await openSearchDoctorView(doctorId, qs().get('name') || 'Doctor');
           } else {
             var qParam = (qs().get('q') || '').trim();
             if (qParam) {

@@ -108,7 +108,7 @@ def _clinician_label(session: dict) -> str:
         return name
     if email:
         return email
-    return "A clinician"
+    return "A doctor"
 
 
 def _pending_share_items(session: dict) -> list[dict]:
@@ -176,7 +176,7 @@ def _format_digest_bodies(hr_user: dict, stats: dict) -> tuple[str, str, str]:
     if clinicians_review > 0:
         subject = (
             f"DocPass daily summary — {pending_items} pending, "
-            f"{clinicians_review} clinician(s) need requirement review"
+            f"{clinicians_review} doctor(s) need requirement review"
         )
 
     lines = [
@@ -185,11 +185,11 @@ def _format_digest_bodies(hr_user: dict, stats: dict) -> tuple[str, str, str]:
         f"Your DocPass summary for {trust}:",
         "",
         f"• Pending verifications: {pending_items} record(s) across {pending_sessions} shared set(s)",
-        f"• Unread messages from clinicians: {unread_messages}",
+        f"• Unread messages from doctors: {unread_messages}",
     ]
     if clinicians_review > 0:
         lines.append(
-            f"• Mandatory requirement fit: {clinicians_review} clinician(s) with "
+            f"• Mandatory requirement fit: {clinicians_review} doctor(s) with "
             f"{topics_review} topic(s) needing your judgement"
         )
     lines.extend(
@@ -214,11 +214,11 @@ def _format_digest_bodies(hr_user: dict, stats: dict) -> tuple[str, str, str]:
     html_items = (
         f"<li><strong>{pending_items}</strong> training record(s) awaiting verification across "
         f"<strong>{pending_sessions}</strong> shared set(s)</li>"
-        f"<li><strong>{unread_messages}</strong> unread message(s) from clinicians</li>"
+        f"<li><strong>{unread_messages}</strong> unread message(s) from doctors</li>"
     )
     if clinicians_review > 0:
         html_items += (
-            f"<li><strong>{clinicians_review}</strong> clinician(s) with "
+            f"<li><strong>{clinicians_review}</strong> doctor(s) with "
             f"<strong>{topics_review}</strong> mandatory topic(s) needing requirement-fit review</li>"
         )
     html_actions: list[tuple[str, str]] = [
@@ -251,17 +251,17 @@ def _format_instant_bodies(
     inbox = f"{_inbox_url()}?session={int(session_id)}"
     prefs = _prefs_url()
     session = session or {}
-    clinician = _clinician_label(session)
+    doctor = _clinician_label(session)
     pending = _pending_share_items(session) if session else []
     if not pending and pending_items > 0:
         pending = session.get("items") or []
     record_text, record_html = _format_record_lines(pending)
 
-    subject = f"DocPass: {clinician} shared {pending_items} training record(s) for verification"
+    subject = f"DocPass: {doctor} shared {pending_items} training record(s) for verification"
     text_parts = [
         f"Hello {_hr_recipient_name(hr_user)},",
         "",
-        f"{clinician} has shared {pending_items} training record(s) for HR verification at {trust}.",
+        f"{doctor} has shared {pending_items} training record(s) for HR verification at {trust}.",
     ]
     if record_text:
         text_parts.extend(["", record_text])
@@ -280,7 +280,7 @@ def _format_instant_bodies(
     html_body = _email_html_document(
         _email_p(f"Hello {html.escape(_hr_recipient_name(hr_user))},")
         + _email_p(
-            f"<strong>{html.escape(clinician)}</strong> has shared "
+            f"<strong>{html.escape(doctor)}</strong> has shared "
             f"<strong>{pending_items}</strong> training record(s) for HR verification at "
             f"{html.escape(trust)}."
         )
@@ -329,7 +329,7 @@ def notify_new_share_for_hr(
     share_kind: str = "review",
 ) -> int:
     """
-    Instant email to HR users at target_trust when a clinician submits for verification.
+    Instant email to HR users at target_trust when a doctor submits for verification.
     Returns count of emails sent.
     """
     if (share_kind or "review").strip().lower() != "review":

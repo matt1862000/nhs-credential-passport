@@ -93,7 +93,7 @@
       <div class="nhsuk-form-group">
         <label class="nhsuk-label" for="filterCohort">Cohort (optional)</label>
         <select class="nhsuk-select" id="filterCohort">
-          <option value="">All clinicians at trust</option>
+          <option value="">All doctors at trust</option>
         </select>
       </div>
       <div class="exp-actions">
@@ -107,10 +107,10 @@
     <p id="expSendStatus" class="exp-send-status" hidden aria-live="polite"></p>
     <p id="expSummary" class="hr-muted" aria-live="polite"></p>
     <div class="hr-table-wrap">
-      <table class="hr-table" aria-label="Expiring mandatory training by clinician">
+      <table class="hr-table" aria-label="Expiring mandatory training by doctor">
         <thead>
           <tr>
-            <th>Clinician</th>
+            <th>Doctor</th>
             <th>Records</th>
             <th></th>
           </tr>
@@ -136,7 +136,7 @@
       function doctorLabel(item) {
         return (item.display_name && item.display_name.trim())
           ? item.display_name.trim()
-          : (item.email || 'Clinician');
+          : (item.email || 'Doctor');
       }
       function syncTopicFilter(topics, keepValue) {
         var sel = document.getElementById('filterTopic');
@@ -192,11 +192,11 @@
         var banner = document.getElementById('expAutoBanner');
         if (other) {
           if (lead) lead.textContent = 'Other wallet training (not linked to a mandatory topic) that is expiring or already expired.';
-          if (hint) hint.textContent = 'Use Send reminders now to message clinicians — mandatory training is reminded automatically.';
+          if (hint) hint.textContent = 'Use Send reminders now to message doctors — mandatory training is reminded automatically.';
           if (banner) banner.hidden = true;
         } else {
           if (lead) lead.textContent = 'Mandatory topics where matched wallet records are expiring or already expired.';
-          if (hint) hint.textContent = 'Clinicians are reminded automatically at 30 days, 7 days, and expiry. This view is for monitoring only.';
+          if (hint) hint.textContent = 'Doctors are reminded automatically at 30 days, 7 days, and expiry. This view is for monitoring only.';
           if (banner) banner.hidden = !(data && data.auto_reminders_enabled !== false);
         }
       }
@@ -220,9 +220,9 @@
         var kindLabel = other ? 'other wallet training' : 'mandatory training';
         if (summary) {
           summary.textContent = items.length
-            ? items.length + ' clinician' + (items.length === 1 ? '' : 's')
+            ? items.length + ' doctor' + (items.length === 1 ? '' : 's')
               + ' with ' + kindLabel + ' expiring within ' + windowDays + ' days' + filterNote + ' (or already expired).'
-            : 'No clinicians with expiring ' + kindLabel + ' for these filters.';
+            : 'No doctors with expiring ' + kindLabel + ' for these filters.';
         }
         if (!items.length) {
           tbody.innerHTML = '<tr><td colspan="3" class="hr-muted">Nothing to show for these filters.</td></tr>';
@@ -270,7 +270,7 @@
           var cohorts = (data.cohorts || []).slice().sort(function (a, b) {
             return String(a.name || '').localeCompare(String(b.name || ''));
           });
-          sel.innerHTML = '<option value="">All clinicians at trust</option>'
+          sel.innerHTML = '<option value="">All doctors at trust</option>'
             + cohorts.map(function (c) {
               return '<option value="' + esc(String(c.id)) + '">' + esc(c.name) + '</option>';
             }).join('');
@@ -314,11 +314,11 @@
         var f = currentFilters();
         var count = (_lastData && _lastData.items) ? _lastData.items.length : 0;
         if (!count) {
-          setSendStatus('No clinicians match the current filters — adjust filters and refresh first.', 'error');
+          setSendStatus('No doctors match the current filters — adjust filters and refresh first.', 'error');
           return;
         }
         var trainingLabel = f.module_query ? (' (“' + f.module_query + '”)') : '';
-        var msg = 'Send in-app reminder messages to ' + count + ' clinician' + (count === 1 ? '' : 's')
+        var msg = 'Send in-app reminder messages to ' + count + ' doctor' + (count === 1 ? '' : 's')
           + ' for other (non-mandatory) training expiring within ' + f.window_days + ' days'
           + trainingLabel + '?';
         if (!window.confirm(msg)) return;
@@ -348,7 +348,7 @@
           } else if (failed) {
             setSendStatus('Sent ' + sent + ' message' + (sent === 1 ? '' : 's') + '; ' + failed + ' failed.', 'error');
           } else {
-            setSendStatus('Sent ' + sent + ' in-app reminder' + (sent === 1 ? '' : 's') + ' to clinicians.', 'ok');
+            setSendStatus('Sent ' + sent + ' in-app reminder' + (sent === 1 ? '' : 's') + ' to doctors.', 'ok');
           }
         } catch (e) {
           setSendStatus(e.message || 'Could not send reminders', 'error');

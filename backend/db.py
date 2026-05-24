@@ -20,7 +20,7 @@ DB_PATH = Path(__file__).resolve().parent.parent / "data" / "credentials.db"
 DEV_SEED_EMAIL = "sheffieldhr@nhs.net"
 DEV_SEED_EMAIL_ROTHERHAM = "rotherhamhr@nhs.net"
 DEV_SEED_PASSWORD = "password"
-# Demo-only: HR-provisioned clinicians start with this password; never returned via API.
+# Demo-only: HR-provisioned doctors start with this password; never returned via API.
 PROVISIONED_DEMO_PASSWORD = "password"
 DEV_SEED_TRUST_SHEFFIELD = "Sheffield Health Partnership University NHS Foundation Trust"
 DEV_SEED_TRUST_ROTHERHAM = "Rotherham Doncaster and South Humber NHS Foundation Trust"
@@ -118,7 +118,7 @@ def init_db():
 
 
 def _backfill_sheffield_partnership_trust_labels(conn: sqlite3.Connection) -> None:
-    """Fix clinicians provisioned with the old wrong SHSC label instead of Sheffield Partnership."""
+    """Fix doctors provisioned with the old wrong SHSC label instead of Sheffield Partnership."""
     from . import trust_packs
 
     new_label = trust_packs.normalize_stored_trust_name(DEV_SEED_TRUST_SHEFFIELD)
@@ -932,7 +932,7 @@ def _ensure_message_attachments_table(conn: sqlite3.Connection) -> None:
 
 
 def _ensure_expiry_reminder_sent_table(conn: sqlite3.Connection) -> None:
-    """Track automatic in-app expiry reminders so clinicians are not nudged repeatedly."""
+    """Track automatic in-app expiry reminders so doctors are not nudged repeatedly."""
     conn.execute("""
         CREATE TABLE IF NOT EXISTS expiry_reminder_sent (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1953,7 +1953,7 @@ def cohort_members_pending_verification(cohort_id: int, hr_trust: str) -> list[d
 
 
 def share_doctor_queue(doctor_user_id: int, hr_trust: Optional[str] = None) -> Optional[dict]:
-    """All share items across every session for one clinician (for merged HR review)."""
+    """All share items across every session for one doctor (for merged HR review)."""
     with sqlite3.connect(DB_PATH) as conn:
         _ensure_share_tables(conn)
         conn.row_factory = sqlite3.Row
@@ -2128,7 +2128,7 @@ def share_item_set_decision(
 
 def share_withdraw_pending_for_doctor(doctor_user_id: int, credential_ids: list[str]) -> int:
     """
-    Drop PENDING review share items when a clinician removes credentials from their wallet.
+    Drop PENDING review share items when a doctor removes credentials from their wallet.
     Empty share sessions are deleted afterwards.
     """
     ids = list({str(x).strip() for x in credential_ids if str(x).strip()})
@@ -2332,9 +2332,9 @@ def doctor_verified_map(doctor_user_id: int) -> dict:
 
 def doctor_getting_started_progress(doctor_user_id: int) -> dict:
     """
-    Clinician onboarding checklist steps that must be done by the doctor, not HR on their behalf.
+    Doctor onboarding checklist steps that must be done by the doctor, not HR on their behalf.
     - doctor_added_training: at least one wallet credential not HR-attested
-    - doctor_shared_with_hr: at least one share session created by the clinician
+    - doctor_shared_with_hr: at least one share session created by the doctor
     """
     attested_ids: set[str] = set()
     with sqlite3.connect(DB_PATH) as conn:
@@ -2491,7 +2491,7 @@ def _looks_nhs_work_email(email: str) -> bool:
 
 def _migrate_provisioned_personal_email_login(conn: sqlite3.Connection) -> None:
     """
-    Clinicians provisioned with NHS work email as login and personal_email on file:
+    Doctors provisioned with NHS work email as login and personal_email on file:
     move work address to nhs_work_email and use personal_email for users.email.
     """
     _ensure_users_nhs_work_email_column(conn)
@@ -2538,7 +2538,7 @@ def _ensure_users_provision_columns(conn: sqlite3.Connection) -> None:
 
 
 def _backfill_onboarding_completed(conn: sqlite3.Connection) -> None:
-    """Existing clinicians with a full profile skip the one-time onboarding screen."""
+    """Existing doctors with a full profile skip the one-time onboarding screen."""
     _ensure_users_provision_columns(conn)
     conn.execute(
         """
@@ -3012,7 +3012,7 @@ def user_set_password(user_id: int, password_hash: str, clear_must_change: bool 
 
 
 def user_set_current_trust_if_empty(user_id: int, trust: str) -> None:
-    """Set current_trust only when the clinician has not chosen one yet."""
+    """Set current_trust only when the doctor has not chosen one yet."""
     from . import trust_packs
 
     trust = trust_packs.normalize_stored_trust_name(trust)
@@ -3040,7 +3040,7 @@ def user_apply_hr_roster_row(
     gmc_number: Optional[str] = None,
     default_trust: Optional[str] = None,
 ) -> None:
-    """Apply name/GMC from an HR cohort roster row (non-premium clinicians only)."""
+    """Apply name/GMC from an HR cohort roster row (non-premium doctors only)."""
     u = user_get_by_id(int(user_id))
     if not u or user_is_premium(u):
         return
@@ -3079,7 +3079,7 @@ def user_apply_provisioned_profile(
     gmc_number: Optional[str] = None,
     default_trust: Optional[str] = None,
 ) -> None:
-    """Fill empty profile fields from HR roster import (never overwrite clinician edits)."""
+    """Fill empty profile fields from HR roster import (never overwrite doctor edits)."""
     u = user_get_by_id(int(user_id))
     if not u:
         return
@@ -3140,7 +3140,7 @@ def user_create_provisioned(
     display_name: Optional[str] = None,
     gmc_number: Optional[str] = None,
 ) -> int:
-    """Create non-premium clinician; users.email is personal (login) address."""
+    """Create non-premium doctor; users.email is personal (login) address."""
     personal_email = (personal_email or "").strip().lower()
     trust = (default_trust or "").strip() or None
     dn = (display_name or "").strip() or None
@@ -3266,7 +3266,7 @@ def user_wallet_put(user_id: int, wallet_json: str):
         conn.commit()
 
 
-# ---------- HR cohorts (provision clinicians + group messaging) ----------
+# ---------- HR cohorts (provision doctors + group messaging) ----------
 
 
 def is_default_cohort_name(name: str) -> bool:
@@ -3495,7 +3495,7 @@ def cohort_get(cohort_id: int, hr_trust: str) -> Optional[dict]:
 
 
 def cohort_delete(cohort_id: int, hr_trust: str) -> bool:
-    """Remove a cohort and its membership rows (clinician accounts are kept)."""
+    """Remove a cohort and its membership rows (doctor accounts are kept)."""
     cohort = cohort_get(cohort_id, hr_trust)
     if not cohort:
         return False
@@ -3556,7 +3556,7 @@ def cohort_member_user_ids(cohort_id: int, hr_trust: str) -> list[int]:
 
 
 def cohort_member_remove(cohort_id: int, user_id: int, hr_trust: str) -> bool:
-    """Remove a clinician from a cohort without deleting their account."""
+    """Remove a doctor from a cohort without deleting their account."""
     if not cohort_get(cohort_id, hr_trust):
         return False
     with sqlite3.connect(DB_PATH) as conn:
@@ -3571,7 +3571,7 @@ def cohort_member_remove(cohort_id: int, user_id: int, hr_trust: str) -> bool:
 
 def hr_doctor_delete(doctor_user_id: int, hr_trust: str) -> Optional[dict]:
     """
-    Permanently delete a non-premium clinician account visible to hr_trust.
+    Permanently delete a non-premium doctor account visible to hr_trust.
     Cohort memberships and related records are removed via ON DELETE CASCADE.
     """
     hr_trust = (hr_trust or "").strip()
@@ -3941,7 +3941,7 @@ def cohort_add_members(
         if on_progress:
             on_progress(
                 "provision",
-                f"Adding clinician {idx + 1} of {total}…",
+                f"Adding doctor {idx + 1} of {total}…",
                 idx + 1,
                 total,
             )
@@ -4282,7 +4282,7 @@ def verifier_link_bundle_payload(link_row: dict) -> Optional[dict]:
                 }
             )
         if title == "Verified training":
-            title = ((u or {}).get("display_name") or "Clinician") + " — verified training"
+            title = ((u or {}).get("display_name") or "Doctor") + " — verified training"
     elif link_row.get("cohort_id"):
         cohort = cohort_get(int(link_row["cohort_id"]), trust)
         if not cohort:
@@ -4376,7 +4376,7 @@ def hr_premium_users_for_trust(trust: str) -> list[dict]:
 
 
 def hr_inbox_activity_summary(hr_trust: str) -> dict:
-    """Actionable pending verification counts and unread clinician messages for one HR trust."""
+    """Actionable pending verification counts and unread doctor messages for one HR trust."""
     trust_key = (hr_trust or "").strip().lower()
     pending_sessions = 0
     pending_items = 0

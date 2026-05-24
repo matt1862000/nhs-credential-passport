@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="application-name" content="DocPass">
   <meta name="theme-color" content="#005eb8">
-  <title>Cohorts &mdash; DocPass</title>
+  <title>Add doctors &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
   <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260524-1">
   <link rel="stylesheet" href="/static/shared/training-add-form.css?v=20260526-2">
@@ -36,9 +36,9 @@
   </header>
 
   <main class="nhsuk-main hr-wrap" id="maincontent" role="main">
-    <h1 class="nhsuk-page-heading">Cohorts</h1>
-    <p class="nhsuk-lead">Create clinician accounts using each person&rsquo;s <strong>personal email</strong> as their login, group them into cohorts, and send the same message to everyone (each replies in their own thread).</p>
-    <p class="hr-muted" style="margin:0 0 1rem 0;font-size:0.875rem;">HR never sees passwords here. Send login details to each person&rsquo;s personal email outside DocPass. Demo accounts use a standard initial password; clinicians must change it on first sign-in.</p>
+    <h1 class="nhsuk-page-heading">Add doctors</h1>
+    <p class="nhsuk-lead">Create doctor accounts using each person&rsquo;s <strong>personal email</strong> as their login, group them into cohorts, and send the same message to everyone (each replies in their own thread).</p>
+    <p class="hr-muted" style="margin:0 0 1rem 0;font-size:0.875rem;">HR never sees passwords here. Send login details to each person&rsquo;s personal email outside DocPass. Demo accounts use a standard initial password; doctors must change it on first sign-in.</p>
 
     <div id="notPremium" class="hr-card" hidden>
       <p style="margin:0;font-weight:700;">This page is only for HR accounts.</p>
@@ -48,7 +48,7 @@
       <div id="listView">
         <div class="hr-card">
           <div class="hr-inbox-head">
-            <h2>Your cohorts</h2>
+            <h2>Your groups</h2>
             <button type="button" class="nhsuk-button hr-btn-small" id="btnShowCreate">Create cohort</button>
           </div>
           <div id="cohortList" aria-live="polite"></div>
@@ -75,14 +75,14 @@
               </div>
 
               <div id="createStepMethod" class="cohort-wizard-step-panel" hidden>
-                <p class="cohort-method-intro">How would you like to add clinicians to <strong id="createCohortNamePreview">this cohort</strong>?</p>
-                <div class="cohort-method-grid" role="group" aria-label="How to add clinicians">
+                <p class="cohort-method-intro">How would you like to add doctors to <strong id="createCohortNamePreview">this cohort</strong>?</p>
+                <div class="cohort-method-grid" role="group" aria-label="How to add doctors">
                   <button type="button" class="cohort-method-card" data-create-method="manual">
                     <span class="cohort-method-card__icon" aria-hidden="true">
                       <svg width="22" height="22" viewBox="0 0 24 24" focusable="false"><path fill="currentColor" d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
                     </span>
                     <span class="cohort-method-card__title">Add manually</span>
-                    <span class="cohort-method-card__desc">Enter personal email, full name, and GMC number one clinician at a time.</span>
+                    <span class="cohort-method-card__desc">Enter personal email, full name, and GMC number one doctor at a time.</span>
                   </button>
                   <button type="button" class="cohort-method-card" data-create-method="upload">
                     <span class="cohort-method-card__icon" aria-hidden="true">
@@ -96,7 +96,7 @@
                       <svg width="22" height="22" viewBox="0 0 24 24" focusable="false"><path fill="currentColor" d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
                     </span>
                     <span class="cohort-method-card__title">From All Doctors</span>
-                    <span class="cohort-method-card__desc">Copy clinicians from your default All Doctors group into this cohort.</span>
+                    <span class="cohort-method-card__desc">Copy doctors from your default All Doctors group into this cohort.</span>
                   </button>
                 </div>
                 <div class="cohort-wizard-actions">
@@ -105,12 +105,12 @@
               </div>
 
               <div id="createStepRoster" class="cohort-wizard-step-panel" hidden>
-                <p class="cohort-wizard-roster-title" id="createRosterTitle">Add clinicians</p>
+                <p class="cohort-wizard-roster-title" id="createRosterTitle">Add doctors</p>
                 <div class="nhsuk-form-group" id="cohortEmailsGroup">
                   <div id="createPanelManual" hidden>
                     <span class="nhsuk-hint nhsuk-hint--secondary" id="cohortAddSectionHint">Personal email is required. Fill in the fields, then click <strong>Add</strong>. When you submit the cohort, anything still in the form is included automatically.</span>
                     <div class="cohort-add-card" id="cohortAddCard" role="group" aria-labelledby="cohortAddCardTitle">
-                      <p id="cohortAddCardTitle" class="cohort-add-card__title">Add one clinician</p>
+                      <p id="cohortAddCardTitle" class="cohort-add-card__title">Add one doctor</p>
                       <div class="cohort-add-card__primary">
                         <div class="cohort-add-field cohort-add-field--grow">
                           <label class="nhsuk-label" for="cohortPersonalEmailInput">Personal email</label>
@@ -148,40 +148,40 @@
                       <div id="cohortEmailsFileViz" class="hr-provision-viz-wrap hr-provision-viz-wrap--compact" aria-live="polite"></div>
                     </div>
                     <p id="cohortUploadDone" class="cohort-upload-done" hidden role="status">
-                      <strong>Roster imported.</strong> Review the clinicians below, then create the cohort.
+                      <strong>Roster imported.</strong> Review the doctors below, then create the cohort.
                     </p>
                     <p class="cohort-email-error" id="cohortUploadError" hidden role="alert"></p>
                   </div>
 
                   <div id="createPanelAllDoctors" hidden>
-                    <span class="nhsuk-hint nhsuk-hint--secondary">Select clinicians from your <strong>All Doctors</strong> group. Existing accounts are linked to the new cohort — nothing is duplicated.</span>
+                    <span class="nhsuk-hint nhsuk-hint--secondary">Select doctors from your <strong>All Doctors</strong> group. Existing accounts are linked to the new cohort — nothing is duplicated.</span>
                     <p class="hr-muted" id="createAllDoctorsLoading" style="margin:0.75rem 0;">Loading All Doctors&hellip;</p>
                     <div id="createAllDoctorsEmpty" hidden>
-                      <p class="hr-muted" style="margin:0.75rem 0;">No clinicians in All Doctors yet. Open that group to add some first.</p>
+                      <p class="hr-muted" style="margin:0.75rem 0;">No doctors in All Doctors yet. Open that group to add some first.</p>
                       <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnOpenAllDoctors">Open All Doctors</button>
                     </div>
                     <div id="createAllDoctorsPicker" hidden>
                       <div class="nhsuk-form-group" style="margin-top:0.75rem;margin-bottom:0.5rem;">
-                        <label class="nhsuk-label" for="createAllDoctorsSearch">Search clinicians</label>
+                        <label class="nhsuk-label" for="createAllDoctorsSearch">Search doctors</label>
                         <div class="nhs-ac-wrap" id="createAllDoctorsSearchWrap">
-                          <input class="nhsuk-input" type="search" id="createAllDoctorsSearch" placeholder="Name, email or GMC number…" autocomplete="off" spellcheck="false" aria-label="Search All Doctors clinicians" role="combobox" aria-autocomplete="list" aria-controls="createAllDoctorsSuggestList" aria-expanded="false">
-                          <ul id="createAllDoctorsSuggestList" class="nhs-suggest-list" role="listbox" hidden aria-label="Matching All Doctors clinicians"></ul>
+                          <input class="nhsuk-input" type="search" id="createAllDoctorsSearch" placeholder="Name, email or GMC number…" autocomplete="off" spellcheck="false" aria-label="Search All Doctors doctors" role="combobox" aria-autocomplete="list" aria-controls="createAllDoctorsSuggestList" aria-expanded="false">
+                          <ul id="createAllDoctorsSuggestList" class="nhs-suggest-list" role="listbox" hidden aria-label="Matching All Doctors doctors"></ul>
                         </div>
                       </div>
                       <p class="hr-muted" id="createAllDoctorsFilterHint" style="margin:0 0 0.5rem 0;" hidden aria-live="polite"></p>
                       <label class="nhsuk-label nhsuk-label--s" style="display:block;">
                         <input type="checkbox" id="createAllDoctorsSelectAll" checked> Select all
                       </label>
-                      <div class="hr-bulk-cohort-list" id="createAllDoctorsList" role="group" aria-label="All Doctors clinicians"></div>
-                      <p class="hr-muted" id="createAllDoctorsNoMatches" style="margin:0.75rem 0;" hidden>No clinicians match your search.</p>
+                      <div class="hr-bulk-cohort-list" id="createAllDoctorsList" role="group" aria-label="All Doctors doctors"></div>
+                      <p class="hr-muted" id="createAllDoctorsNoMatches" style="margin:0.75rem 0;" hidden>No doctors match your search.</p>
                     </div>
                     <p class="cohort-email-error" id="createAllDoctorsError" hidden role="alert"></p>
                   </div>
 
                   <div class="cohort-roster-added" id="createRosterAdded">
-                    <p class="cohort-roster-added__heading">Added clinicians</p>
-                    <span class="cohort-email-count cohort-email-count--empty" id="cohortEmailsCount" aria-live="polite">0 clinicians</span>
-                    <p class="cohort-list-empty" id="cohortEmailsListEmpty">No clinicians added yet — use the form above or upload a file.</p>
+                    <p class="cohort-roster-added__heading">Added doctors</p>
+                    <span class="cohort-email-count cohort-email-count--empty" id="cohortEmailsCount" aria-live="polite">0 doctors</span>
+                    <p class="cohort-list-empty" id="cohortEmailsListEmpty">No doctors added yet — use the form above or upload a file.</p>
                     <div id="cohortEmailsList" class="cohort-email-list" aria-live="polite"></div>
                   </div>
                 </div>
@@ -236,26 +236,26 @@
 
         <h3 class="hr-cohort-actions-title">Actions</h3>
         <div class="hr-segment" role="tablist" aria-label="Cohort actions">
-          <button type="button" class="active" id="tabCohortAdd" role="tab" aria-selected="true" aria-controls="panelCohortAdd" data-tab="add">Add clinicians</button>
+          <button type="button" class="active" id="tabCohortAdd" role="tab" aria-selected="true" aria-controls="panelCohortAdd" data-tab="add">Add doctors</button>
           <button type="button" id="tabCohortMessage" role="tab" aria-selected="false" aria-controls="panelCohortMessage" data-tab="message">Message cohort</button>
           <button type="button" id="tabCohortCompliance" role="tab" aria-selected="false" aria-controls="panelCohortCompliance" data-tab="compliance">Compliance</button>
         </div>
 
         <div id="panelCohortAdd" class="hr-bulk-panel hr-cohort-panel" role="tabpanel" aria-labelledby="tabCohortAdd">
           <div class="cohort-wizard-head">
-            <h2>Add clinicians</h2>
-            <p class="cohort-wizard-step-label" id="addWizardStepLabel" aria-live="polite">Step 1 of 2 — How to add clinicians</p>
+            <h2>Add doctors</h2>
+            <p class="cohort-wizard-step-label" id="addWizardStepLabel" aria-live="polite">Step 1 of 2 — How to add doctors</p>
           </div>
           <form id="formAddMembers" class="hr-bulk-form" novalidate>
             <div id="addStepMethod" class="cohort-wizard-step-panel">
-              <p class="cohort-method-intro">How would you like to add clinicians to <strong id="addCohortNamePreview">this cohort</strong>?</p>
-              <div class="cohort-method-grid" role="group" aria-label="How to add clinicians">
+              <p class="cohort-method-intro">How would you like to add doctors to <strong id="addCohortNamePreview">this cohort</strong>?</p>
+              <div class="cohort-method-grid" role="group" aria-label="How to add doctors">
                 <button type="button" class="cohort-method-card" data-add-method="manual">
                   <span class="cohort-method-card__icon" aria-hidden="true">
                     <svg width="22" height="22" viewBox="0 0 24 24" focusable="false"><path fill="currentColor" d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
                   </span>
                   <span class="cohort-method-card__title">Add manually</span>
-                  <span class="cohort-method-card__desc">Enter personal email, full name, and GMC number one clinician at a time.</span>
+                  <span class="cohort-method-card__desc">Enter personal email, full name, and GMC number one doctor at a time.</span>
                 </button>
                 <button type="button" class="cohort-method-card" data-add-method="upload">
                   <span class="cohort-method-card__icon" aria-hidden="true">
@@ -268,12 +268,12 @@
             </div>
 
             <div id="addStepRoster" class="cohort-wizard-step-panel" hidden>
-              <p class="cohort-wizard-roster-title" id="addRosterTitle">Add clinicians</p>
+              <p class="cohort-wizard-roster-title" id="addRosterTitle">Add doctors</p>
               <div class="nhsuk-form-group" id="addEmailsGroup">
                 <div id="addPanelManual" hidden>
                   <span class="nhsuk-hint nhsuk-hint--secondary">Personal email is required. Fill in the fields, then click <strong>Add</strong>. When you submit, anything still in the form is included automatically.</span>
                   <div class="cohort-add-card" id="addAddCard" role="group" aria-labelledby="addAddCardTitle">
-                    <p id="addAddCardTitle" class="cohort-add-card__title">Add one clinician</p>
+                    <p id="addAddCardTitle" class="cohort-add-card__title">Add one doctor</p>
                     <div class="cohort-add-card__primary">
                       <div class="cohort-add-field cohort-add-field--grow">
                         <label class="nhsuk-label" for="addPersonalEmailInput">Personal email</label>
@@ -311,15 +311,15 @@
                     <div id="addEmailsFileViz" class="hr-provision-viz-wrap hr-provision-viz-wrap--compact" aria-live="polite"></div>
                   </div>
                   <p id="addUploadDone" class="cohort-upload-done" hidden role="status">
-                    <strong>Roster imported.</strong> Review the clinicians below, then add them to the cohort.
+                    <strong>Roster imported.</strong> Review the doctors below, then add them to the cohort.
                   </p>
                   <p class="cohort-email-error" id="addUploadError" hidden role="alert"></p>
                 </div>
 
                 <div class="cohort-roster-added">
-                  <p class="cohort-roster-added__heading">Added clinicians</p>
-                  <span class="cohort-email-count cohort-email-count--empty" id="addEmailsCount" aria-live="polite">0 clinicians</span>
-                  <p class="cohort-list-empty" id="addEmailsListEmpty">No clinicians added yet — use the form above or upload a file.</p>
+                  <p class="cohort-roster-added__heading">Added doctors</p>
+                  <span class="cohort-email-count cohort-email-count--empty" id="addEmailsCount" aria-live="polite">0 doctors</span>
+                  <p class="cohort-list-empty" id="addEmailsListEmpty">No doctors added yet — use the form above or upload a file.</p>
                   <div id="addEmailsList" class="cohort-email-list" aria-live="polite"></div>
                 </div>
               </div>
@@ -344,7 +344,7 @@
           <form id="formCohortMessage" class="hr-bulk-form" novalidate>
             <div class="nhsuk-form-group" id="cohortMsgGroup">
               <label class="nhsuk-label" for="cohortMsgBody">Your message</label>
-              <span class="nhsuk-hint nhsuk-hint--secondary">Optional text and/or attachments (PDF or images). Each clinician gets their own private thread.</span>
+              <span class="nhsuk-hint nhsuk-hint--secondary">Optional text and/or attachments (PDF or images). Each doctor gets their own private thread.</span>
               <div class="msg-compose msg-compose--cohort">
                 <div class="msg-compose-row">
                   <input type="file" id="cohortMsgFileInput" multiple hidden
@@ -362,7 +362,7 @@
               </div>
             </div>
             <div class="hr-cohort-panel-actions">
-              <button type="submit" class="nhsuk-button" id="btnSendCohort">Send to clinicians</button>
+              <button type="submit" class="nhsuk-button" id="btnSendCohort">Send to doctors</button>
             </div>
           </form>
           <div id="msgProvisionResult" class="hr-provision-viz-wrap" aria-live="polite"></div>
@@ -370,7 +370,7 @@
         </div>
 
         <div id="panelCohortCompliance" class="hr-bulk-panel hr-cohort-panel" role="tabpanel" aria-labelledby="tabCohortCompliance" hidden>
-          <p class="nhsuk-hint" style="margin-top:0;max-width:none;">Mandatory training topics for your trust, matched against each clinician&rsquo;s wallet.</p>
+          <p class="nhsuk-hint" style="margin-top:0;max-width:none;">Mandatory training topics for your trust, matched against each doctor&rsquo;s wallet.</p>
           <div class="hr-comp-actions">
             <a class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnComplianceExport" href="#">Download CSV matrix</a>
             <a class="nhsuk-button nhsuk-button--secondary hr-btn-small" href="/static/hr/expiring.html">Trust-wide expiring</a>
@@ -383,7 +383,7 @@
               <tbody id="cohortCompTopicsTbody"></tbody>
             </table>
           </div>
-          <h4 class="hr-comp-subhead">By clinician</h4>
+          <h4 class="hr-comp-subhead">By doctor</h4>
           <div class="hr-table-wrap">
             <table class="hr-table hr-comp-table" aria-label="Member compliance">
               <thead><tr><th>Name</th><th>Met</th><th>Expiring</th><th>Needs review</th><th>Gaps</th><th></th></tr></thead>
@@ -400,7 +400,7 @@
     <div class="hr-modal__panel hr-modal__panel--welcome-review">
       <h3 id="welcomeReviewModalTitle" class="hr-modal__title">Review welcome message</h3>
       <p class="nhsuk-hint" id="welcomeReviewIntro" style="margin-top:0;">Before a welcome is sent, check the message below. Each person gets their own private DocPass thread.</p>
-      <p class="nhsuk-hint nhsuk-hint--secondary" id="welcomeReviewLaterHint" style="margin-top:0.35rem;">If you choose <strong>Decide later</strong>, use <strong>Review and send welcome</strong> on this cohort page when you are ready, or the message sends automatically when each clinician finishes their profile.</p>
+      <p class="nhsuk-hint nhsuk-hint--secondary" id="welcomeReviewLaterHint" style="margin-top:0.35rem;">If you choose <strong>Decide later</strong>, use <strong>Review and send welcome</strong> on this cohort page when you are ready, or the message sends automatically when each doctor finishes their profile.</p>
       <p class="nhsuk-hint nhsuk-hint--secondary" id="welcomeReviewRecipients" aria-live="polite"></p>
       <div id="welcomeReviewPreviewBlock">
         <p class="cohort-welcome-block__title" style="margin:0.75rem 0 0.35rem;">Message</p>
@@ -440,7 +440,7 @@
 
   <div id="memberEditModal" class="hr-modal" hidden role="dialog" aria-modal="true" aria-labelledby="memberEditModalTitle">
     <div class="hr-modal__panel hr-modal__panel--narrow">
-      <h3 id="memberEditModalTitle" class="hr-modal__title">Edit clinician</h3>
+      <h3 id="memberEditModalTitle" class="hr-modal__title">Edit doctor</h3>
       <form id="formMemberEdit" class="hr-bulk-form" novalidate>
         <div class="nhsuk-form-group">
           <label class="nhsuk-label" for="memberEditEmail">Personal email</label>
@@ -587,7 +587,7 @@
         if (hint) {
           var q = String(_allDoctorsFilterQuery || '').trim();
           if (q && _allDoctorsMembers.length) {
-            hint.textContent = 'Showing ' + visible.length + ' of ' + _allDoctorsMembers.length + ' clinician'
+            hint.textContent = 'Showing ' + visible.length + ' of ' + _allDoctorsMembers.length + ' doctor'
               + (_allDoctorsMembers.length === 1 ? '' : 's') + ' matching “' + q + '”.';
             hint.hidden = false;
           } else {
@@ -1054,7 +1054,7 @@
             return esc(r.email || '');
           });
           var extra = userIds.length > 5 ? ' and ' + (userIds.length - 5) + ' more' : '';
-          recip.textContent = 'For ' + userIds.length + ' clinician' + (userIds.length === 1 ? '' : 's')
+          recip.textContent = 'For ' + userIds.length + ' doctor' + (userIds.length === 1 ? '' : 's')
             + (lines.length ? ': ' + lines.join(', ') + extra : '') + '.';
         }
         setWelcomeReviewEditMode(false);
@@ -1126,7 +1126,7 @@
 
       async function skipWelcomeReview() {
         if (!_welcomeReviewState) return;
-        if (!confirm('Do not send a welcome message to these ' + _welcomeReviewState.userIds.length + ' clinician(s)?')) return;
+        if (!confirm('Do not send a welcome message to these ' + _welcomeReviewState.userIds.length + ' doctor(s)?')) return;
         try {
           await apiJson(
             '/api/hr/cohorts/' + encodeURIComponent(String(_welcomeReviewState.cohortId)) + '/welcome/skip',
@@ -1261,7 +1261,7 @@
         function updateCount() {
           var n = members.length;
           if (!countEl) return;
-          countEl.textContent = n === 1 ? '1 clinician' : n + ' clinicians';
+          countEl.textContent = n === 1 ? '1 doctor' : n + ' doctors';
           countEl.classList.toggle('cohort-email-count--empty', n === 0);
           if (listEmptyEl) listEmptyEl.hidden = n > 0;
           syncSubmitState();
@@ -1447,7 +1447,7 @@
                   return;
                 }
                 var out = mergeFromMembers(parsed);
-                var msg = 'Added ' + out.added + ' clinician' + (out.added === 1 ? '' : 's') + ' from file';
+                var msg = 'Added ' + out.added + ' doctor' + (out.added === 1 ? '' : 's') + ' from file';
                 if (out.skipped > 0) {
                   msg += ' (' + out.skipped + ' duplicate' + (out.skipped === 1 ? '' : 's') + ' merged)';
                 }
@@ -1525,7 +1525,7 @@
       function memberDisplayLabel(m) {
         return (m.display_name && m.display_name.trim())
           ? m.display_name.trim()
-          : (m.personal_email || m.email || 'Clinician');
+          : (m.personal_email || m.email || 'Doctor');
       }
 
       function memberById(id) {
@@ -1537,7 +1537,7 @@
         var tb = document.getElementById('membersTbody');
         if (!tb) return;
         if (!_detailMembers.length) {
-          tb.innerHTML = '<tr><td colspan="4" class="hr-muted">No members yet. Use <strong>Add clinicians</strong> to provision personal email accounts.</td></tr>';
+          tb.innerHTML = '<tr><td colspan="4" class="hr-muted">No members yet. Use <strong>Add doctors</strong> to provision personal email accounts.</td></tr>';
           return;
         }
         tb.innerHTML = _detailMembers.map(function (m) {
@@ -1700,8 +1700,8 @@
             var n = _cohortPendingVerify.length;
             text.textContent =
               n === 1
-                ? '1 clinician in this cohort has training awaiting HR verification. Send them an in-app reminder.'
-                : String(n) + ' clinicians in this cohort have training awaiting HR verification. Send them an in-app reminder.';
+                ? '1 doctor in this cohort has training awaiting HR verification. Send them an in-app reminder.'
+                : String(n) + ' doctors in this cohort have training awaiting HR verification. Send them an in-app reminder.';
           }
         } catch (e) {
           /* optional */
@@ -1757,7 +1757,7 @@
         if (p2) {
           p2.textContent = _addMethod === 'upload'
             ? 'Upload roster for “' + name + '”'
-            : 'Add clinicians to “' + name + '”';
+            : 'Add doctors to “' + name + '”';
         }
       }
 
@@ -1767,7 +1767,7 @@
         show(document.getElementById('addStepRoster'), step === 2);
         var label = document.getElementById('addWizardStepLabel');
         if (label) {
-          if (step === 1) label.textContent = 'Step 1 of 2 — How to add clinicians';
+          if (step === 1) label.textContent = 'Step 1 of 2 — How to add doctors';
           else {
             label.textContent = _addMethod === 'upload'
               ? 'Step 2 of 2 — Upload spreadsheet'
@@ -1800,7 +1800,7 @@
         var n = _detailMembers.length;
         var queued = _detailMembers.filter(function (m) { return m.welcome_pending && !m.welcome_sent_at; }).length;
         var awaiting = _detailMembers.filter(function (m) { return m.must_change_password; }).length;
-        var parts = ['<strong>' + n + '</strong> clinician' + (n === 1 ? '' : 's')];
+        var parts = ['<strong>' + n + '</strong> doctor' + (n === 1 ? '' : 's')];
         if (awaiting) parts.push('<strong>' + awaiting + '</strong> awaiting first sign-in');
         if (queued) parts.push('<strong>' + queued + '</strong> welcome' + (queued === 1 ? '' : 's') + ' not sent yet');
         document.getElementById('detailMeta').innerHTML = parts.join(' · ');
@@ -1810,13 +1810,13 @@
         if (banner && bannerText) {
           show(banner, queued > 0);
           if (queued > 0) {
-            bannerText.textContent = queued + ' clinician' + (queued === 1 ? ' has' : 's have')
+            bannerText.textContent = queued + ' doctor' + (queued === 1 ? ' has' : 's have')
               + ' a welcome message ready to review and send.';
           }
         }
 
         var btn = document.getElementById('btnSendCohort');
-        if (btn) btn.textContent = n ? ('Send to ' + n + ' clinician' + (n === 1 ? '' : 's')) : 'Send message';
+        if (btn) btn.textContent = n ? ('Send to ' + n + ' doctor' + (n === 1 ? '' : 's')) : 'Send message';
 
         var list = document.getElementById('recipientList');
         var toggle = document.getElementById('btnToggleRecipients');
@@ -1843,7 +1843,7 @@
         });
         var extra = count > 5 ? '\n…and ' + (count - 5) + ' more.' : '';
         return confirm(
-          'Send this message to ' + count + ' clinician' + (count === 1 ? '' : 's') + '?\n\n'
+          'Send this message to ' + count + ' doctor' + (count === 1 ? '' : 's') + '?\n\n'
           + 'Each person gets their own private thread.\n\n'
           + preview.join('\n') + extra
         );
@@ -1947,7 +1947,7 @@
           ? '\n\n' + n + ' membership' + (n === 1 ? '' : 's') + ' will be removed from this cohort.'
           : '';
         return confirm(
-          'Delete “' + name + '”?' + memberNote + '\n\nClinician accounts are not deleted — only this cohort group.'
+          'Delete “' + name + '”?' + memberNote + '\n\nDoctor accounts are not deleted — only this cohort group.'
         );
       }
 
@@ -2074,7 +2074,7 @@
           } else if (_createMethod === 'all_doctors') {
             p2.textContent = 'Add from All Doctors to “' + name + '”';
           } else {
-            p2.textContent = 'Add clinicians to “' + name + '”';
+            p2.textContent = 'Add doctors to “' + name + '”';
           }
         }
       }
@@ -2087,14 +2087,14 @@
         var label = document.getElementById('createWizardStepLabel');
         if (label) {
           if (step === 1) label.textContent = 'Step 1 of 3 — Name your cohort';
-          else if (step === 2) label.textContent = 'Step 2 of 3 — How to add clinicians';
+          else if (step === 2) label.textContent = 'Step 2 of 3 — How to add doctors';
           else {
             if (_createMethod === 'upload') {
               label.textContent = 'Step 3 of 3 — Upload spreadsheet';
             } else if (_createMethod === 'all_doctors') {
               label.textContent = 'Step 3 of 3 — Choose from All Doctors';
             } else {
-              label.textContent = 'Step 3 of 3 — Add clinicians manually';
+              label.textContent = 'Step 3 of 3 — Add doctors manually';
             }
           }
         }
@@ -2253,7 +2253,7 @@
           members = getSelectedAllDoctorsMembers();
           if (!members.length) {
             var adErr = document.getElementById('createAllDoctorsError');
-            var adMsg = 'Select at least one clinician from All Doctors.';
+            var adMsg = 'Select at least one doctor from All Doctors.';
             if (adErr) {
               adErr.textContent = adMsg;
               adErr.hidden = false;
@@ -2274,7 +2274,7 @@
             var manualErr = document.getElementById('cohortEmailError');
             var msg = _createMethod === 'upload'
               ? 'Upload a spreadsheet with at least one personal email, or go back and choose Add manually.'
-              : 'Add at least one clinician with a personal email.';
+              : 'Add at least one doctor with a personal email.';
             if (_createMethod === 'upload' && uploadErr) {
               uploadErr.textContent = msg;
               uploadErr.hidden = false;
@@ -2435,7 +2435,7 @@
       document.getElementById('btnMemberRemove').addEventListener('click', async function () {
         if (_activeCohortId == null || _editingMemberId == null) return;
         var m = memberById(_editingMemberId);
-        var label = m ? memberDisplayLabel(m) : 'this clinician';
+        var label = m ? memberDisplayLabel(m) : 'this doctor';
         if (!confirm(
           'Remove ' + label + ' from this cohort?\n\nTheir DocPass account is not deleted — only this cohort membership.'
         )) return;
@@ -2483,13 +2483,13 @@
         var ids = _cohortPendingVerify.map(function (m) { return m.user_id; });
         var body = COHORT_NUDGE_DEFAULT;
         var custom = window.prompt(
-          'Message to send (' + ids.length + ' clinician' + (ids.length === 1 ? '' : 's') + ' with pending verification):',
+          'Message to send (' + ids.length + ' doctor' + (ids.length === 1 ? '' : 's') + ' with pending verification):',
           body
         );
         if (custom === null) return;
         body = String(custom).trim();
         if (!body) return;
-        if (!confirm('Send this in-app message to ' + ids.length + ' clinician' + (ids.length === 1 ? '' : 's') + '?')) return;
+        if (!confirm('Send this in-app message to ' + ids.length + ' doctor' + (ids.length === 1 ? '' : 's') + '?')) return;
         var st = document.getElementById('msgStatus');
         var msgViz = document.getElementById('msgProvisionResult');
         show(st, false);
@@ -2530,7 +2530,7 @@
           : !!body.trim();
         if (!canSend) return;
         if (!_detailMembers.length) {
-          setStatusEl(document.getElementById('msgStatus'), 'Add clinicians to this cohort before sending a message.', 'error');
+          setStatusEl(document.getElementById('msgStatus'), 'Add doctors to this cohort before sending a message.', 'error');
           return;
         }
         if (!confirmCohortSend(_detailMembers.length, _detailMembers)) return;
@@ -2600,7 +2600,7 @@
           var manualErr = document.getElementById('addEmailError');
           var msg = _addMethod === 'upload'
             ? 'Upload a spreadsheet with at least one personal email, or go back and choose Add manually.'
-            : 'Add at least one clinician with a personal email.';
+            : 'Add at least one doctor with a personal email.';
           if (_addMethod === 'upload' && uploadErr) {
             uploadErr.textContent = msg;
             uploadErr.hidden = false;
@@ -2617,7 +2617,7 @@
         if (uploadErrHide) uploadErrHide.hidden = true;
         show(st, false);
         clearProvisionResult(vizEl);
-        if (viz()) viz().showLoading(vizEl, 'Adding clinicians to cohort…');
+        if (viz()) viz().showLoading(vizEl, 'Adding doctors to cohort…');
         if (submitBtn) submitBtn.disabled = true;
         try {
           var data = await apiJsonWithProgress(

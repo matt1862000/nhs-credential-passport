@@ -1,6 +1,6 @@
 """
 Compliance snapshot: mandatory topics vs wallet, expiry, HR verification status.
-Shared by clinician and HR cohort APIs (Phase 0).
+Shared by doctor and HR cohort APIs (Phase 0).
 """
 from __future__ import annotations
 
@@ -202,7 +202,7 @@ def pack_checklist_preview(
     *,
     leaving_trust: Optional[str] = None,
 ) -> Optional[dict]:
-    """Match destination trust pack mandatory examples against clinician wallet."""
+    """Match destination trust pack mandatory examples against doctor wallet."""
     pack = trust_packs.load_trust_pack((pack_id or "").strip())
     if not pack:
         return None
@@ -233,7 +233,7 @@ def pack_checklist_preview(
 
 
 def doctor_compliance_snapshot(doctor_user_id: int, trust_name: str) -> dict:
-    """Mandatory topics vs wallet for one clinician at a trust."""
+    """Mandatory topics vs wallet for one doctor at a trust."""
     trust = (trust_name or "").strip()
     topics = db.mandatory_topics_list(trust) if trust else []
     wallet = _parse_wallet(db.user_wallet_get(int(doctor_user_id)))

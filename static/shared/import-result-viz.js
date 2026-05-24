@@ -341,7 +341,7 @@
     if (s.welcome_awaiting_review) {
       notes.push(
         'Review the <strong>welcome message</strong> before it is sent to '
-        + '<strong>' + s.welcome_awaiting_review + '</strong> clinician'
+        + '<strong>' + s.welcome_awaiting_review + '</strong> doctor'
         + (s.welcome_awaiting_review === 1 ? '' : 's') + '.'
       );
     }
@@ -359,7 +359,7 @@
     if (opts.createdCohort) {
       successHtml = 'Cohort <strong>' + escapeHtml(opts.createdCohort) + '</strong> created.';
     } else if (created || existing) {
-      successHtml = 'Clinicians added to this cohort.';
+      successHtml = 'Doctors added to this cohort.';
     }
     var errors = results
       .filter(function (r) { return r.status === 'failed'; })
@@ -390,7 +390,7 @@
     var failed = failedList.length;
     var total = sent + failed;
     var errors = failedList.map(function (f) {
-      var id = f.doctor_user_id != null ? 'Clinician #' + f.doctor_user_id : 'Clinician';
+      var id = f.doctor_user_id != null ? 'Doctor #' + f.doctor_user_id : 'Doctor';
       return id + (f.error ? ': ' + f.error : '');
     });
     render(el, {
@@ -456,7 +456,7 @@
       ].filter(function (item) {
         return item.count > 0 || item.label === 'In roster';
       }),
-      successHtml: issuedN ? 'Training records issued to clinicians who allowed your trust.' : '',
+      successHtml: issuedN ? 'Training records issued to doctors who allowed your trust.' : '',
       errors: rowErrors,
     });
   }

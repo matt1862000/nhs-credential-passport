@@ -475,7 +475,7 @@ def _hr_training_line_classify(
     ods: str,
     issuing_name: str,
 ) -> tuple[str, Optional[HrBulkTrainingRow], Optional[CompletionRecord], str, set]:
-    """First-pass classification for one resolved clinician (no DB writes beyond reads).
+    """First-pass classification for one resolved doctor (no DB writes beyond reads).
 
     Returns (kind, error_row_or_none, rec_or_none, wallet_raw, existing_dedupe_keys).
     kind is 'error' | 'skipped' | 'issue'.
@@ -486,7 +486,7 @@ def _hr_training_line_classify(
             HrBulkTrainingRow(
                 roster_line=roster_line,
                 status="error",
-                message="This account is not a clinician record.",
+                message="This account is not a doctor record.",
             ),
             None,
             "[]",
@@ -500,7 +500,7 @@ def _hr_training_line_classify(
                 HrBulkTrainingRow(
                     roster_line=roster_line,
                     status="error",
-                    message="This clinician has not permitted your trust to view or update their records.",
+                    message="This doctor has not permitted your trust to view or update their records.",
                     doctor_user_id=doc_id,
                 ),
                 None,
@@ -508,7 +508,7 @@ def _hr_training_line_classify(
                 set(),
             )
 
-    staff_name = (doc.get("display_name") or doc.get("email") or "").strip() or "Clinician"
+    staff_name = (doc.get("display_name") or doc.get("email") or "").strip() or "Doctor"
     staff_identifier = _staff_identifier_for_issue(doc)
     rec = CompletionRecord(
         staff_full_name=staff_name,
@@ -557,7 +557,7 @@ def _hr_commit_training_for_clinician(
             HrBulkTrainingRow(
                 roster_line=roster_line,
                 status="skipped_duplicate",
-                message="Clinician already has this completion in their wallet.",
+                message="Doctor already has this completion in their wallet.",
                 doctor_user_id=doc_id,
             ),
             "skipped",
@@ -593,7 +593,7 @@ def _hr_commit_training_for_clinician(
             HrBulkTrainingRow(
                 roster_line=roster_line,
                 status="error",
-                message="Clinician wallet would exceed server size limit after adding this record.",
+                message="Doctor wallet would exceed server size limit after adding this record.",
                 doctor_user_id=doc_id,
             ),
             "error",
@@ -1041,7 +1041,7 @@ def me_verified_map(request: Request):
 
 @router.get("/me/getting-started-progress")
 def me_getting_started_progress(request: Request):
-    """Checklist steps 4–5: only count actions the clinician took (not HR bulk issue)."""
+    """Checklist steps 4–5: only count actions the doctor took (not HR bulk issue)."""
     uid = require_user_id(request)
     return db.doctor_getting_started_progress(uid)
 
@@ -1251,7 +1251,7 @@ async def hr_email_preferences_put(request: Request):
 
 @router.get("/hr/doctors/search")
 def hr_doctors_search(request: Request, q: str = "", limit: int = 30):
-    """Search clinicians by name / email / GMC. Respects doctor visibility settings."""
+    """Search doctors by name / email / GMC. Respects doctor visibility settings."""
     hr = require_premium_user(request)
     trust = (hr.get("current_trust") or "").strip()
     if not trust:
@@ -1290,7 +1290,7 @@ def hr_issuing_defaults(request: Request):
 
 @router.delete("/hr/doctors/{doctor_user_id}")
 def hr_doctor_delete(request: Request, doctor_user_id: int):
-    """Permanently delete a clinician account (removes all cohort memberships)."""
+    """Permanently delete a doctor account (removes all cohort memberships)."""
     hr = require_premium_user(request)
     trust = (hr.get("current_trust") or "").strip()
     if not trust:
@@ -1302,7 +1302,7 @@ def hr_doctor_delete(request: Request, doctor_user_id: int):
     if not result:
         raise HTTPException(
             status_code=404,
-            detail="Clinician not found or cannot be deleted.",
+            detail="Doctor not found or cannot be deleted.",
         )
     label = (
         (result.get("display_name") or "").strip()
@@ -1337,10 +1337,10 @@ def hr_doctor_training(request: Request, doctor_user_id: int):
     # Check doctor visibility allows this HR trust
     with __import__('sqlite3').connect(db.DB_PATH) as conn:
         if not db._doctor_visible_to_trust(int(doctor_user_id), trust, conn):
-            raise HTTPException(status_code=403, detail="This clinician has not permitted your trust to view their records.")
+            raise HTTPException(status_code=403, detail="This doctor has not permitted your trust to view their records.")
     q = db.share_doctor_queue(int(doctor_user_id), hr_trust=None)
     if not q:
-        raise HTTPException(status_code=404, detail="Clinician not found")
+        raise HTTPException(status_code=404, detail="Doctor not found")
     _merge_hr_attested_wallet_items_into_training(q, trust)
     return q
 
@@ -1357,7 +1357,7 @@ async def hr_doctor_add_training(
     issuing_trust_name: Optional[str] = Form(None),
 ):
     """
-    Premium HR: add one training completion to a specific clinician (same rules as bulk roster —
+    Premium HR: add one training completion to a specific doctor (same rules as bulk roster —
     visibility, duplicate detection, shared evidence file).
     """
     hr = require_premium_user(request)
@@ -1367,7 +1367,7 @@ async def hr_doctor_add_training(
 
     doc = db.user_get_by_id(int(doctor_user_id))
     if not doc:
-        raise HTTPException(status_code=404, detail="Clinician not found")
+        raise HTTPException(status_code=404, detail="Doctor not found")
     roster_line = (doc.get("email") or "").strip() or f"user:{doctor_user_id}"
 
     mc = str(module_code or "").strip().lower()
@@ -1417,7 +1417,7 @@ async def hr_doctor_add_training(
         row = HrBulkTrainingRow(
             roster_line=roster_line,
             status="skipped_duplicate",
-            message="Clinician already has this completion in their wallet.",
+            message="Doctor already has this completion in their wallet.",
             doctor_user_id=doc_id,
         )
         return HrBulkTrainingResponse(
@@ -1471,7 +1471,7 @@ async def hr_doctor_add_training(
                 HrBulkTrainingRow(
                     roster_line=roster_line,
                     status="error",
-                    message="Clinician wallet would exceed server size limit after adding this record.",
+                    message="Doctor wallet would exceed server size limit after adding this record.",
                     doctor_user_id=doc_id,
                 )
             ],
@@ -1581,7 +1581,7 @@ def _hr_bulk_training_run(ctx: dict, *, emit_progress: bool = True) -> Iterator[
     if cohort_label:
         progress(
             "prepare",
-            f'Loaded {total} clinician{"s" if total != 1 else ""} from cohort “{cohort_label}”.',
+            f'Loaded {total} doctor{"s" if total != 1 else ""} from cohort “{cohort_label}”.',
             0,
             total,
         )
@@ -1598,7 +1598,7 @@ def _hr_bulk_training_run(ctx: dict, *, emit_progress: bool = True) -> Iterator[
 
     plans: list[dict] = []
     for idx, line in enumerate(lines):
-        progress("validate", f"Checking clinician {idx + 1} of {total}…", idx + 1, total)
+        progress("validate", f"Checking doctor {idx + 1} of {total}…", idx + 1, total)
         for chunk in yield_lines:
             yield chunk
         yield_lines.clear()
@@ -1639,7 +1639,7 @@ def _hr_bulk_training_run(ctx: dict, *, emit_progress: bool = True) -> Iterator[
         )
 
     def _row_missing(line: str) -> HrBulkTrainingRow:
-        return HrBulkTrainingRow(roster_line=line, status="error", message="No matching clinician account.")
+        return HrBulkTrainingRow(roster_line=line, status="error", message="No matching doctor account.")
 
     has_classify_error = any(p["kind"] in ("missing", "error") for p in plans)
     if has_classify_error:
@@ -1664,7 +1664,7 @@ def _hr_bulk_training_run(ctx: dict, *, emit_progress: bool = True) -> Iterator[
                     HrBulkTrainingRow(
                         roster_line=p["line"],
                         status="would_skip_duplicate",
-                        message="Clinician already has this completion in their wallet.",
+                        message="Doctor already has this completion in their wallet.",
                         doctor_user_id=doc_id,
                     )
                 )
@@ -1710,7 +1710,7 @@ def _hr_bulk_training_run(ctx: dict, *, emit_progress: bool = True) -> Iterator[
                 HrBulkTrainingRow(
                     roster_line=p["line"],
                     status="skipped_duplicate",
-                    message="Clinician already has this completion in their wallet.",
+                    message="Doctor already has this completion in their wallet.",
                     doctor_user_id=doc_id,
                 )
             )
@@ -1730,7 +1730,7 @@ def _hr_bulk_training_run(ctx: dict, *, emit_progress: bool = True) -> Iterator[
         yield _bulk_training_complete_line(resp)
         return
 
-    progress("validate", f"Roster OK — issuing to {len(issue_plans)} clinician(s).", total, total)
+    progress("validate", f"Roster OK — issuing to {len(issue_plans)} doctor(s).", total, total)
     for chunk in yield_lines:
         yield chunk
     yield_lines.clear()
@@ -1781,7 +1781,7 @@ def _hr_bulk_training_run(ctx: dict, *, emit_progress: bool = True) -> Iterator[
             wallet_bad.add(p["line"])
 
     if wallet_bad:
-        progress("wallet", "Wallet size check failed for at least one clinician.", wallet_total, wallet_total)
+        progress("wallet", "Wallet size check failed for at least one doctor.", wallet_total, wallet_total)
         for chunk in yield_lines:
             yield chunk
         yield_lines.clear()
@@ -1795,7 +1795,7 @@ def _hr_bulk_training_run(ctx: dict, *, emit_progress: bool = True) -> Iterator[
                     HrBulkTrainingRow(
                         roster_line=p["line"],
                         status="would_skip_duplicate",
-                        message="Clinician already has this completion in their wallet.",
+                        message="Doctor already has this completion in their wallet.",
                         doctor_user_id=doc_id,
                     )
                 )
@@ -1807,7 +1807,7 @@ def _hr_bulk_training_run(ctx: dict, *, emit_progress: bool = True) -> Iterator[
                         HrBulkTrainingRow(
                             roster_line=p["line"],
                             status="error",
-                            message="Clinician wallet would exceed server size limit after adding this record.",
+                            message="Doctor wallet would exceed server size limit after adding this record.",
                             doctor_user_id=doc_id,
                         )
                     )
@@ -1817,7 +1817,7 @@ def _hr_bulk_training_run(ctx: dict, *, emit_progress: bool = True) -> Iterator[
                         HrBulkTrainingRow(
                             roster_line=p["line"],
                             status="not_committed",
-                            message="Not issued: roster failed a wallet size check for at least one other clinician.",
+                            message="Not issued: roster failed a wallet size check for at least one other doctor.",
                             doctor_user_id=doc_id,
                         )
                     )
@@ -1847,7 +1847,7 @@ def _hr_bulk_training_run(ctx: dict, *, emit_progress: bool = True) -> Iterator[
                 HrBulkTrainingRow(
                     roster_line=p["line"],
                     status="skipped_duplicate",
-                    message="Clinician already has this completion in their wallet.",
+                    message="Doctor already has this completion in their wallet.",
                     doctor_user_id=doc_id,
                 )
             )
@@ -1988,13 +1988,13 @@ def _bulk_training_roster_from_cohorts(
 def _bulk_training_roster_from_doctor_ids(
     doctor_ids: list[int], trust: str
 ) -> tuple[list[str], str]:
-    """Resolve searched clinician ids to roster lines (email or GMC)."""
+    """Resolve searched doctor ids to roster lines (email or GMC)."""
     if not doctor_ids:
         return [], ""
     if len(doctor_ids) > MAX_HR_BULK_LINES:
         raise HTTPException(
             status_code=400,
-            detail=f"Too many clinicians selected ({len(doctor_ids)}). Maximum is {MAX_HR_BULK_LINES}.",
+            detail=f"Too many doctors selected ({len(doctor_ids)}). Maximum is {MAX_HR_BULK_LINES}.",
         )
     seen_lines: set[str] = set()
     lines: list[str] = []
@@ -2003,7 +2003,7 @@ def _bulk_training_roster_from_doctor_ids(
         for uid in doctor_ids:
             doc = db.user_get_by_id(int(uid))
             if not doc or int(doc.get("premium") or 0):
-                raise HTTPException(status_code=404, detail=f"Clinician not found: {uid}")
+                raise HTTPException(status_code=404, detail=f"Doctor not found: {uid}")
             if not db._doctor_visible_to_trust(int(uid), trust, conn):
                 label = (doc.get("display_name") or doc.get("email") or str(uid)).strip()
                 raise HTTPException(
@@ -2016,7 +2016,7 @@ def _bulk_training_roster_from_doctor_ids(
             if not line:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Clinician {uid} has no email or GMC number on file.",
+                    detail=f"Doctor {uid} has no email or GMC number on file.",
                 )
             key = line.lower()
             if key in seen_lines:
@@ -2025,13 +2025,13 @@ def _bulk_training_roster_from_doctor_ids(
             lines.append(line)
             names.append((doc.get("display_name") or doc.get("email") or str(uid)).strip())
     if not lines:
-        raise HTTPException(status_code=400, detail="No clinicians selected.")
+        raise HTTPException(status_code=400, detail="No doctors selected.")
     if len(names) == 1:
         cohort_label = names[0]
     elif len(names) <= 3:
         cohort_label = ", ".join(names)
     else:
-        cohort_label = f"{len(names)} clinicians"
+        cohort_label = f"{len(names)} doctors"
     return lines, cohort_label
 
 
@@ -2072,7 +2072,7 @@ async def _hr_bulk_training_build_context(
     else:
         raise HTTPException(
             status_code=400,
-            detail="Select a cohort, search for clinicians, or upload a roster file.",
+            detail="Select a cohort, search for doctors, or upload a roster file.",
         )
     if len(lines) > MAX_HR_BULK_LINES:
         raise HTTPException(
@@ -2136,11 +2136,11 @@ async def hr_bulk_training(
     stream: bool = Form(False),
 ):
     """
-    Premium HR: issue one CSTF-style module completion to many clinicians from a roster file
+    Premium HR: issue one CSTF-style module completion to many doctors from a roster file
     or a cohort (one GMC or email per line, or CSV with identifier in the first column) plus shared evidence.
 
     All-or-nothing on roster validation: every line is checked first; if any line fails
-    (unknown clinician, visibility, premium account, or wallet size guard), nothing is issued.
+    (unknown doctor, visibility, premium account, or wallet size guard), nothing is issued.
     When the roster is clean, lines that would duplicate an existing wallet entry are skipped
     and all remaining lines are issued in one pass.
 
@@ -2189,11 +2189,11 @@ async def hr_bulk_training(
 
 @router.get("/hr/doctors/{doctor_user_id}/queue")
 def hr_doctor_queue(request: Request, doctor_user_id: int):
-    """Merged inbox for one clinician (all share sessions combined)."""
+    """Merged inbox for one doctor (all share sessions combined)."""
     hr = require_premium_user(request)
     q = db.share_doctor_queue(int(doctor_user_id), hr_trust=_hr_trust(hr))
     if not q:
-        raise HTTPException(status_code=404, detail="Clinician not found")
+        raise HTTPException(status_code=404, detail="Doctor not found")
     return _enrich_hr_share_payload(q, _hr_trust(hr))
 
 
@@ -2350,7 +2350,7 @@ def hr_doctor_credential_unverify(request: Request, doctor_user_id: int, credent
         if not db._doctor_visible_to_trust(int(doctor_user_id), trust, conn):
             raise HTTPException(
                 status_code=403,
-                detail="This clinician has not permitted your trust to view or update their records.",
+                detail="This doctor has not permitted your trust to view or update their records.",
             )
     cid = str(credential_id).strip()
     mod = cid
@@ -2404,7 +2404,7 @@ def hr_doctor_credential_unverify(request: Request, doctor_user_id: int, credent
             meta={"source": "share"},
         )
         return {"ok": True, "source": "share", "session_id": found["session_id"]}
-    raise HTTPException(status_code=404, detail="No verified record found for this clinician at your trust.")
+    raise HTTPException(status_code=404, detail="No verified record found for this doctor at your trust.")
 
 
 # ── Phase 0: notifications, audit, compliance snapshots ─────────────────────
@@ -3132,7 +3132,7 @@ async def me_messages_send(request: Request, conv_id: int):
 # HR endpoints
 @router.get("/hr/messages/doctors/search")
 def hr_messages_doctors_search(request: Request, q: str = "", limit: int = 30):
-    """Search clinicians or cohorts by name to start a message."""
+    """Search doctors or cohorts by name to start a message."""
     hr = require_premium_user(request)
     results = db.hr_doctors_search_messaging(q=q, limit=limit)
     cohorts: list[dict] = []
@@ -3144,7 +3144,7 @@ def hr_messages_doctors_search(request: Request, q: str = "", limit: int = 30):
 
 @router.post("/hr/messages/start")
 async def hr_messages_start(request: Request):
-    """Start or open a conversation with any registered clinician."""
+    """Start or open a conversation with any registered doctor."""
     hr = require_premium_user(request)
     trust = _hr_trust_required(hr)
     try:
@@ -3160,7 +3160,7 @@ async def hr_messages_start(request: Request):
         raise HTTPException(status_code=400, detail="doctor_user_id must be an integer")
     doc = db.user_get_by_id(doctor_id)
     if not doc or db.user_is_premium(doc):
-        raise HTTPException(status_code=404, detail="Clinician not found")
+        raise HTTPException(status_code=404, detail="Doctor not found")
     if int(doc["id"]) == int(hr["id"]):
         raise HTTPException(status_code=400, detail="Cannot message yourself")
     conv = db.conversation_get_or_create(doctor_id, trust)
@@ -3202,7 +3202,7 @@ async def hr_messages_broadcast(
     request: Request,
     stream: bool = Query(False),
 ):
-    """Send the same message to multiple clinicians (separate private threads each)."""
+    """Send the same message to multiple doctors (separate private threads each)."""
     hr = require_premium_user(request)
     trust = _hr_trust_required(hr)
     ct = (request.headers.get("content-type") or "").lower()
@@ -3248,7 +3248,7 @@ async def hr_messages_broadcast(
         if not stream:
             stream = bool(body.get("stream"))
     if not doctor_ids:
-        raise HTTPException(status_code=400, detail="Select at least one clinician")
+        raise HTTPException(status_code=400, detail="Select at least one doctor")
     if len(doctor_ids) > MAX_HR_COHORT_LINES:
         raise HTTPException(
             status_code=400,
@@ -3319,7 +3319,7 @@ async def hr_messages_send(request: Request, conv_id: int):
     return msg
 
 
-# ── HR cohorts (provision clinicians + group messaging) ─────────────────────
+# ── HR cohorts (provision doctors + group messaging) ─────────────────────
 
 
 def _cohort_reserved_emails() -> set[str]:
@@ -3444,7 +3444,7 @@ def _hr_broadcast_to_doctors(
         try:
             doc = db.user_get_by_id(int(did))
             if not doc or db.user_is_premium(doc):
-                failed.append({"doctor_user_id": did, "error": "clinician not found"})
+                failed.append({"doctor_user_id": did, "error": "doctor not found"})
                 continue
             conv = db.conversation_get_or_create(int(did), hr_trust)
             personalized = _render_welcome_template(body, doc, hr_trust)
@@ -3465,7 +3465,7 @@ def _hr_broadcast_stream(
     total = len(doctor_ids)
     yield _ndjson_progress_line(
         "prepare",
-        f"Preparing to message {total} clinician{'s' if total != 1 else ''}…",
+        f"Preparing to message {total} doctor{'s' if total != 1 else ''}…",
         0,
         total,
     )
@@ -3482,7 +3482,7 @@ def _hr_broadcast_stream(
         try:
             doc = db.user_get_by_id(int(did))
             if not doc or db.user_is_premium(doc):
-                failed.append({"doctor_user_id": did, "error": "clinician not found"})
+                failed.append({"doctor_user_id": did, "error": "doctor not found"})
                 continue
             conv = db.conversation_get_or_create(int(did), hr_trust)
             personalized = _render_welcome_template(body, doc, hr_trust)
@@ -3495,7 +3495,7 @@ def _hr_broadcast_stream(
 
 def _hr_process_pending_welcomes(user_id: int) -> int:
     """
-    Send queued cohort welcome message(s) once the clinician profile is complete.
+    Send queued cohort welcome message(s) once the doctor profile is complete.
     One message per HR trust; uses profile display name when set.
     Returns number of trust-level welcomes sent.
     """
@@ -3567,7 +3567,7 @@ def _hr_welcome_send_stream(
     total = len(unique)
     yield _ndjson_progress_line(
         "prepare",
-        f"Preparing welcome message{'s' if total != 1 else ''} for {total} clinician{'s' if total != 1 else ''}…",
+        f"Preparing welcome message{'s' if total != 1 else ''} for {total} doctor{'s' if total != 1 else ''}…",
         0,
         total,
     )
@@ -3617,7 +3617,7 @@ def _cohort_provision_stream(
     for idx, row in enumerate(processable):
         yield _ndjson_progress_line(
             "provision",
-            f"Adding clinician {idx + 1} of {total}…",
+            f"Adding doctor {idx + 1} of {total}…",
             idx + 1,
             total,
         )
@@ -3716,7 +3716,7 @@ async def hr_cohorts_create(request: Request):
     if db.is_default_cohort_name(name) and db.cohort_get_by_name(trust, name):
         raise HTTPException(
             status_code=400,
-            detail='A default "All Doctors" cohort already exists. Open it to add clinicians.',
+            detail='A default "All Doctors" cohort already exists. Open it to add doctors.',
         )
     members = _parse_cohort_members(body)
     _validate_cohort_members(members)
@@ -3772,7 +3772,7 @@ def hr_cohorts_delete(request: Request, cohort_id: int):
     if db.is_default_cohort_name(cohort.get("name")):
         raise HTTPException(
             status_code=400,
-            detail='The default "All Doctors" cohort cannot be deleted. Add clinicians to it instead.',
+            detail='The default "All Doctors" cohort cannot be deleted. Add doctors to it instead.',
         )
     if not db.cohort_delete(int(cohort_id), trust):
         raise HTTPException(status_code=404, detail="Cohort not found")
@@ -3888,7 +3888,7 @@ async def hr_cohorts_add_members(request: Request, cohort_id: int):
                     hr,
                     reserved,
                     queue_welcome=True,
-                    prepare_message=f'Adding clinicians to “{cname}”…',
+                    prepare_message=f'Adding doctors to “{cname}”…',
                 )
             ),
             media_type="application/x-ndjson",
