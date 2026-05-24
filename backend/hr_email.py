@@ -37,6 +37,55 @@ def _prefs_url() -> str:
     return f"{_app_base_url()}/static/profile/#email-notifications"
 
 
+_EMAIL_FONT = "Arial, Helvetica, sans-serif"
+_EMAIL_TEXT = "#212b32"
+_EMAIL_LINK = "#005eb8"
+_EMAIL_BODY = (
+    f"font-family: {_EMAIL_FONT}; font-size: 16px; line-height: 1.5; "
+    f"color: {_EMAIL_TEXT}; margin: 0 0 16px 0;"
+)
+_EMAIL_LINK_STYLE = (
+    f"color: {_EMAIL_LINK}; font-size: 16px; line-height: 1.5; text-decoration: underline;"
+)
+_EMAIL_LIST_STYLE = (
+    f"font-family: {_EMAIL_FONT}; font-size: 16px; line-height: 1.5; "
+    f"color: {_EMAIL_TEXT}; margin: 0 0 16px 0; padding-left: 20px;"
+)
+
+
+def _email_html_document(content: str) -> str:
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+<body style="font-family: {_EMAIL_FONT}; font-size: 16px; line-height: 1.5; color: {_EMAIL_TEXT}; margin: 0; padding: 16px;">
+{content}
+</body>
+</html>"""
+
+
+def _email_p(text: str) -> str:
+    return f'<p style="{_EMAIL_BODY}">{text}</p>'
+
+
+def _email_link(href: str, label: str) -> str:
+    return (
+        f'<a href="{html.escape(href)}" style="{_EMAIL_LINK_STYLE}">'
+        f"{html.escape(label)}</a>"
+    )
+
+
+def _email_actions(*links: tuple[str, str]) -> str:
+    joined = "<br>".join(_email_link(href, label) for href, label in links)
+    return f'<p style="{_EMAIL_BODY}">{joined}</p>'
+
+
+def _email_signoff() -> str:
+    return _email_p("— DocPass")
+
+
 def _hr_recipient_name(hr_user: dict) -> str:
     name = (hr_user.get("display_name") or "").strip()
     if name:
@@ -95,11 +144,14 @@ def _format_record_lines(items: list[dict], *, max_listed: int = 20) -> tuple[st
     text_block = "Training records for verification:\n" + "\n".join(text_lines)
 
     html_items = "".join(
-        f"<li>{html.escape(_module_label(it))}</li>" for it in listed
+        f'<li style="margin-bottom: 4px;">{html.escape(_module_label(it))}</li>' for it in listed
     )
     if extra > 0:
-        html_items += f"<li>… and {extra} more record(s)</li>"
-    html_block = f"<p><strong>Training records for verification:</strong></p><ul>{html_items}</ul>"
+        html_items += f'<li style="margin-bottom: 4px;">… and {extra} more record(s)</li>'
+    html_block = (
+        f'<p style="{_EMAIL_BODY}"><strong>Training records for verification:</strong></p>'
+        f'<ul style="{_EMAIL_LIST_STYLE}">{html_items}</ul>'
+    )
     return text_block, html_block
 
 
@@ -132,23 +184,21 @@ def _format_digest_bodies(hr_user: dict, stats: dict) -> tuple[str, str, str]:
     ]
     text_body = "\n".join(lines)
 
-    html_body = f"""<!DOCTYPE html>
-<html><body style="font-family: Arial, sans-serif; line-height: 1.5; color: #212b32;">
-<p>Hello {html.escape(_hr_recipient_name(hr_user))},</p>
-<p>Your DocPass summary for <strong>{html.escape(trust)}</strong>:</p>
-<ul>
-  <li><strong>{pending_items}</strong> training record(s) awaiting verification across <strong>{pending_sessions}</strong> shared set(s)</li>
-  <li><strong>{unread_messages}</strong> unread message(s) from clinicians</li>
-</ul>
-<p>
-  <a href="{html.escape(inbox)}">Open verification inbox</a><br>
-  <a href="{html.escape(messages)}">Open messages</a>
-</p>
-<p style="font-size: 0.875rem; color: #4c6272;">
-  <a href="{html.escape(prefs)}">Email notification preferences</a>
-</p>
-<p>— DocPass</p>
-</body></html>"""
+    html_body = _email_html_document(
+        _email_p(f"Hello {html.escape(_hr_recipient_name(hr_user))},")
+        + _email_p(f"Your DocPass summary for <strong>{html.escape(trust)}</strong>:")
+        + f'<ul style="{_EMAIL_LIST_STYLE}">'
+        + f"<li><strong>{pending_items}</strong> training record(s) awaiting verification across "
+        f"<strong>{pending_sessions}</strong> shared set(s)</li>"
+        + f"<li><strong>{unread_messages}</strong> unread message(s) from clinicians</li>"
+        + "</ul>"
+        + _email_actions(
+            (inbox, "Open verification inbox"),
+            (messages, "Open messages"),
+            (prefs, "Email notification preferences"),
+        )
+        + _email_signoff()
+    )
 
     return subject, text_body, html_body
 
@@ -190,17 +240,20 @@ def _format_instant_bodies(
     )
     text_body = "\n".join(text_parts)
 
-    html_body = f"""<!DOCTYPE html>
-<html><body style="font-family: Arial, sans-serif; line-height: 1.5; color: #212b32;">
-<p>Hello {html.escape(_hr_recipient_name(hr_user))},</p>
-<p><strong>{html.escape(clinician)}</strong> has shared <strong>{pending_items}</strong> training record(s) for HR verification at {html.escape(trust)}.</p>
-{record_html}
-<p><a href="{html.escape(inbox)}">Review in DocPass</a></p>
-<p style="font-size: 0.875rem; color: #4c6272;">
-  <a href="{html.escape(prefs)}">Email notification preferences</a>
-</p>
-<p>— DocPass</p>
-</body></html>"""
+    html_body = _email_html_document(
+        _email_p(f"Hello {html.escape(_hr_recipient_name(hr_user))},")
+        + _email_p(
+            f"<strong>{html.escape(clinician)}</strong> has shared "
+            f"<strong>{pending_items}</strong> training record(s) for HR verification at "
+            f"{html.escape(trust)}."
+        )
+        + record_html
+        + _email_actions(
+            (inbox, "Review in DocPass"),
+            (prefs, "Email notification preferences"),
+        )
+        + _email_signoff()
+    )
     return subject, text_body, html_body
 
 
