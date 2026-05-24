@@ -134,6 +134,7 @@
           await saveOnboardingAndGoDashboard();
         } catch (err) {
           showErr(err.message || 'Could not save profile');
+        } finally {
           btn.disabled = false;
         }
       });
