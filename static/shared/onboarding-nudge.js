@@ -6,8 +6,8 @@
  *
  * config = {
  *   insertAfterId: string,   // id of element to insert the bar below
- *   step: number,            // this page's step number (1-5)
- *   total: number,           // total steps (default 5)
+ *   step: number,            // this page's step number (1-4)
+ *   total: number,           // total steps (default 4)
  *   message: string,         // plain text shown to user
  *   ctaLabel: string,        // optional next-step link text
  *   ctaHref: string,         // optional next-step link URL
@@ -42,7 +42,7 @@
     var anchor = document.getElementById(config.insertAfterId);
     if (!anchor) return;
 
-    var total = config.total || 5;
+    var total = config.total || 4;
     var nudge = document.createElement('div');
     nudge.className = 'onb-nudge';
     nudge.setAttribute('data-onb-step', String(config.step));
