@@ -1,7 +1,7 @@
 # DocPass — product overview (shareable reference)
 
 > **Purpose of this document:** Single reference for Copilot, stakeholders, or new contributors.  
-> **Last updated:** May 2026 (HR copy refresh, Add doctors page, dashboard CTAs, All Doctors search)  
+> **Last updated:** May 2026 (semantic embedding matching, ESR evidence storage, onboarding checklist)  
 > **Live demo:** https://docpass.co.uk (Oracle Cloud VM — Docker + Caddy)  
 > **Source repo:** https://github.com/matt1862000/nhs-credential-passport.git
 
@@ -53,7 +53,7 @@ When SMTP is configured, HR users can receive **email** digests and instant aler
 3. Records are stored in a **server-side wallet**; each can become a signed **verifiable credential** (JWT + PDF with QR)
 4. **Doctor shares** records with current-trust HR for verification (auto-share when profile is complete)
 5. **HR** reviews in verification inbox → marks each record **Verified**, **Declined** (with reason), or later **Unverified**
-6. **Doctor** sees outcomes via alerts, can download verified PDFs, compare against trust mandatory requirements (with explainable matching), and plan a move to a new trust’s checklist pack
+6. **Doctor** sees outcomes via alerts, can download verified PDFs, compare against trust mandatory requirements (with explainable matching — exact, alias, partial, or **semantic embedding**), and plan a move to a new trust’s checklist pack
 7. **HR and doctor** can message each other in-app
 8. **HR** (optional) receives email when doctors share for verification, or a daily inbox summary
 
@@ -73,28 +73,50 @@ Mandatory topics are matched to wallet records using a **single backend matcher*
 1. **Exact** — module code match, HR `match_hints`, or normalised topic title ↔ record title  
 2. **Alias** — global alias map (e.g. “Fire Awareness” → Fire Safety, “IPC” → Infection Prevention and Control) merged with per-topic hints  
 3. **Partial** — trust pack `partial_*` hints or cautious substring fallback (min 4 characters)  
-4. **None** — no plausible match  
+4. **Semantic** — Gemini embedding fallback when exact and alias rules do not match (see below)  
+5. **None** — no plausible match  
 
 Trust topics and pack JSON can also store `match_module_codes`, `match_name_substrings`, `partial_module_codes`, `partial_name_substrings`, and `partial_hint`.
+
+### Semantic embedding fallback (Stage 2b)
+
+When **exact** and **alias** matching fail, the matcher calls **Google Gemini embeddings** (`models/gemini-embedding-001`) and compares cosine similarity between:
+
+- the mandatory **topic title** (pre-cached per trust pack), and  
+- each wallet record’s **module name**.
+
+| Similarity | `match_type` | `status_label` |
+|------------|--------------|----------------|
+| ≥ 0.90 | `semantic` | Met (semantic match) |
+| 0.70 – 0.89 | `semantic_low` | Needs review (possible semantic match) |
+| &lt; 0.70 | — | Falls back to partial match if any, else no match |
+
+- **Auth:** service account via `GOOGLE_APPLICATION_CREDENTIALS` (OAuth scope `generative-language.retriever`) — not an API key  
+- **Production:** credentials at `/var/lib/docpass/keys/gcp-embeddings.json`, mounted in container as `/app/keys/gcp-embeddings.json`  
+- **Caching:** trust-pack topic embeddings cached in memory per pack fingerprint; credential embeddings cached by normalised title  
+- **HR verification:** not required for matching — pending records can still show semantic matches; `hr_status` is display-only on requirements  
+
+**Example:** pack topic “Information Governance” + wallet record “Protecting patient confidentiality and NHS data” → **Needs review (possible semantic match)** at ~86% similarity (≥90% required for Met).
 
 ### Output per topic (API + UI)
 
 | Field | Example |
 |-------|---------|
-| `status_label` | Met (exact match), Met (possible match), Needs review, Expired, No match |
-| `match_type` | `exact`, `alias`, `partial`, `none` |
-| `confidence_score` | 1.0 / 0.8 / 0.5 / 0 |
-| `confidence_label` | high / medium / low |
-| `reason` | Human-readable explanation (e.g. “Matched by alias: Fire Awareness → Fire Safety”) |
+| `status_label` | Met (exact match), Met (possible match), Met (semantic match), Needs review (possible semantic match), Needs review, Expired, No match |
+| `match_type` | `exact`, `alias`, `partial`, `semantic`, `semantic_low`, `none` |
+| `confidence_score` | 1.0 / 0.8 / 0.5 / 0.90+ (semantic) / 0.70+ (semantic_low) / 0 |
+| `confidence_label` | high / medium / low / Met (semantic match) / Needs review (possible semantic match) |
+| `reason` | Human-readable explanation (e.g. “Semantic match (86% similar): Protecting patient confidentiality and NHS data”) |
 | `portability` | `portable` (CSTF in category), `conditional` (trust policy), `local_only` (Local in category) |
 | `status` (legacy) | `met`, `expiring`, `gap` — used for summary counts and cohort rollups |
+| `hr_status` | VERIFIED / PENDING / etc. — shown when a matched credential exists; does not gate matching |
 
 ### Summary counts
 
-- **met** — exact or alias match, in date (includes “possible match”)  
+- **met** — exact, alias, or semantic match, in date (includes “possible match”)  
 - **expiring** — matched but expiring within 90 days  
-- **gap** — no match, expired, or needs review  
-- **needs_review** — partial matches only (subset of gap)  
+- **gap** — no match, expired, partial, or semantic_low (needs review)  
+- **needs_review** — partial or semantic_low matches (subset of gap)  
 
 ---
 
@@ -104,14 +126,15 @@ Trust topics and pack JSON can also store `match_module_codes`, `match_name_subs
 
 - Training summary stats: in date, expiring (90 days), expired, total
 - Trust requirements compliance banner (gaps, needs review, expiring)
-- Getting-started guide (profile, add training, share with HR, etc.) with **personalised “what to explore next”** suggestions (unused features only; up to 4 cards)
+- Getting-started checklist: (1) sign in, (2) complete profile, (3) **import from ESR**, (4) **check trust requirements** — with **personalised “what to explore next”** suggestions (unused features only; up to 4 cards)
 - Quick links to all doctor tools
 
 ### 5.2 Training wallet (`/static/staff/`)
 
 - **View my training** — list with expiry status and HR verification state; sort **A–Z** or by **expiry date** (soonest first)
 - **Add a record** — manual entry; optional certificate upload
-- **Import from ESR** — bulk import from ESR export file
+- **Import from ESR** — multi-step wizard (help → CSV → column map → preview → evidence → import); trust format detection; **needs-fix** panel for rows that fail validation (exact title match against wallet, not fuzzy)
+- **ESR evidence** — certificate/screenshot bytes stored server-side in `csv_import_evidence` table; wallet entries hold `import_evidence_id` only (avoids duplicating base64 in browser `localStorage` and quota errors on large imports)
 - **Filters** — e.g. not shared with HR, pending, verified, declined
 - **Share with HR** — send records for verification; bulk “share all not yet shared”
 - **Auto-share** — new records auto-submitted when profile is complete
@@ -128,7 +151,7 @@ Trust topics and pack JSON can also store `match_module_codes`, `match_name_subs
 ### 5.4 Trust requirements (`/static/requirements/`)
 
 - Loads **`/api/me/compliance-snapshot`** (server wallet — not client-side matching)
-- Colour-coded status labels with **reason** text and portability/confidence badges
+- Colour-coded status labels with **reason** text and portability/confidence badges (including **Met (semantic match)** when embedding fallback applies)
 - Summary pills: Met, Expiring soon, Needs review, Gap / expired
 - Driven by HR-configured mandatory topics at the doctor’s **current trust**
 
@@ -307,7 +330,7 @@ Each pack includes `mandatory_examples` with labels, categories, match hints, an
 | **App container** | `docpass` — uvicorn on `127.0.0.1:8000` |
 | **Reverse proxy** | Caddy — `/etc/caddy/Caddyfile` |
 | **Persistent data** | `/var/lib/docpass/data/credentials.db` |
-| **Signing keys** | `/var/lib/docpass/keys/` |
+| **Signing keys** | `/var/lib/docpass/keys/` (JWT signing + GCP service account for embeddings) |
 | **Daily HR digest cron** | `/var/lib/docpass/send-hr-digest.sh` (optional) |
 
 ### Security (pilot hardening)
@@ -331,7 +354,7 @@ Each pack includes `mandatory_examples` with labels, categories, match hints, an
 | `backend/auth_api.py` | Auth, wallet, HR, messaging, notifications, compliance APIs |
 | `backend/db.py` | SQLite schema and data access |
 | `backend/credential_service.py` | Issue/revoke credentials |
-| `backend/mandatory_matching.py` | **Shared** topic ↔ wallet matcher (exact, alias, partial) |
+| `backend/mandatory_matching.py` | **Shared** topic ↔ wallet matcher (exact, alias, partial, **semantic embedding**) |
 | `backend/compliance_snapshot.py` | Snapshots, cohort matrix, pack checklist preview |
 | `backend/trust_packs.py` | Trust checklist pack loading and seeding |
 | `backend/csv_import.py` | ESR CSV parsing |
@@ -363,8 +386,11 @@ Each pack includes `mandatory_examples` with labels, categories, match hints, an
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_USE_TLS` | HR email (Resend: `smtp.resend.com`, user `resend`, password = API key) |
 | `EMAIL_FROM` | e.g. `DocPass <noreply@docpass.co.uk>` |
 | `HR_EMAIL_OVERRIDE` | Optional — route all HR emails to one address (pilot) |
+| `GOOGLE_APPLICATION_CREDENTIALS` | Path to GCP service account JSON for Gemini embeddings (production: `/app/keys/gcp-embeddings.json` in container) |
 
 See `deploy/email.env.example` for a template.
+
+**GCP setup for semantic matching:** enable **Gemini API** (Generative Language API) on the GCP project; service account needs access with scope `generative-language.retriever`. Credentials file on VM: `/var/lib/docpass/keys/gcp-embeddings.json` (mode `600`, owned by container user `1000:1000`).
 
 ### Repository & deployment
 
@@ -491,7 +517,7 @@ DocPass demonstrates ideas aligned with StatMand direction:
 - **Single place** for mandatory training evidence  
 - **HR attestation** of what has been checked  
 - **Reduced re-collection** when doctors move trusts  
-- **Explainable checklist comparison** against trust/destination requirements  
+- **Explainable checklist comparison** against trust/destination requirements (rule-based + semantic embedding for near-matches)  
 - **Portability hints** (CSTF vs local topics)  
 - **CSTF-style** mandatory topic matching (not claiming official CSTF compliance)
 
@@ -504,7 +530,7 @@ DocPass demonstrates ideas aligned with StatMand direction:
 - Push notifications or email alerts **for doctors** (in-app only)  
 - HR in-app alert notifications (HR bell = verification inbox only)  
 - **Public verifier portal** or HR **verifier links** for third parties (removed from pilot scope)  
-- Canonical national module registry / ML fuzzy matching (alias map + hints only)  
+- Canonical national module registry (alias map + hints + **semantic embeddings** for near-matches, not a national module catalogue)  
 - Strict CSP without `'unsafe-inline'` (would require frontend refactor)  
 - Legal/compliance sign-off as an NHS product  
 
@@ -521,6 +547,7 @@ DocPass demonstrates ideas aligned with StatMand direction:
 | **Trust pack** | JSON checklist of mandatory topics for a destination trust |
 | **Match hints** | Per-topic codes/substrings HR or pack JSON use to match wallet records |
 | **Alias map** | Built-in synonyms (Fire Awareness → Fire Safety, etc.) |
+| **Semantic match** | Embedding-based link when topic title and wallet record title mean the same thing but differ in wording (≥90% similarity → Met; 70–89% → Needs review) |
 | **Premium account** | HR/trust user |
 | **Cohort / group** | Named group of on-boarded doctors for bulk HR actions (UI: **Your groups** on Add doctors page) |
 | **StatMand** | NHS England Statutory and Mandatory Training programme |
@@ -554,6 +581,10 @@ DocPass demonstrates ideas aligned with StatMand direction:
 | HR bell simplified | Alerts section removed for HR; bell links to verification inbox |
 | Stage 2 compliance matching | Shared matcher, explainable statuses, alias/partial rules |
 | Trust-move alignment | Plan-a-move uses same API matcher as requirements |
+| Semantic embedding matching | Gemini `gemini-embedding-001` fallback when exact/alias fail; cosine similarity thresholds 0.90 / 0.70; GCP service account auth |
+| ESR import evidence storage | Server-side `csv_import_evidence` table; wallet stores `import_evidence_id` — fixes localStorage quota on bulk import |
+| ESR needs-fix matching | Exact wallet title match only (removed fuzzy prune that hid valid fix rows) |
+| Onboarding checklist | Steps 3–4 swapped: import from ESR before check trust requirements; step 4 links to requirements page |
 
 ---
 

@@ -34,14 +34,14 @@ _CONFIDENCE = {
     "exact": 1.0,
     "alias": 0.8,
     "partial": 0.5,
-    "semantic": 0.85,
+    "semantic": 0.90,
     "semantic_low": 0.7,
     "none": 0.0,
 }
-_SEMANTIC_CONFIDENT = 0.85
+_SEMANTIC_CONFIDENT = 0.90
 _SEMANTIC_REVIEW = 0.70
-_EMBEDDING_MODEL = "models/text-embedding-004"
-_GCP_SCOPES = ("https://www.googleapis.com/auth/cloud-platform",)
+_EMBEDDING_MODEL = "models/gemini-embedding-001"
+_GCP_SCOPES = ("https://www.googleapis.com/auth/generative-language.retriever",)
 
 # pack_key -> {"fingerprint": str, "topics": {topic_norm: embedding}}
 _semantic_pack_cache: dict[str, dict[str, Any]] = {}
