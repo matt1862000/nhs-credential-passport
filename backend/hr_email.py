@@ -14,6 +14,14 @@ def _app_base_url() -> str:
     return (os.environ.get("BASE_URL") or "https://docpass.co.uk").rstrip("/")
 
 
+def hr_delivery_email(account_email: Optional[str] = None) -> str:
+    """Pilot override: send all HR notifications to one inbox when HR_EMAIL_OVERRIDE is set."""
+    override = (os.environ.get("HR_EMAIL_OVERRIDE") or "").strip()
+    if override:
+        return override
+    return (account_email or "").strip()
+
+
 def _inbox_url() -> str:
     return f"{_app_base_url()}/static/hr/"
 
@@ -139,7 +147,12 @@ def send_daily_digests(*, skip_if_empty: bool = True) -> int:
         if skip_if_empty and pending_items == 0 and unread_messages == 0:
             continue
         subject, text_body, html_body = _format_digest_bodies(hr_user, stats)
-        if send_email(to=hr_user["email"], subject=subject, text_body=text_body, html_body=html_body):
+        if send_email(
+            to=hr_delivery_email(hr_user["email"]),
+            subject=subject,
+            text_body=text_body,
+            html_body=html_body,
+        ):
             sent += 1
     return sent
 
@@ -172,6 +185,11 @@ def notify_new_share_for_hr(
             pending_items=int(pending_items),
             session_id=int(session_id),
         )
-        if send_email(to=hr_user["email"], subject=subject, text_body=text_body, html_body=html_body):
+        if send_email(
+            to=hr_delivery_email(hr_user["email"]),
+            subject=subject,
+            text_body=text_body,
+            html_body=html_body,
+        ):
             sent += 1
     return sent

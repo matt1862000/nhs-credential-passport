@@ -1163,7 +1163,11 @@ def hr_email_preferences_get(request: Request):
     if not prefs:
         raise HTTPException(status_code=400, detail="HR account required")
     summary = db.hr_inbox_activity_summary((hr.get("current_trust") or "").strip())
-    return {**prefs, "inbox_summary": summary}
+    return {
+        **prefs,
+        "email": hr_email.hr_delivery_email(prefs.get("email")),
+        "inbox_summary": summary,
+    }
 
 
 @router.put("/hr/email-preferences")
