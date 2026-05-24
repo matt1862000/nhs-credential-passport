@@ -28,6 +28,12 @@ DEV_SEED_DISPLAY_SHEFFIELD = "Sheffield HR"
 DEV_SEED_DISPLAY_ROTHERHAM = "Rotherham HR"
 DEFAULT_COHORT_NAME = "All Doctors"
 LEGACY_DEFAULT_COHORT_NAMES = ("Ad-Hoc",)
+# Count only members whose user account still exists (SQLite FK cascades are off by default).
+_COHORT_ACTIVE_MEMBER_COUNT_SQL = """
+(SELECT COUNT(*) FROM hr_cohort_members m
+ INNER JOIN users u ON u.id = m.user_id
+ WHERE m.cohort_id = c.id)
+"""
 _LEGACY_SHEFFIELD_PARTNERSHIP_TRUST_LABELS = (
     "Sheffield Health and Social Care NHS Foundation Trust",
 )
@@ -105,6 +111,7 @@ def init_db():
         _migrate_merge_duplicate_conversation_trusts(conn)
         _migrate_normalize_conversation_trust_labels(conn)
         _backfill_onboarding_completed(conn)
+        _cleanup_orphan_cohort_members(conn)
         conn.commit()
 
 
@@ -354,7 +361,7 @@ def hr_cohort_search_by_name(hr_trust: str, q: str, limit: int = 10) -> list[dic
         rows = conn.execute(
             """
             SELECT c.id, c.name,
-                   (SELECT COUNT(*) FROM hr_cohort_members m WHERE m.cohort_id = c.id) AS member_count
+                   """ + _COHORT_ACTIVE_MEMBER_COUNT_SQL.strip() + """ AS member_count
             FROM hr_cohorts c
             WHERE LOWER(TRIM(c.hr_trust)) = LOWER(TRIM(?))
               AND LOWER(c.name) LIKE ?
@@ -3039,6 +3046,18 @@ def is_default_cohort_name(name: str) -> bool:
     return n in {x.casefold() for x in LEGACY_DEFAULT_COHORT_NAMES}
 
 
+def _cleanup_orphan_cohort_members(conn: sqlite3.Connection) -> int:
+    """Remove cohort rows left behind when users were deleted without FK cascade."""
+    _ensure_hr_cohorts_tables(conn)
+    cur = conn.execute(
+        """
+        DELETE FROM hr_cohort_members
+        WHERE user_id NOT IN (SELECT id FROM users)
+        """
+    )
+    return int(cur.rowcount or 0)
+
+
 def cohort_get_by_name(hr_trust: str, name: str) -> Optional[dict]:
     hr_trust = (hr_trust or "").strip()
     name = (name or "").strip()
@@ -3051,7 +3070,7 @@ def cohort_get_by_name(hr_trust: str, name: str) -> Optional[dict]:
             """
             SELECT c.id, c.hr_trust, c.name, c.created_at, c.created_by_user_id,
                    c.welcome_message_template,
-                   (SELECT COUNT(*) FROM hr_cohort_members m WHERE m.cohort_id = c.id) AS member_count
+                   """ + _COHORT_ACTIVE_MEMBER_COUNT_SQL.strip() + """ AS member_count
             FROM hr_cohorts c
             WHERE LOWER(TRIM(c.hr_trust)) = LOWER(TRIM(?))
               AND LOWER(TRIM(c.name)) = LOWER(TRIM(?))
@@ -3193,7 +3212,7 @@ def cohort_list_for_trust(hr_trust: str) -> list[dict]:
             """
             SELECT c.id, c.hr_trust, c.name, c.created_at, c.created_by_user_id,
                    c.welcome_message_template,
-                   (SELECT COUNT(*) FROM hr_cohort_members m WHERE m.cohort_id = c.id) AS member_count
+                   """ + _COHORT_ACTIVE_MEMBER_COUNT_SQL.strip() + """ AS member_count
             FROM hr_cohorts c
             WHERE LOWER(TRIM(c.hr_trust)) = LOWER(TRIM(?))
             ORDER BY CASE
@@ -3215,7 +3234,7 @@ def cohort_get_by_id(cohort_id: int) -> Optional[dict]:
             """
             SELECT c.id, c.hr_trust, c.name, c.created_at, c.created_by_user_id,
                    c.welcome_message_template,
-                   (SELECT COUNT(*) FROM hr_cohort_members m WHERE m.cohort_id = c.id) AS member_count
+                   """ + _COHORT_ACTIVE_MEMBER_COUNT_SQL.strip() + """ AS member_count
             FROM hr_cohorts c
             WHERE c.id = ?
             """,
@@ -3234,7 +3253,7 @@ def cohort_get(cohort_id: int, hr_trust: str) -> Optional[dict]:
             """
             SELECT c.id, c.hr_trust, c.name, c.created_at, c.created_by_user_id,
                    c.welcome_message_template,
-                   (SELECT COUNT(*) FROM hr_cohort_members m WHERE m.cohort_id = c.id) AS member_count
+                   """ + _COHORT_ACTIVE_MEMBER_COUNT_SQL.strip() + """ AS member_count
             FROM hr_cohorts c
             WHERE c.id = ? AND LOWER(TRIM(c.hr_trust)) = LOWER(TRIM(?))
             """,
@@ -3357,6 +3376,10 @@ def hr_doctor_delete(doctor_user_id: int, hr_trust: str) -> Optional[dict]:
             {"id": int(r["id"]), "name": r["name"], "hr_trust": r["hr_trust"]}
             for r in cohort_rows
         ]
+        conn.execute(
+            "DELETE FROM hr_cohort_members WHERE user_id = ?",
+            (int(doctor_user_id),),
+        )
         cur = conn.execute(
             "DELETE FROM users WHERE id = ? AND COALESCE(premium, 0) = 0",
             (int(doctor_user_id),),
