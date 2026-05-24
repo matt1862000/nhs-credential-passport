@@ -877,13 +877,38 @@
       function closeHrCertModal() {
         var modal = document.getElementById('hrCertModal');
         var body = document.getElementById('hrCertModalBody');
+        if (body && body.dataset.certBlobUrl) {
+          try { URL.revokeObjectURL(body.dataset.certBlobUrl); } catch (e) {}
+          delete body.dataset.certBlobUrl;
+        }
         if (body) body.innerHTML = '';
         if (modal) modal.hidden = true;
       }
 
-      function closeHrAddTrainingModal() {
-        var m = document.getElementById('hrAddTrainingModal');
-        if (m) m.hidden = true;
+      function renderHrCertificatePreview(body, b64, mime, filename) {
+        if (body && body.dataset.certBlobUrl) {
+          try { URL.revokeObjectURL(body.dataset.certBlobUrl); } catch (e) {}
+          delete body.dataset.certBlobUrl;
+        }
+        var clean = String(b64 || '').replace(/\s/g, '');
+        if (!clean) return false;
+        var bin = atob(clean);
+        var bytes = new Uint8Array(bin.length);
+        for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        var blob = new Blob([bytes], { type: mime });
+        var url = URL.createObjectURL(blob);
+        body.dataset.certBlobUrl = url;
+        var safeName = String(filename || 'evidence').replace(/"/g, '');
+        if (mime === 'application/pdf') {
+          body.innerHTML =
+            '<p class="hr-muted" style="margin:0 0 0.75rem 0;">' +
+            '<a href="' + url + '" download="' + safeName + '" target="_blank" rel="noopener">Open or download PDF</a>' +
+            '</p>' +
+            '<iframe class="hr-cert-iframe" title="Uploaded evidence" src="' + url + '"></iframe>';
+        } else {
+          body.innerHTML = '<img class="hr-cert-img" alt="Uploaded evidence" src="' + url + '" />';
+        }
+        return true;
       }
 
       function openHrCertModal(it) {
@@ -896,13 +921,13 @@
         var fn = String(it.certificate_filename || 'evidence').toLowerCase();
         var ext = (fn.split('.').pop() || '').toLowerCase();
         var mime = ext === 'pdf' ? 'application/pdf' : (ext === 'png' ? 'image/png' : (ext === 'webp' ? 'image/webp' : 'image/jpeg'));
-        var b64 = String(it.certificate_base64).replace(/\s/g, '');
-        if (mime === 'application/pdf') {
-          body.innerHTML = '<iframe class="hr-cert-iframe" title="Uploaded evidence" src="data:' + mime + ';base64,' + b64 + '"></iframe>';
-        } else {
-          body.innerHTML = '<img class="hr-cert-img" alt="Uploaded evidence" src="data:' + mime + ';base64,' + b64 + '" />';
-        }
+        if (!renderHrCertificatePreview(body, it.certificate_base64, mime, it.certificate_filename || 'evidence')) return;
         modal.hidden = false;
+      }
+
+      function closeHrAddTrainingModal() {
+        var m = document.getElementById('hrAddTrainingModal');
+        if (m) m.hidden = true;
       }
 
       function wireTabs(containerId, storageKey, onPick) {

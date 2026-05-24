@@ -871,8 +871,38 @@
     function closeStaffCertModal() {
       var modal = document.getElementById('staffCertModal');
       var body = document.getElementById('staffCertModalBody');
+      if (body && body.dataset.certBlobUrl) {
+        try { URL.revokeObjectURL(body.dataset.certBlobUrl); } catch (e) {}
+        delete body.dataset.certBlobUrl;
+      }
       if (body) body.innerHTML = '';
       if (modal) modal.hidden = true;
+    }
+
+    function renderCertificatePreview(body, b64, mime, filename) {
+      if (body && body.dataset.certBlobUrl) {
+        try { URL.revokeObjectURL(body.dataset.certBlobUrl); } catch (e) {}
+        delete body.dataset.certBlobUrl;
+      }
+      var clean = String(b64 || '').replace(/\s/g, '');
+      if (!clean) return false;
+      var bin = atob(clean);
+      var bytes = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      var blob = new Blob([bytes], { type: mime });
+      var url = URL.createObjectURL(blob);
+      body.dataset.certBlobUrl = url;
+      var safeName = String(filename || 'evidence').replace(/"/g, '');
+      if (mime === 'application/pdf') {
+        body.innerHTML =
+          '<p class="nhsuk-hint" style="margin:0 0 0.75rem 0;">' +
+          '<a href="' + url + '" download="' + safeName + '" target="_blank" rel="noopener">Open or download PDF</a>' +
+          '</p>' +
+          '<iframe class="staff-cert-iframe" title="Uploaded certificate" src="' + url + '"></iframe>';
+      } else {
+        body.innerHTML = '<img class="staff-cert-img" alt="Uploaded certificate" src="' + url + '" />';
+      }
+      return true;
     }
 
     window.viewUploadedCertificate = function (credentialId) {
@@ -890,11 +920,9 @@
       var fn = String(ev.filename || 'evidence').toLowerCase();
       var ext = (fn.split('.').pop() || '').toLowerCase();
       var mime = ext === 'pdf' ? 'application/pdf' : (ext === 'png' ? 'image/png' : (ext === 'webp' ? 'image/webp' : 'image/jpeg'));
-      var b64 = String(ev.b64).replace(/\s/g, '');
-      if (mime === 'application/pdf') {
-        body.innerHTML = '<iframe class="staff-cert-iframe" title="Uploaded certificate" src="data:' + mime + ';base64,' + b64 + '"></iframe>';
-      } else {
-        body.innerHTML = '<img class="staff-cert-img" alt="Uploaded certificate" src="data:' + mime + ';base64,' + b64 + '" />';
+      if (!renderCertificatePreview(body, ev.b64, mime, ev.filename || 'evidence')) {
+        alert('Could not load certificate preview.');
+        return;
       }
       modal.hidden = false;
     };
