@@ -12,10 +12,10 @@ import sqlite3
 from typing import Callable, Iterator, Optional
 
 import bcrypt
-from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
-from . import compliance_snapshot, crypto, db, session_auth
+from . import compliance_snapshot, crypto, db, hr_email, session_auth
 from .rate_limit import limiter
 from .credential_service import (
     completion_dedupe_key,
@@ -89,6 +89,12 @@ def _auth_me_payload(u: dict) -> dict:
         "onboarding_completed": bool(u.get("onboarding_completed")),
         "hr_welcome_message_template": (u.get("hr_welcome_message_template") or "").strip()
         or None
+        if db.user_is_premium(u)
+        else None,
+        "hr_email_digest_enabled": bool(u.get("hr_email_digest_enabled", True))
+        if db.user_is_premium(u)
+        else None,
+        "hr_email_instant_enabled": bool(u.get("hr_email_instant_enabled", True))
         if db.user_is_premium(u)
         else None,
     }
@@ -919,7 +925,7 @@ async def me_shares_withdraw(request: Request):
 
 
 @router.post("/me/shares")
-async def me_shares_post(request: Request):
+async def me_shares_post(request: Request, background_tasks: BackgroundTasks):
     uid = require_user_id(request)
     try:
         body = await request.json()
@@ -1011,6 +1017,14 @@ async def me_shares_post(request: Request):
     )
     base = _public_app_base(request)
     share_url = f"{base}/static/hr/?session={created['session_id']}"
+    if not portfolio and items:
+        background_tasks.add_task(
+            hr_email.notify_new_share_for_hr,
+            target_trust=u.get("current_trust") or None,
+            session_id=int(created["session_id"]),
+            pending_items=len(items),
+            share_kind="review",
+        )
     return {
         "ok": True,
         "session_id": created["session_id"],
@@ -1140,6 +1154,41 @@ def _assert_same_trust(hr_user: dict, session: dict) -> None:
 def hr_shares_list(request: Request, limit: int = 50):
     hr = require_premium_user(request)
     return {"sessions": db.share_inbox_list(limit=limit, hr_trust=_hr_trust(hr))}
+
+
+@router.get("/hr/email-preferences")
+def hr_email_preferences_get(request: Request):
+    hr = require_premium_user(request)
+    prefs = db.hr_email_prefs_get(int(hr["id"]))
+    if not prefs:
+        raise HTTPException(status_code=400, detail="HR account required")
+    summary = db.hr_inbox_activity_summary((hr.get("current_trust") or "").strip())
+    return {**prefs, "inbox_summary": summary}
+
+
+@router.put("/hr/email-preferences")
+async def hr_email_preferences_put(request: Request):
+    hr = require_premium_user(request)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Expected a JSON object")
+    digest = body.get("digest_enabled")
+    instant = body.get("instant_enabled")
+    if digest is not None and not isinstance(digest, bool):
+        raise HTTPException(status_code=400, detail="digest_enabled must be a boolean")
+    if instant is not None and not isinstance(instant, bool):
+        raise HTTPException(status_code=400, detail="instant_enabled must be a boolean")
+    prefs = db.hr_email_prefs_set(
+        int(hr["id"]),
+        digest_enabled=digest if isinstance(digest, bool) else None,
+        instant_enabled=instant if isinstance(instant, bool) else None,
+    )
+    if not prefs:
+        raise HTTPException(status_code=400, detail="HR account required")
+    return prefs
 
 
 @router.get("/hr/doctors/search")

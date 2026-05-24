@@ -2220,6 +2220,7 @@ def _ensure_users_profile_extra_columns(conn: sqlite3.Connection) -> None:
     if "personal_email" not in cols:
         conn.execute("ALTER TABLE users ADD COLUMN personal_email TEXT")
     _ensure_users_hr_welcome_template_column(conn)
+    _ensure_users_hr_email_columns(conn)
 
 
 def _ensure_users_hr_welcome_template_column(conn: sqlite3.Connection) -> None:
@@ -2227,6 +2228,19 @@ def _ensure_users_hr_welcome_template_column(conn: sqlite3.Connection) -> None:
     cols = [row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()]
     if "hr_welcome_message_template" not in cols:
         conn.execute("ALTER TABLE users ADD COLUMN hr_welcome_message_template TEXT")
+
+
+def _ensure_users_hr_email_columns(conn: sqlite3.Connection) -> None:
+    """HR accounts: email digest and instant notification preferences."""
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()]
+    if "hr_email_digest_enabled" not in cols:
+        conn.execute(
+            "ALTER TABLE users ADD COLUMN hr_email_digest_enabled INTEGER NOT NULL DEFAULT 1"
+        )
+    if "hr_email_instant_enabled" not in cols:
+        conn.execute(
+            "ALTER TABLE users ADD COLUMN hr_email_instant_enabled INTEGER NOT NULL DEFAULT 1"
+        )
 
 
 def _ensure_users_nhs_work_email_column(conn: sqlite3.Connection) -> None:
@@ -2682,6 +2696,12 @@ def _user_public_dict(row: sqlite3.Row, include_password_hash: bool = False) -> 
         "hr_welcome_message_template": row["hr_welcome_message_template"]
         if "hr_welcome_message_template" in keys
         else None,
+        "hr_email_digest_enabled": bool(row["hr_email_digest_enabled"])
+        if "hr_email_digest_enabled" in keys and row["hr_email_digest_enabled"] is not None
+        else True,
+        "hr_email_instant_enabled": bool(row["hr_email_instant_enabled"])
+        if "hr_email_instant_enabled" in keys and row["hr_email_instant_enabled"] is not None
+        else True,
     }
     if include_password_hash:
         out["password_hash"] = row["password_hash"]
@@ -2714,10 +2734,12 @@ def user_get_by_id(user_id: int):
         _ensure_users_provision_columns(conn)
         conn.row_factory = sqlite3.Row
         _ensure_users_hr_welcome_template_column(conn)
+        _ensure_users_hr_email_columns(conn)
         row = conn.execute(
             """SELECT id, email, premium, gmc_number, display_name, current_trust,
                       personal_email, must_change_password, onboarding_completed,
-                      hr_welcome_message_template
+                      hr_welcome_message_template, hr_email_digest_enabled,
+                      hr_email_instant_enabled
                FROM users WHERE id = ?""",
             (user_id,),
         ).fetchone()
@@ -3984,3 +4006,117 @@ def verifier_link_bundle_payload(link_row: dict) -> Optional[dict]:
         "doctors": doctors,
         "credentials": credentials,
     }
+
+
+def _hr_user_row_to_dict(row: sqlite3.Row) -> dict:
+    return {
+        "id": int(row["id"]),
+        "email": row["email"],
+        "display_name": row["display_name"],
+        "current_trust": row["current_trust"],
+        "hr_email_digest_enabled": bool(row["hr_email_digest_enabled"]),
+        "hr_email_instant_enabled": bool(row["hr_email_instant_enabled"]),
+    }
+
+
+def hr_premium_users_list() -> list[dict]:
+    """All premium (HR) users with a trust set — for daily digest iteration."""
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_users_premium_column(conn)
+        _ensure_users_profile_extra_columns(conn)
+        _ensure_users_hr_email_columns(conn)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT id, email, display_name, current_trust,
+                   hr_email_digest_enabled, hr_email_instant_enabled
+            FROM users
+            WHERE premium = 1 AND TRIM(COALESCE(current_trust, '')) != ''
+            ORDER BY current_trust COLLATE NOCASE, email COLLATE NOCASE
+            """
+        ).fetchall()
+    return [_hr_user_row_to_dict(r) for r in rows]
+
+
+def hr_premium_users_for_trust(trust: str) -> list[dict]:
+    """Premium HR users whose current_trust matches the given trust (case-insensitive)."""
+    trust_key = (trust or "").strip().lower()
+    if not trust_key:
+        return []
+    return [
+        u
+        for u in hr_premium_users_list()
+        if (u.get("current_trust") or "").strip().lower() == trust_key
+    ]
+
+
+def hr_inbox_activity_summary(hr_trust: str) -> dict:
+    """Pending verification counts and unread clinician messages for one HR trust."""
+    trust_key = (hr_trust or "").strip().lower()
+    pending_sessions = 0
+    pending_items = 0
+    unread_messages = 0
+    if not trust_key:
+        return {
+            "pending_sessions": 0,
+            "pending_items": 0,
+            "unread_messages": 0,
+        }
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_share_tables(conn)
+        row = conn.execute(
+            """
+            SELECT COUNT(DISTINCT s.id) AS sessions,
+                   COUNT(i.credential_id) AS items
+            FROM share_sessions s
+            JOIN share_items i ON i.session_id = s.id AND i.status = 'PENDING'
+            WHERE LOWER(TRIM(COALESCE(s.target_trust, ''))) = ?
+              AND LOWER(TRIM(COALESCE(s.share_kind, 'review'))) = 'review'
+            """,
+            (trust_key,),
+        ).fetchone()
+        if row:
+            pending_sessions = int(row[0] or 0)
+            pending_items = int(row[1] or 0)
+    unread_messages = messages_unread_count_for_hr(hr_trust)
+    return {
+        "pending_sessions": pending_sessions,
+        "pending_items": pending_items,
+        "unread_messages": unread_messages,
+    }
+
+
+def hr_email_prefs_get(user_id: int) -> Optional[dict]:
+    u = user_get_by_id(int(user_id))
+    if not u or not user_is_premium(u):
+        return None
+    return {
+        "digest_enabled": bool(u.get("hr_email_digest_enabled", True)),
+        "instant_enabled": bool(u.get("hr_email_instant_enabled", True)),
+        "email": u.get("email"),
+    }
+
+
+def hr_email_prefs_set(
+    user_id: int,
+    *,
+    digest_enabled: Optional[bool] = None,
+    instant_enabled: Optional[bool] = None,
+) -> Optional[dict]:
+    u = user_get_by_id(int(user_id))
+    if not u or not user_is_premium(u):
+        return None
+    digest = 1 if (digest_enabled if digest_enabled is not None else u.get("hr_email_digest_enabled", True)) else 0
+    instant = 1 if (instant_enabled if instant_enabled is not None else u.get("hr_email_instant_enabled", True)) else 0
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_users_hr_email_columns(conn)
+        conn.execute(
+            """
+            UPDATE users SET hr_email_digest_enabled = ?, hr_email_instant_enabled = ?
+            WHERE id = ?
+            """,
+            (digest, instant, int(user_id)),
+        )
+        conn.commit()
+    return hr_email_prefs_get(int(user_id))
+
