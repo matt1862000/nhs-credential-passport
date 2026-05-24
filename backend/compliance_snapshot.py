@@ -211,10 +211,15 @@ def pack_checklist_preview(
     verified_map = db.doctor_verified_map(int(doctor_user_id))
     rec_hints = _recognition_hints_for_leaving(pack, leaving_trust)
 
+    pack_key = (pack_id or "").strip()
+    topics = [_pack_example_to_topic(ex) for ex in pack.get("mandatory_examples") or []]
+    mandatory_matching.prepare_semantic_match_cache(pack_key, topics)
     topic_rows: list[dict] = []
     for ex in pack.get("mandatory_examples") or []:
         topic = _pack_example_to_topic(ex)
-        result = mandatory_matching.match_topic_to_wallet(topic, payloads)
+        result = mandatory_matching.match_topic_to_wallet(
+            topic, payloads, pack_key=pack_key, pack_topics=topics
+        )
         topic_rows.append(_topic_result_row(topic, result, verified_map, rec_hints=rec_hints))
 
     summary = _summary_counts(topic_rows)
@@ -240,9 +245,13 @@ def doctor_compliance_snapshot(doctor_user_id: int, trust_name: str) -> dict:
     payloads = _wallet_payloads(wallet)
     verified_map = db.doctor_verified_map(int(doctor_user_id))
 
+    pack_key = trust
+    mandatory_matching.prepare_semantic_match_cache(pack_key, topics)
     topic_rows: list[dict] = []
     for t in topics:
-        result = mandatory_matching.match_topic_to_wallet(t, payloads)
+        result = mandatory_matching.match_topic_to_wallet(
+            t, payloads, pack_key=pack_key, pack_topics=topics
+        )
         topic_rows.append(_topic_result_row(t, result, verified_map))
 
     summary = _summary_counts(topic_rows)

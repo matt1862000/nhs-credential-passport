@@ -30,7 +30,23 @@ ALIAS_MAP: dict[str, list[str]] = {
 }
 
 _MIN_PARTIAL_LEN = 4
-_CONFIDENCE = {"exact": 1.0, "alias": 0.8, "partial": 0.5, "none": 0.0}
+_CONFIDENCE = {
+    "exact": 1.0,
+    "alias": 0.8,
+    "partial": 0.5,
+    "semantic": 0.85,
+    "semantic_low": 0.7,
+    "none": 0.0,
+}
+_SEMANTIC_CONFIDENT = 0.85
+_SEMANTIC_REVIEW = 0.70
+_EMBEDDING_MODEL = "models/text-embedding-004"
+_GCP_SCOPES = ("https://www.googleapis.com/auth/cloud-platform",)
+
+# pack_key -> {"fingerprint": str, "topics": {topic_norm: embedding}}
+_semantic_pack_cache: dict[str, dict[str, Any]] = {}
+# normalized credential module name -> embedding
+_credential_embedding_cache: dict[str, list[float]] = {}
 
 
 def normalize(text: Optional[str]) -> str:
@@ -163,6 +179,180 @@ def _classify_credential(topic: dict, hints: dict, pl: dict) -> tuple[str, str]:
     return "none", ""
 
 
+def _pack_fingerprint(topics: list[dict]) -> str:
+    names = sorted(
+        normalize(t.get("topic_name") or "")
+        for t in topics
+        if (t.get("topic_name") or "").strip()
+    )
+    return "|".join(names)
+
+
+def _configure_genai_client() -> bool:
+    """Authenticate with GOOGLE_APPLICATION_CREDENTIALS via google.auth (not an API key)."""
+    try:
+        import google.auth
+        import google.auth.transport.requests
+        import google.generativeai as genai
+    except ImportError:
+        return False
+    try:
+        credentials, _project = google.auth.default(scopes=list(_GCP_SCOPES))
+        auth_req = google.auth.transport.requests.Request()
+        credentials.refresh(auth_req)
+        genai.configure(credentials=credentials)
+        return True
+    except Exception:
+        return False
+
+
+def _embed_text(text: str) -> Optional[list[float]]:
+    raw = (text or "").strip()
+    if not raw:
+        return None
+    try:
+        import google.generativeai as genai
+    except ImportError:
+        return None
+    if not _configure_genai_client():
+        return None
+    try:
+        response = genai.embed_content(
+            model=_EMBEDDING_MODEL,
+            content=raw,
+            task_type="SEMANTIC_SIMILARITY",
+        )
+        if isinstance(response, dict):
+            embedding = response.get("embedding")
+        else:
+            embedding = getattr(response, "embedding", None)
+        if not embedding:
+            return None
+        return [float(x) for x in embedding]
+    except Exception:
+        return None
+
+
+def _cosine_similarity(left: list[float], right: list[float]) -> float:
+    try:
+        import numpy as np
+    except ImportError:
+        return 0.0
+    a = np.asarray(left, dtype=float)
+    b = np.asarray(right, dtype=float)
+    denom = float(np.linalg.norm(a) * np.linalg.norm(b))
+    if denom <= 0.0:
+        return 0.0
+    return float(np.dot(a, b) / denom)
+
+
+def prepare_semantic_match_cache(pack_key: str, topics: list[dict]) -> None:
+    """
+    Pre-compute embeddings for all mandatory topic names in a trust pack.
+    Recomputes only when the pack's topic set changes (in-memory cache).
+    """
+    key = (pack_key or "").strip()
+    if not key:
+        return
+    fingerprint = _pack_fingerprint(topics)
+    cached = _semantic_pack_cache.get(key)
+    if cached and cached.get("fingerprint") == fingerprint:
+        return
+    topic_embeddings: dict[str, list[float]] = {}
+    for topic in topics:
+        topic_name = (topic.get("topic_name") or "").strip()
+        topic_norm = normalize(topic_name)
+        if not topic_norm:
+            continue
+        embedding = _embed_text(topic_name)
+        if embedding:
+            topic_embeddings[topic_norm] = embedding
+    _semantic_pack_cache[key] = {
+        "fingerprint": fingerprint,
+        "topics": topic_embeddings,
+    }
+
+
+def _topic_embedding(topic: dict, pack_key: Optional[str]) -> Optional[list[float]]:
+    topic_name = (topic.get("topic_name") or "").strip()
+    topic_norm = normalize(topic_name)
+    if not topic_norm:
+        return None
+    if pack_key:
+        cached = _semantic_pack_cache.get(pack_key.strip())
+        if cached:
+            embedding = (cached.get("topics") or {}).get(topic_norm)
+            if embedding:
+                return embedding
+    return _embed_text(topic_name)
+
+
+def _credential_embedding(pl: dict) -> Optional[list[float]]:
+    name = (pl.get("module_name_display") or pl.get("module_name") or "").strip()
+    norm = normalize(name)
+    if not norm:
+        return None
+    if norm in _credential_embedding_cache:
+        return _credential_embedding_cache[norm]
+    embedding = _embed_text(name)
+    if embedding:
+        _credential_embedding_cache[norm] = embedding
+    return embedding
+
+
+def _should_try_semantic(match_type: str) -> bool:
+    """Semantic fallback when exact and alias matching did not succeed."""
+    return match_type not in ("exact", "alias")
+
+
+def _semantic_match(
+    topic: dict,
+    wallet_payloads: list[dict],
+    *,
+    pack_key: Optional[str],
+) -> Optional[tuple[float, dict, str]]:
+    """Return (similarity, payload, module_display) for the best semantic hit, if any."""
+    topic_emb = _topic_embedding(topic, pack_key)
+    if not topic_emb:
+        return None
+    best: Optional[tuple[float, dict, str]] = None
+    for pl in wallet_payloads:
+        if not pl:
+            continue
+        cred_emb = _credential_embedding(pl)
+        if not cred_emb:
+            continue
+        similarity = _cosine_similarity(topic_emb, cred_emb)
+        module_display = pl.get("module_name_display") or pl.get("module_name") or ""
+        if best is None or similarity > best[0]:
+            best = (similarity, pl, module_display)
+    return best
+
+
+def _semantic_status_label(match_type: str, expiry_bucket: str) -> str:
+    if match_type == "semantic":
+        if expiry_bucket == "expiring":
+            return "Met (expiring soon)"
+        return "Met (semantic match)"
+    if match_type == "semantic_low":
+        return "Needs review (possible semantic match)"
+    return "Needs review"
+
+
+def _semantic_confidence_label(match_type: str) -> str:
+    if match_type == "semantic":
+        return "Met (semantic match)"
+    if match_type == "semantic_low":
+        return "Needs review (possible semantic match)"
+    return "low"
+
+
+def _semantic_reason(similarity: float, module_display: str) -> str:
+    label = module_display or "your record"
+    pct = int(round(similarity * 100))
+    return f"Semantic match ({pct}% similar): {label}"
+
+
 def _expiry_bucket(expiry_date: Optional[str], *, warn_days: int = 90) -> str:
     if not expiry_date:
         return "met"
@@ -193,6 +383,8 @@ def _build_reason(
     if expiry_bucket == "expired":
         exp = (expiry_date or "")[:10]
         return f"Record found but expired on {exp}" if exp else "Record found but expired"
+    if match_type in ("semantic", "semantic_low"):
+        return detail
     if match_type == "exact":
         label = module_display or detail or topic_name
         return f"Matched your training record: {label}"
@@ -211,12 +403,16 @@ def _status_label(match_type: str, expiry_bucket: str) -> str:
         return "No match"
     if expiry_bucket == "expired":
         return "Expired"
-    if match_type in ("exact", "alias") and expiry_bucket == "expiring":
+    if match_type in ("exact", "alias", "semantic") and expiry_bucket == "expiring":
         return "Met (expiring soon)"
     if match_type == "exact":
         return "Met (exact match)"
     if match_type == "alias":
         return "Met (possible match)"
+    if match_type == "semantic":
+        return "Met (semantic match)"
+    if match_type == "semantic_low":
+        return "Needs review (possible semantic match)"
     return "Needs review"
 
 
@@ -225,9 +421,56 @@ def _legacy_status(match_type: str, expiry_bucket: str) -> str:
         return "gap"
     if match_type == "partial":
         return "gap"
+    if match_type == "semantic_low":
+        return "gap"
     if expiry_bucket == "expiring":
         return "expiring"
     return "met"
+
+
+def _result_from_match(
+    topic: dict,
+    hints: dict,
+    pl: dict,
+    match_type: str,
+    detail: str,
+    *,
+    warn_days: int,
+    confidence_score: Optional[float] = None,
+) -> dict[str, Any]:
+    topic_name = (topic.get("topic_name") or "").strip()
+    category = topic.get("category")
+    expiry_date = pl.get("expiry_date")
+    expiry_bucket = _expiry_bucket(expiry_date, warn_days=warn_days)
+    conf = confidence_score if confidence_score is not None else _CONFIDENCE[match_type]
+    module_display = pl.get("module_name_display") or pl.get("module_name")
+    if match_type in ("semantic", "semantic_low"):
+        conf_label = _semantic_confidence_label(match_type)
+    else:
+        conf_label = _confidence_label(conf)
+    return {
+        "match_type": match_type,
+        "confidence_score": conf,
+        "confidence_label": conf_label,
+        "status": _legacy_status(match_type, expiry_bucket),
+        "status_label": _status_label(match_type, expiry_bucket),
+        "reason": _build_reason(
+            match_type,
+            detail,
+            topic_name,
+            expiry_bucket=expiry_bucket,
+            expiry_date=expiry_date,
+            partial_hint=hints.get("partial_hint"),
+            module_display=module_display,
+        ),
+        "portability": portability_from_category(category),
+        "credential_id": pl.get("credential_id"),
+        "module_name": module_display,
+        "expiry_date": expiry_date,
+        "expiry_status": expiry_bucket,
+        "partial_hint": hints.get("partial_hint"),
+        "credential": pl.get("_raw"),
+    }
 
 
 def match_topic_to_wallet(
@@ -235,12 +478,18 @@ def match_topic_to_wallet(
     wallet_payloads: list[dict],
     *,
     warn_days: int = 90,
+    pack_key: Optional[str] = None,
+    pack_topics: Optional[list[dict]] = None,
 ) -> dict[str, Any]:
     """
     Find the best wallet credential for a mandatory topic.
 
     wallet_payloads: list of dicts from compliance_snapshot._cred_payload (+ raw credential in _raw).
+    pack_key / pack_topics: optional trust pack identity + full topic list for semantic embedding cache.
     """
+    if pack_key and pack_topics:
+        prepare_semantic_match_cache(pack_key, pack_topics)
+
     hints = _hints_from_topic(topic)
     topic_name = (topic.get("topic_name") or "").strip()
     category = topic.get("category")
@@ -258,48 +507,50 @@ def match_topic_to_wallet(
         if best is None or score > best[0]:
             best = (score, pl, match_type, detail)
 
-    if not best:
-        return {
-            "match_type": "none",
-            "confidence_score": 0.0,
-            "confidence_label": "low",
-            "status": "gap",
-            "status_label": "No match",
-            "reason": "No matching training record found",
-            "portability": portability_from_category(category),
-            "credential_id": None,
-            "module_name": None,
-            "expiry_date": None,
-            "expiry_status": None,
-            "partial_hint": hints.get("partial_hint"),
-            "credential": None,
-        }
+    if best and not _should_try_semantic(best[2]):
+        pl, match_type, detail = best[1], best[2], best[3]
+        return _result_from_match(topic, hints, pl, match_type, detail, warn_days=warn_days)
 
-    pl, match_type, detail = best[1], best[2], best[3]
-    expiry_date = pl.get("expiry_date")
-    expiry_bucket = _expiry_bucket(expiry_date, warn_days=warn_days)
-    conf = _CONFIDENCE[match_type]
+    semantic = _semantic_match(topic, wallet_payloads, pack_key=pack_key)
+    if semantic:
+        similarity, pl, module_display = semantic
+        if similarity >= _SEMANTIC_CONFIDENT:
+            return _result_from_match(
+                topic,
+                hints,
+                pl,
+                "semantic",
+                _semantic_reason(similarity, module_display),
+                warn_days=warn_days,
+                confidence_score=similarity,
+            )
+        if similarity >= _SEMANTIC_REVIEW:
+            return _result_from_match(
+                topic,
+                hints,
+                pl,
+                "semantic_low",
+                _semantic_reason(similarity, module_display),
+                warn_days=warn_days,
+                confidence_score=similarity,
+            )
+
+    if best:
+        pl, match_type, detail = best[1], best[2], best[3]
+        return _result_from_match(topic, hints, pl, match_type, detail, warn_days=warn_days)
 
     return {
-        "match_type": match_type,
-        "confidence_score": conf,
-        "confidence_label": _confidence_label(conf),
-        "status": _legacy_status(match_type, expiry_bucket),
-        "status_label": _status_label(match_type, expiry_bucket),
-        "reason": _build_reason(
-            match_type,
-            detail,
-            topic_name,
-            expiry_bucket=expiry_bucket,
-            expiry_date=expiry_date,
-            partial_hint=hints.get("partial_hint"),
-            module_display=pl.get("module_name_display") or pl.get("module_name"),
-        ),
+        "match_type": "none",
+        "confidence_score": 0.0,
+        "confidence_label": "low",
+        "status": "gap",
+        "status_label": "No match",
+        "reason": "No matching training record found",
         "portability": portability_from_category(category),
-        "credential_id": pl.get("credential_id"),
-        "module_name": pl.get("module_name_display") or pl.get("module_name"),
-        "expiry_date": expiry_date,
-        "expiry_status": expiry_bucket,
+        "credential_id": None,
+        "module_name": None,
+        "expiry_date": None,
+        "expiry_status": None,
         "partial_hint": hints.get("partial_hint"),
-        "credential": pl.get("_raw"),
+        "credential": None,
     }
