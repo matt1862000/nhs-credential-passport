@@ -161,10 +161,19 @@
                       <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnOpenAllDoctors">Open All Doctors</button>
                     </div>
                     <div id="createAllDoctorsPicker" hidden>
-                      <label class="nhsuk-label nhsuk-label--s" style="margin-top:0.75rem;display:block;">
+                      <div class="nhsuk-form-group" style="margin-top:0.75rem;margin-bottom:0.5rem;">
+                        <label class="nhsuk-label" for="createAllDoctorsSearch">Search clinicians</label>
+                        <div class="nhs-ac-wrap" id="createAllDoctorsSearchWrap">
+                          <input class="nhsuk-input" type="search" id="createAllDoctorsSearch" placeholder="Name, email or GMC number…" autocomplete="off" spellcheck="false" aria-label="Search All Doctors clinicians" role="combobox" aria-autocomplete="list" aria-controls="createAllDoctorsSuggestList" aria-expanded="false">
+                          <ul id="createAllDoctorsSuggestList" class="nhs-suggest-list" role="listbox" hidden aria-label="Matching All Doctors clinicians"></ul>
+                        </div>
+                      </div>
+                      <p class="hr-muted" id="createAllDoctorsFilterHint" style="margin:0 0 0.5rem 0;" hidden aria-live="polite"></p>
+                      <label class="nhsuk-label nhsuk-label--s" style="display:block;">
                         <input type="checkbox" id="createAllDoctorsSelectAll" checked> Select all
                       </label>
                       <div class="hr-bulk-cohort-list" id="createAllDoctorsList" role="group" aria-label="All Doctors clinicians"></div>
+                      <p class="hr-muted" id="createAllDoctorsNoMatches" style="margin:0.75rem 0;" hidden>No clinicians match your search.</p>
                     </div>
                     <p class="cohort-email-error" id="createAllDoctorsError" hidden role="alert"></p>
                   </div>
@@ -478,6 +487,9 @@
       var _createMethod = null;
       var _allDoctorsMembers = [];
       var _allDoctorsCohortId = null;
+      var _allDoctorsFilterQuery = '';
+      var _allDoctorsSelectedEmails = null;
+      var _allDoctorsSearchWired = false;
       var _addWizardStep = 1;
       var _addMethod = null;
       var _editingMemberId = null;
@@ -500,6 +512,46 @@
         return _cohortsCache.find(function (c) { return isDefaultCohort(c); }) || null;
       }
 
+      function allDoctorsMemberEmail(m) {
+        return String((m && (m.personal_email || m.email)) || '').trim().toLowerCase();
+      }
+
+      function allDoctorsMemberHaystack(m) {
+        var parts = [
+          memberDisplayLabel(m),
+          m.personal_email || m.email || '',
+          m.gmc_number || '',
+        ];
+        return parts.join(' ').toLowerCase();
+      }
+
+      function filterAllDoctorsMembers(query) {
+        var q = String(query || '').trim().toLowerCase();
+        if (!q) return _allDoctorsMembers.slice();
+        return _allDoctorsMembers.filter(function (m) {
+          return allDoctorsMemberHaystack(m).indexOf(q) !== -1;
+        });
+      }
+
+      function allDoctorsSelectedSet() {
+        if (!_allDoctorsSelectedEmails) {
+          _allDoctorsSelectedEmails = new Set(
+            _allDoctorsMembers.map(allDoctorsMemberEmail).filter(Boolean)
+          );
+        }
+        return _allDoctorsSelectedEmails;
+      }
+
+      function syncAllDoctorsSelectAllUi() {
+        var selectAll = document.getElementById('createAllDoctorsSelectAll');
+        var list = document.getElementById('createAllDoctorsList');
+        if (!selectAll || !list) return;
+        var boxes = list.querySelectorAll('input[type="checkbox"][data-all-doctors-email]');
+        var checked = list.querySelectorAll('input[type="checkbox"][data-all-doctors-email]:checked');
+        selectAll.checked = boxes.length > 0 && checked.length === boxes.length;
+        selectAll.indeterminate = checked.length > 0 && checked.length < boxes.length;
+      }
+
       function syncAllDoctorsSubmitState() {
         if (_createMethod !== 'all_doctors') return;
         var submitBtn = document.getElementById('btnCreateSubmit');
@@ -512,47 +564,250 @@
       }
 
       function getSelectedAllDoctorsMembers() {
-        var list = document.getElementById('createAllDoctorsList');
-        if (!list) return [];
-        var selected = [];
-        list.querySelectorAll('input[type="checkbox"][data-all-doctors-email]:checked').forEach(function (inp) {
-          var email = String(inp.getAttribute('data-all-doctors-email') || '').toLowerCase();
-          var m = _allDoctorsMembers.find(function (x) {
-            return String(x.personal_email || x.email || '').toLowerCase() === email;
-          });
-          if (m) {
-            var dn = (m.display_name && String(m.display_name).trim()) || '';
-            selected.push({
-              personal_email: m.personal_email || m.email,
-              display_name: dn || undefined,
-              gmc_number: m.gmc_number || undefined,
-            });
-          }
+        var selectedEmails = allDoctorsSelectedSet();
+        return _allDoctorsMembers.filter(function (m) {
+          return selectedEmails.has(allDoctorsMemberEmail(m));
+        }).map(function (m) {
+          var dn = (m.display_name && String(m.display_name).trim()) || '';
+          return {
+            personal_email: m.personal_email || m.email,
+            display_name: dn || undefined,
+            gmc_number: m.gmc_number || undefined,
+          };
         });
-        return selected;
       }
 
       function renderAllDoctorsPicker() {
         var list = document.getElementById('createAllDoctorsList');
+        var hint = document.getElementById('createAllDoctorsFilterHint');
+        var noMatches = document.getElementById('createAllDoctorsNoMatches');
         if (!list) return;
-        list.innerHTML = _allDoctorsMembers.map(function (m) {
-          var email = m.personal_email || m.email || '';
-          var label = memberDisplayLabel(m);
-          var metaParts = [];
-          if (label.toLowerCase() !== String(email).toLowerCase() && email) metaParts.push(email);
-          if (m.gmc_number) metaParts.push('GMC ' + m.gmc_number);
-          var meta = metaParts.join(' · ');
-          return (
-            '<label class="hr-bulk-cohort-option">' +
-            '<input type="checkbox" data-all-doctors-email="' + esc(email) + '" checked>' +
-            '<span><strong>' + esc(label) + '</strong>' +
-            (meta ? '<span class="hr-bulk-cohort-option__meta">' + esc(meta) + '</span>' : '') +
-            '</span></label>'
-          );
-        }).join('');
-        var selectAll = document.getElementById('createAllDoctorsSelectAll');
-        if (selectAll) selectAll.checked = _allDoctorsMembers.length > 0;
+        var selected = allDoctorsSelectedSet();
+        var visible = filterAllDoctorsMembers(_allDoctorsFilterQuery);
+        if (hint) {
+          var q = String(_allDoctorsFilterQuery || '').trim();
+          if (q && _allDoctorsMembers.length) {
+            hint.textContent = 'Showing ' + visible.length + ' of ' + _allDoctorsMembers.length + ' clinician'
+              + (_allDoctorsMembers.length === 1 ? '' : 's') + ' matching “' + q + '”.';
+            hint.hidden = false;
+          } else {
+            hint.hidden = true;
+            hint.textContent = '';
+          }
+        }
+        if (!visible.length) {
+          list.innerHTML = '';
+          if (noMatches) noMatches.hidden = !String(_allDoctorsFilterQuery || '').trim();
+        } else {
+          if (noMatches) noMatches.hidden = true;
+          list.innerHTML = visible.map(function (m) {
+            var email = m.personal_email || m.email || '';
+            var emailKey = allDoctorsMemberEmail(m);
+            var label = memberDisplayLabel(m);
+            var metaParts = [];
+            if (label.toLowerCase() !== String(email).toLowerCase() && email) metaParts.push(email);
+            if (m.gmc_number) metaParts.push('GMC ' + m.gmc_number);
+            var meta = metaParts.join(' · ');
+            var isChecked = selected.has(emailKey);
+            return (
+              '<label class="hr-bulk-cohort-option">' +
+              '<input type="checkbox" data-all-doctors-email="' + esc(email) + '"' + (isChecked ? ' checked' : '') + '>' +
+              '<span><strong>' + esc(label) + '</strong>' +
+              (meta ? '<span class="hr-bulk-cohort-option__meta">' + esc(meta) + '</span>' : '') +
+              '</span></label>'
+            );
+          }).join('');
+        }
+        syncAllDoctorsSelectAllUi();
         syncAllDoctorsSubmitState();
+      }
+
+      function wireCreateAllDoctorsSearch() {
+        if (_allDoctorsSearchWired) return;
+        var inputEl = document.getElementById('createAllDoctorsSearch');
+        var listEl = document.getElementById('createAllDoctorsSuggestList');
+        var wrapEl = document.getElementById('createAllDoctorsSearchWrap');
+        if (!inputEl || !listEl || !wrapEl) return;
+        _allDoctorsSearchWired = true;
+
+        var items = [];
+        var active = -1;
+        var debSuggest = null;
+        var debFilter = null;
+
+        function hideSuggest() {
+          listEl.innerHTML = '';
+          listEl.hidden = true;
+          active = -1;
+          items = [];
+          inputEl.setAttribute('aria-expanded', 'false');
+          inputEl.removeAttribute('aria-activedescendant');
+        }
+
+        function updateHighlight() {
+          var lis = listEl.querySelectorAll('li[role="option"]');
+          for (var j = 0; j < lis.length; j++) {
+            lis[j].setAttribute('aria-selected', j === active ? 'true' : 'false');
+          }
+          if (active >= 0 && lis[active]) {
+            inputEl.setAttribute('aria-activedescendant', lis[active].id);
+            try { lis[active].scrollIntoView({ block: 'nearest' }); } catch (eSc) {}
+          } else {
+            inputEl.removeAttribute('aria-activedescendant');
+          }
+        }
+
+        function applyFilter(query) {
+          _allDoctorsFilterQuery = String(query || '').trim();
+          renderAllDoctorsPicker();
+        }
+
+        function suggestMatches(query, limit) {
+          var q = String(query || '').trim().toLowerCase();
+          if (!q) return [];
+          limit = limit || 8;
+          return filterAllDoctorsMembers(q).slice(0, limit);
+        }
+
+        function renderSuggest(matches) {
+          items = matches || [];
+          listEl.innerHTML = '';
+          active = -1;
+          if (!items.length) {
+            hideSuggest();
+            return;
+          }
+          for (var i = 0; i < items.length; i++) {
+            var m = items[i];
+            var li = document.createElement('li');
+            li.setAttribute('role', 'option');
+            li.id = 'create-all-doctors-opt-' + i;
+            li.dataset.index = String(i);
+            var nameSpan = document.createElement('span');
+            nameSpan.textContent = memberDisplayLabel(m);
+            li.appendChild(nameSpan);
+            var metaParts = [];
+            var email = m.personal_email || m.email || '';
+            if (email) metaParts.push(email);
+            if (m.gmc_number) metaParts.push('GMC ' + m.gmc_number);
+            if (metaParts.length) {
+              var meta = document.createElement('span');
+              meta.className = 'nhs-suggest-meta';
+              meta.textContent = metaParts.join(' · ');
+              li.appendChild(meta);
+            }
+            listEl.appendChild(li);
+          }
+          listEl.hidden = false;
+          inputEl.setAttribute('aria-expanded', 'true');
+        }
+
+        function pickMember(m) {
+          if (!m) return;
+          var label = memberDisplayLabel(m);
+          inputEl.value = label;
+          hideSuggest();
+          applyFilter(label);
+          allDoctorsSelectedSet().add(allDoctorsMemberEmail(m));
+          renderAllDoctorsPicker();
+          var list = document.getElementById('createAllDoctorsList');
+          if (list) {
+            var email = m.personal_email || m.email || '';
+            var row = list.querySelector('input[data-all-doctors-email="' + CSS.escape(email) + '"]');
+            if (row) {
+              row.checked = true;
+              try { row.focus(); } catch (eF) {}
+            }
+          }
+          syncAllDoctorsSelectAllUi();
+          syncAllDoctorsSubmitState();
+        }
+
+        function applySuggestIndex(idx) {
+          if (idx < 0 || idx >= items.length) return;
+          pickMember(items[idx]);
+        }
+
+        function refreshSuggest() {
+          var q = String(inputEl.value || '').trim();
+          if (q.length < 1) {
+            hideSuggest();
+            return;
+          }
+          renderSuggest(suggestMatches(q, 8));
+        }
+
+        inputEl.addEventListener('input', function () {
+          var q = String(inputEl.value || '');
+          if (debFilter) clearTimeout(debFilter);
+          debFilter = setTimeout(function () {
+            debFilter = null;
+            applyFilter(q);
+          }, 120);
+          if (debSuggest) clearTimeout(debSuggest);
+          debSuggest = setTimeout(function () {
+            debSuggest = null;
+            refreshSuggest();
+          }, 180);
+        });
+
+        inputEl.addEventListener('keydown', function (e) {
+          if (e.key === 'ArrowDown') {
+            if (listEl.hidden) refreshSuggest();
+            if (!items.length) return;
+            e.preventDefault();
+            active = active < items.length - 1 ? active + 1 : 0;
+            updateHighlight();
+            return;
+          }
+          if (e.key === 'ArrowUp') {
+            if (listEl.hidden || !items.length) return;
+            e.preventDefault();
+            active = active > 0 ? active - 1 : items.length - 1;
+            updateHighlight();
+            return;
+          }
+          if (e.key === 'Enter') {
+            if (!listEl.hidden && active >= 0) {
+              e.preventDefault();
+              applySuggestIndex(active);
+            }
+            return;
+          }
+          if (e.key === 'Escape') {
+            hideSuggest();
+          }
+        });
+
+        listEl.addEventListener('mousedown', function (ev) {
+          if (ev.target.closest('li[role="option"]')) ev.preventDefault();
+        });
+        listEl.addEventListener('click', function (ev) {
+          var li = ev.target.closest('li[role="option"]');
+          if (!li) return;
+          applySuggestIndex(parseInt(li.dataset.index, 10));
+        });
+
+        document.addEventListener('click', function (ev) {
+          if (!wrapEl.contains(ev.target)) hideSuggest();
+        });
+
+        inputEl.addEventListener('focus', function () {
+          if (String(inputEl.value || '').trim()) refreshSuggest();
+        });
+      }
+
+      function resetAllDoctorsSearchUi() {
+        _allDoctorsFilterQuery = '';
+        _allDoctorsSelectedEmails = null;
+        var searchInp = document.getElementById('createAllDoctorsSearch');
+        var hint = document.getElementById('createAllDoctorsFilterHint');
+        var noMatches = document.getElementById('createAllDoctorsNoMatches');
+        var suggest = document.getElementById('createAllDoctorsSuggestList');
+        if (searchInp) searchInp.value = '';
+        if (hint) { hint.hidden = true; hint.textContent = ''; }
+        if (noMatches) noMatches.hidden = true;
+        if (suggest) { suggest.innerHTML = ''; suggest.hidden = true; }
       }
 
       async function loadAllDoctorsPicker() {
@@ -566,6 +821,7 @@
         if (err) { err.hidden = true; err.textContent = ''; }
         _allDoctorsMembers = [];
         _allDoctorsCohortId = null;
+        resetAllDoctorsSearchUi();
         syncAllDoctorsSubmitState();
         try {
           var cohort = defaultCohortFromCache();
@@ -587,6 +843,7 @@
             show(empty, true);
             return;
           }
+          wireCreateAllDoctorsSearch();
           renderAllDoctorsPicker();
           show(picker, true);
         } catch (e) {
@@ -601,6 +858,7 @@
       function resetAllDoctorsPicker() {
         _allDoctorsMembers = [];
         _allDoctorsCohortId = null;
+        resetAllDoctorsSearchUi();
         var loading = document.getElementById('createAllDoctorsLoading');
         var empty = document.getElementById('createAllDoctorsEmpty');
         var picker = document.getElementById('createAllDoctorsPicker');
@@ -1942,13 +2200,14 @@
       var createAllDoctorsList = document.getElementById('createAllDoctorsList');
       if (createAllDoctorsList) {
         createAllDoctorsList.addEventListener('change', function (e) {
-          var selectAll = document.getElementById('createAllDoctorsSelectAll');
-          if (selectAll && e.target && createAllDoctorsList.contains(e.target)) {
-            var boxes = createAllDoctorsList.querySelectorAll('input[type="checkbox"][data-all-doctors-email]');
-            var checked = createAllDoctorsList.querySelectorAll('input[type="checkbox"][data-all-doctors-email]:checked');
-            selectAll.checked = boxes.length > 0 && checked.length === boxes.length;
-            selectAll.indeterminate = checked.length > 0 && checked.length < boxes.length;
+          var inp = e.target;
+          if (inp && inp.matches && inp.matches('input[type="checkbox"][data-all-doctors-email]')) {
+            var emailKey = String(inp.getAttribute('data-all-doctors-email') || '').trim().toLowerCase();
+            var selected = allDoctorsSelectedSet();
+            if (inp.checked) selected.add(emailKey);
+            else selected.delete(emailKey);
           }
+          syncAllDoctorsSelectAllUi();
           var adErr = document.getElementById('createAllDoctorsError');
           if (adErr) { adErr.hidden = true; adErr.textContent = ''; }
           syncAllDoctorsSubmitState();
@@ -1959,8 +2218,12 @@
         createAllDoctorsSelectAll.addEventListener('change', function () {
           var list = document.getElementById('createAllDoctorsList');
           if (!list) return;
+          var selected = allDoctorsSelectedSet();
           list.querySelectorAll('input[type="checkbox"][data-all-doctors-email]').forEach(function (inp) {
             inp.checked = createAllDoctorsSelectAll.checked;
+            var emailKey = String(inp.getAttribute('data-all-doctors-email') || '').trim().toLowerCase();
+            if (createAllDoctorsSelectAll.checked) selected.add(emailKey);
+            else selected.delete(emailKey);
           });
           createAllDoctorsSelectAll.indeterminate = false;
           syncAllDoctorsSubmitState();
