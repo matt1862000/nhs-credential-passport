@@ -1268,7 +1268,7 @@
             btn = '<span class="hr-muted">—</span>';
           } else {
             btn =
-              '<div class="hr-actions">' +
+              '<div class="hr-evidence-actions">' +
               '<button type="button" class="nhsuk-button hr-btn-small" data-verify="1" data-sid="' +
               esc(sidForApi) +
               '" data-cid="' +
