@@ -10,6 +10,7 @@
     .exp-wrap { max-width: 56rem; }
     .exp-filters { display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-end; margin-bottom: 1.25rem; }
     .exp-filters .nhsuk-form-group { margin-bottom: 0; min-width: 12rem; }
+    .exp-actions { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; }
     .exp-auto-banner {
       background: #e8f1fb;
       border-left: 4px solid var(--nhsuk-brand-colour);
@@ -17,6 +18,9 @@
       margin-bottom: 1.25rem;
       font-size: 0.9375rem;
     }
+    .exp-send-status { font-size: 0.9375rem; margin: 0 0 1rem; }
+    .exp-send-status--ok { color: #00703c; }
+    .exp-send-status--err { color: var(--nhsuk-error); }
     .exp-cred-list { margin: 0; padding: 0; list-style: none; font-size: 0.875rem; }
     .exp-cred-list li { margin: 0.25rem 0; }
     .exp-cred-list .expired { color: var(--nhsuk-error); font-weight: 600; }
@@ -49,11 +53,11 @@
 
   <main class="nhsuk-main exp-wrap hr-wrap" role="main">
     <h1 class="nhsuk-page-heading">Expiring training</h1>
-    <p class="nhsuk-lead">Clinicians at your trust with wallet records expiring or already expired within the window you choose.</p>
+    <p class="nhsuk-lead">Mandatory topics at your trust where matched wallet records are expiring or already expired within the window you choose.</p>
 
     <div class="exp-auto-banner" id="expAutoBanner" hidden>
       <strong>Automatic reminders are on.</strong>
-      Clinicians receive in-app messages from your trust when training hits 30 days, 7 days, and expiry — no HR action needed.
+      Clinicians receive in-app messages when <em>mandatory</em> training hits 30 days, 7 days, and expiry — no HR action needed.
       Turn off in <a href="/static/profile/#email-notifications">Profile → email notifications</a>.
     </div>
 
@@ -67,9 +71,9 @@
         </select>
       </div>
       <div class="nhsuk-form-group">
-        <label class="nhsuk-label" for="filterTraining">Training (optional)</label>
-        <select class="nhsuk-select" id="filterTraining">
-          <option value="">All training</option>
+        <label class="nhsuk-label" for="filterTopic">Mandatory topic (optional)</label>
+        <select class="nhsuk-select" id="filterTopic">
+          <option value="">All mandatory topics</option>
         </select>
       </div>
       <div class="nhsuk-form-group">
@@ -78,12 +82,16 @@
           <option value="">All clinicians at trust</option>
         </select>
       </div>
-      <button type="button" class="nhsuk-button" id="btnRefresh">Refresh</button>
+      <div class="exp-actions">
+        <button type="button" class="nhsuk-button" id="btnRefresh">Refresh</button>
+        <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnSendNow">Send reminders now</button>
+      </div>
     </div>
 
+    <p id="expSendStatus" class="exp-send-status" hidden aria-live="polite"></p>
     <p id="expSummary" class="hr-muted" aria-live="polite"></p>
     <div class="hr-table-wrap">
-      <table class="hr-table" aria-label="Expiring training by clinician">
+      <table class="hr-table" aria-label="Expiring mandatory training by clinician">
         <thead>
           <tr>
             <th>Clinician</th>
@@ -100,7 +108,7 @@
   <script src="/static/shared/nav-account.js?v=20260529-4"></script>
   <script>
     (function () {
-      var _trainingOptions = [];
+      var _lastData = null;
       function esc(s) {
         var d = document.createElement('div');
         d.textContent = s == null ? '' : String(s);
@@ -111,31 +119,24 @@
           ? item.display_name.trim()
           : (item.email || 'Clinician');
       }
-      function collectTrainingNames(items) {
-        var seen = {};
-        var names = [];
-        (items || []).forEach(function (item) {
-          (item.expiring_credentials || []).forEach(function (c) {
-            var n = (c.module_name || '').trim();
-            if (!n || seen[n]) return;
-            seen[n] = true;
-            names.push(n);
-          });
-        });
-        names.sort(function (a, b) { return a.localeCompare(b); });
-        return names;
-      }
-      function syncTrainingFilter(items, keepValue) {
-        var sel = document.getElementById('filterTraining');
+      function syncTopicFilter(topics, keepValue) {
+        var sel = document.getElementById('filterTopic');
         if (!sel) return;
         var prev = keepValue != null ? keepValue : sel.value;
-        var names = collectTrainingNames(items);
-        _trainingOptions = names;
-        sel.innerHTML = '<option value="">All training</option>'
-          + names.map(function (n) {
-            return '<option value="' + esc(n) + '">' + esc(n) + '</option>';
+        var rows = (topics || []).slice().sort(function (a, b) {
+          return String(a.topic_name || '').localeCompare(String(b.topic_name || ''));
+        });
+        sel.innerHTML = '<option value="">All mandatory topics</option>'
+          + rows.map(function (t) {
+            return '<option value="' + esc(String(t.id)) + '">' + esc(t.topic_name || 'Topic') + '</option>';
           }).join('');
-        if (prev && names.indexOf(prev) >= 0) sel.value = prev;
+        if (prev && rows.some(function (t) { return String(t.id) === String(prev); })) sel.value = prev;
+      }
+      function credLabel(c) {
+        var topic = (c.topic_name || '').trim();
+        var mod = (c.module_name || '').trim();
+        if (topic && mod && topic.toLowerCase() !== mod.toLowerCase()) return topic + ' (' + mod + ')';
+        return mod || topic || 'Training';
       }
       function renderItems(data) {
         var tbody = document.getElementById('expTbody');
@@ -143,21 +144,19 @@
         var banner = document.getElementById('expAutoBanner');
         var items = (data && data.items) ? data.items : [];
         var windowDays = Number(data.window_days || 30);
-        var training = document.getElementById('filterTraining').value || '';
         if (banner) banner.hidden = data.auto_reminders_enabled === false;
-        if (training) {
-          items = items.map(function (item) {
-            var creds = (item.expiring_credentials || []).filter(function (c) {
-              return (c.module_name || '').toLowerCase().indexOf(training.toLowerCase()) >= 0;
-            });
-            return creds.length ? Object.assign({}, item, { expiring_credentials: creds }) : null;
-          }).filter(Boolean);
+        var topicSel = document.getElementById('filterTopic');
+        var topicName = '';
+        if (topicSel && topicSel.value) {
+          var opt = topicSel.options[topicSel.selectedIndex];
+          topicName = opt ? opt.textContent : '';
         }
-        var filterNote = training ? ' matching “' + training + '”' : '';
+        var filterNote = topicName ? ' for “' + topicName + '”' : '';
         if (summary) {
           summary.textContent = items.length
-            ? items.length + ' clinician' + (items.length === 1 ? '' : 's') + ' with training expiring within ' + windowDays + ' days' + filterNote + ' (or already expired).'
-            : 'No clinicians with expiring training for these filters.';
+            ? items.length + ' clinician' + (items.length === 1 ? '' : 's')
+              + ' with mandatory training expiring within ' + windowDays + ' days' + filterNote + ' (or already expired).'
+            : 'No clinicians with expiring mandatory training for these filters.';
         }
         if (!items.length) {
           tbody.innerHTML = '<tr><td colspan="3" class="hr-muted">Nothing to show for these filters.</td></tr>';
@@ -172,7 +171,7 @@
             var extra = days != null
               ? (days < 0 ? ' (expired)' : ' (' + days + 'd)')
               : '';
-            return '<li class="' + cls + '">' + esc(c.module_name || 'Training') + ' — ' + esc(when) + esc(extra) + '</li>';
+            return '<li class="' + cls + '">' + esc(credLabel(c)) + ' — ' + esc(when) + esc(extra) + '</li>';
           }).join('') + '</ul>';
           var q = encodeURIComponent(item.email || item.gmc_number || item.display_name || '');
           return (
@@ -182,6 +181,14 @@
             + '<td class="hr-open-wrap"><a class="hr-open-btn hr-open-btn--small" href="/static/hr/search.html?q=' + q + '">Open</a></td></tr>'
           );
         }).join('');
+      }
+      function setSendStatus(msg, kind) {
+        var el = document.getElementById('expSendStatus');
+        if (!el) return;
+        if (!msg) { el.hidden = true; el.textContent = ''; el.className = 'exp-send-status'; return; }
+        el.hidden = false;
+        el.textContent = msg;
+        el.className = 'exp-send-status' + (kind === 'error' ? ' exp-send-status--err' : kind === 'ok' ? ' exp-send-status--ok' : '');
       }
       async function loadCohorts() {
         var sel = document.getElementById('filterCohort');
@@ -200,36 +207,84 @@
             }).join('');
         } catch (e) { /* keep default */ }
       }
+      function currentFilters() {
+        return {
+          window_days: Number(document.getElementById('filterWindow').value || 30),
+          cohort_id: document.getElementById('filterCohort').value || null,
+          topic_id: document.getElementById('filterTopic').value || null,
+        };
+      }
       async function loadReport(opts) {
         opts = opts || {};
         var tbody = document.getElementById('expTbody');
         tbody.innerHTML = '<tr><td colspan="3">Loading…</td></tr>';
-        var windowDays = document.getElementById('filterWindow').value || '30';
-        var cohortId = document.getElementById('filterCohort').value || '';
-        var trainingSel = document.getElementById('filterTraining');
-        var trainingVal = trainingSel ? trainingSel.value : '';
-        var url = '/api/hr/compliance/expiring?window_days=' + encodeURIComponent(windowDays);
-        if (cohortId) url += '&cohort_id=' + encodeURIComponent(cohortId);
-        if (trainingVal && !opts.refreshTrainingList) {
-          url += '&module_query=' + encodeURIComponent(trainingVal);
-        }
+        setSendStatus('', null);
+        var f = currentFilters();
+        var url = '/api/hr/compliance/expiring?window_days=' + encodeURIComponent(String(f.window_days));
+        if (f.cohort_id) url += '&cohort_id=' + encodeURIComponent(f.cohort_id);
+        if (f.topic_id) url += '&topic_id=' + encodeURIComponent(f.topic_id);
         var data = await fetch(url, { credentials: 'include' }).then(function (r) {
           if (!r.ok) throw new Error('Could not load report');
           return r.json();
         });
-        if (opts.refreshTrainingList) {
-          syncTrainingFilter(data.items, trainingVal);
-        }
+        _lastData = data;
+        syncTopicFilter(data.mandatory_topics, f.topic_id);
         renderItems(data);
       }
-      document.getElementById('btnRefresh').addEventListener('click', function () {
-        void loadReport({ refreshTrainingList: true });
-      });
-      document.getElementById('filterWindow').addEventListener('change', function () {
-        void loadReport({ refreshTrainingList: true });
-      });
+      async function sendRemindersNow() {
+        var f = currentFilters();
+        var count = (_lastData && _lastData.items) ? _lastData.items.length : 0;
+        if (!count) {
+          setSendStatus('No clinicians match the current filters — adjust filters and refresh first.', 'error');
+          return;
+        }
+        var topicSel = document.getElementById('filterTopic');
+        var topicLabel = topicSel && topicSel.value
+          ? (topicSel.options[topicSel.selectedIndex].textContent || 'selected topic')
+          : 'all mandatory topics';
+        var msg = 'Send in-app reminder messages to ' + count + ' clinician' + (count === 1 ? '' : 's')
+          + ' for mandatory training expiring within ' + f.window_days + ' days'
+          + (topicSel && topicSel.value ? ' (' + topicLabel + ')' : '') + '?';
+        if (!window.confirm(msg)) return;
+
+        var btn = document.getElementById('btnSendNow');
+        if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+        setSendStatus('Sending reminders…', null);
+        try {
+          var payload = { window_days: f.window_days };
+          if (f.cohort_id) payload.cohort_id = Number(f.cohort_id);
+          if (f.topic_id) payload.topic_id = Number(f.topic_id);
+          var out = await fetch('/api/hr/compliance/expiring/send-reminders', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          }).then(function (r) {
+            return r.json().then(function (j) {
+              if (!r.ok) throw new Error((j && j.detail) || 'Send failed');
+              return j;
+            });
+          });
+          var sent = Number(out.sent || 0);
+          var failed = (out.failed || []).length;
+          if (sent === 0 && failed === 0) {
+            setSendStatus('No messages sent — no mandatory training matched the filters.', 'error');
+          } else if (failed) {
+            setSendStatus('Sent ' + sent + ' message' + (sent === 1 ? '' : 's') + '; ' + failed + ' failed.', 'error');
+          } else {
+            setSendStatus('Sent ' + sent + ' in-app reminder' + (sent === 1 ? '' : 's') + ' to clinicians.', 'ok');
+          }
+        } catch (e) {
+          setSendStatus(e.message || 'Could not send reminders', 'error');
+        } finally {
+          if (btn) { btn.disabled = false; btn.textContent = 'Send reminders now'; }
+        }
+      }
+      document.getElementById('btnRefresh').addEventListener('click', function () { void loadReport(); });
+      document.getElementById('filterWindow').addEventListener('change', function () { void loadReport(); });
       document.getElementById('filterCohort').addEventListener('change', function () { void loadReport(); });
-      document.getElementById('filterTraining').addEventListener('change', function () { void loadReport(); });
+      document.getElementById('filterTopic').addEventListener('change', function () { void loadReport(); });
+      document.getElementById('btnSendNow').addEventListener('click', function () { void sendRemindersNow(); });
       document.getElementById('btnSignOut').addEventListener('click', async function () {
         await NHSAuth.signOut();
         window.location.replace('/');
@@ -243,7 +298,7 @@
         }
         if (window.NHSNavAccount) void NHSNavAccount.refresh();
         await loadCohorts();
-        await loadReport({ refreshTrainingList: true });
+        await loadReport();
       })();
     })();
   </script>

@@ -36,6 +36,7 @@ def test_build_expiry_reminder_body_groups_stages():
             "30d",
             {
                 "module_name": "Safeguarding Adults and Children Level 3",
+                "topic_name": "Safeguarding Adults and Children Level 3",
                 "expiry_date": "2026-07-16",
                 "days_until": 20,
             },
@@ -44,6 +45,7 @@ def test_build_expiry_reminder_body_groups_stages():
             "7d",
             {
                 "module_name": "Moving and Handling",
+                "topic_name": "Moving and Handling",
                 "expiry_date": "2026-05-25",
                 "days_until": 3,
             },
@@ -51,8 +53,27 @@ def test_build_expiry_reminder_body_groups_stages():
     ]
     body = build_expiry_reminder_body(doc, "ROTHERHAM NHS FT", due)
     assert "Hi Alex" in body
+    assert "mandatory" in body.lower()
     assert "Safeguarding Adults and Children Level 3" in body
     assert "within 30 days" in body
     assert "within 7 days" in body
     assert "Moving and Handling" in body
     assert "via DocPass" in body
+
+
+def test_build_manual_expiry_reminder_body():
+    doc = {"display_name": "Alex Smith"}
+    due = [
+        (
+            "manual",
+            {
+                "module_name": "Safeguarding Level 3",
+                "topic_name": "Safeguarding Adults and Children Level 3",
+                "expiry_date": "2026-07-16",
+                "days_until": 53,
+            },
+        ),
+    ]
+    body = build_expiry_reminder_body(doc, "ROTHERHAM NHS FT", due, manual=True)
+    assert "mandatory training is expiring soon" in body
+    assert "Safeguarding" in body

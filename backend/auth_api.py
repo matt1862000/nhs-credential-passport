@@ -2461,6 +2461,7 @@ def hr_compliance_expiring(
     window_days: int = 90,
     cohort_id: Optional[int] = None,
     module_query: Optional[str] = None,
+    topic_id: Optional[int] = None,
 ):
     hr = require_premium_user(request)
     trust = _hr_trust_required(hr)
@@ -2469,6 +2470,70 @@ def hr_compliance_expiring(
         window_days=window_days,
         cohort_id=cohort_id,
         module_query=module_query,
+        topic_id=topic_id,
+    )
+
+
+@router.post("/hr/compliance/expiring/send-reminders")
+async def hr_compliance_expiring_send_reminders(request: Request):
+    """Send in-app mandatory training expiry reminders now (HR manual trigger)."""
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Expected a JSON object")
+
+    from . import hr_expiry_reminders
+
+    window_days = body.get("window_days", 30)
+    try:
+        window_days = int(window_days)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="window_days must be an integer")
+    if window_days < 1 or window_days > 365:
+        raise HTTPException(status_code=400, detail="window_days must be between 1 and 365")
+
+    cohort_id = body.get("cohort_id")
+    if cohort_id is not None and cohort_id != "":
+        try:
+            cohort_id = int(cohort_id)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="cohort_id must be an integer")
+    else:
+        cohort_id = None
+
+    topic_id = body.get("topic_id")
+    if topic_id is not None and topic_id != "":
+        try:
+            topic_id = int(topic_id)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="topic_id must be an integer")
+    else:
+        topic_id = None
+
+    module_query = body.get("module_query")
+    if module_query is not None and not isinstance(module_query, str):
+        raise HTTPException(status_code=400, detail="module_query must be a string")
+    module_query = (module_query or "").strip() or None
+
+    doctor_ids = _parse_doctor_user_ids(body.get("doctor_user_ids"))
+    if doctor_ids and len(doctor_ids) > MAX_HR_COHORT_LINES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many recipients (maximum {MAX_HR_COHORT_LINES})",
+        )
+
+    return hr_expiry_reminders.send_manual_expiry_reminders(
+        trust,
+        int(hr["id"]),
+        window_days=window_days,
+        cohort_id=cohort_id,
+        module_query=module_query,
+        topic_id=topic_id,
+        doctor_user_ids=doctor_ids or None,
     )
 
 

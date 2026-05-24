@@ -442,6 +442,66 @@ def _credential_in_expiry_window(cred: dict, window_days: int) -> bool:
     return days <= window_days
 
 
+def mandatory_expiring_credentials(
+    snap: dict,
+    *,
+    window_days: Optional[int] = None,
+    topic_id: Optional[int] = None,
+    module_query: Optional[str] = None,
+) -> list[dict]:
+    """
+    Wallet credentials tied to mandatory topics that are expiring or expired.
+    Dedupes by credential_id; optional filters by expiry window, topic, or name substring.
+    """
+    mq = (module_query or "").strip().lower() or None
+    items: list[dict] = []
+    seen: set[str] = set()
+    for tr in snap.get("topics") or []:
+        cid = tr.get("credential_id")
+        if not cid:
+            continue
+        cid_s = str(cid)
+        if cid_s in seen:
+            continue
+        if tr.get("expiry_status") not in ("expiring", "expired"):
+            continue
+        tid = tr.get("topic_id")
+        if topic_id is not None and tid is not None and int(tid) != int(topic_id):
+            continue
+        topic_name = (tr.get("topic_name") or "").strip()
+        module_name = (tr.get("module_name") or topic_name or "Training").strip()
+        if mq:
+            hay = f"{topic_name} {module_name}".lower()
+            if mq not in hay:
+                continue
+        expiry_date = tr.get("expiry_date")
+        days = _days_until(expiry_date)
+        cred = {
+            "credential_id": cid_s,
+            "module_name": module_name,
+            "topic_id": tid,
+            "topic_name": topic_name,
+            "expiry_date": expiry_date,
+            "status": "expired" if tr.get("expiry_status") == "expired" else "expiring",
+            "days_until": days,
+        }
+        if window_days is not None and not _credential_in_expiry_window(cred, window_days):
+            continue
+        seen.add(cid_s)
+        items.append(cred)
+    items.sort(key=lambda x: (x.get("days_until") is None, x.get("days_until") or 99999))
+    return items
+
+
+def trust_mandatory_topics_summary(trust: str) -> list[dict]:
+    """Lightweight topic list for HR expiring report filters."""
+    return [
+        {"id": int(t["id"]), "topic_name": t.get("topic_name") or ""}
+        for t in db.mandatory_topics_list(trust)
+        if t.get("id") is not None
+    ]
+
+
 def cohort_compliance_matrix(cohort_id: int, hr_trust: str) -> Optional[dict]:
     """Per-member mandatory topic status matrix for cohort CSV export."""
     snap = cohort_compliance_snapshot(cohort_id, hr_trust)
@@ -514,8 +574,9 @@ def trust_expiring_report(
     window_days: int = 90,
     cohort_id: Optional[int] = None,
     module_query: Optional[str] = None,
+    topic_id: Optional[int] = None,
 ) -> dict:
-    """Doctors at trust with credentials expiring within window (from wallet)."""
+    """Doctors at trust with mandatory-topic matches expiring within window."""
     trust = (hr_trust or "").strip()
     mq = (module_query or "").strip().lower() or None
     if not trust:
@@ -525,6 +586,9 @@ def trust_expiring_report(
             "window_days": window_days,
             "cohort_id": cohort_id,
             "module_query": module_query,
+            "topic_id": topic_id,
+            "scope": "mandatory",
+            "mandatory_topics": [],
         }
     member_ids: Optional[set[int]] = None
     if cohort_id is not None:
@@ -547,15 +611,12 @@ def trust_expiring_report(
         if member_ids is not None and uid not in member_ids:
             continue
         snap = doctor_compliance_snapshot(uid, trust)
-        exp = [
-            c
-            for c in (snap.get("expiring_credentials") or [])
-            if _credential_in_expiry_window(c, window_days)
-            and (
-                not mq
-                or mq in ((c.get("module_name") or "").lower())
-            )
-        ]
+        exp = mandatory_expiring_credentials(
+            snap,
+            window_days=window_days,
+            topic_id=topic_id,
+            module_query=mq,
+        )
         if not exp:
             continue
         items.append(
@@ -573,6 +634,9 @@ def trust_expiring_report(
         "window_days": window_days,
         "cohort_id": cohort_id,
         "module_query": module_query,
+        "topic_id": topic_id,
+        "scope": "mandatory",
+        "mandatory_topics": trust_mandatory_topics_summary(trust),
         "items": items,
         "doctor_count": len(items),
         "auto_reminders_enabled": db.trust_expiry_reminders_enabled(trust),
