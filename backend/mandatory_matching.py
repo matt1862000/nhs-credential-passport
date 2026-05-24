@@ -211,6 +211,8 @@ def _status_label(match_type: str, expiry_bucket: str) -> str:
         return "No match"
     if expiry_bucket == "expired":
         return "Expired"
+    if match_type in ("exact", "alias") and expiry_bucket == "expiring":
+        return "Met (expiring soon)"
     if match_type == "exact":
         return "Met (exact match)"
     if match_type == "alias":

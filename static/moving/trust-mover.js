@@ -53,9 +53,6 @@
   }
 
   function statusLabelForTopic(t) {
-    if (t.status === 'expiring' && (t.status_label || '').indexOf('Met') === 0) {
-      return (t.status_label || 'Met') + ' (expiring soon)';
-    }
     return t.status_label || t.status || '—';
   }
 

@@ -167,6 +167,7 @@
       function statusTagClass(topic) {
         if (topic.status === 'expiring') return 'req-tag--expiring';
         var label = topic.status_label || '';
+        if (label === 'Met (expiring soon)') return 'req-tag--expiring';
         if (label === 'Met (exact match)') return 'req-tag--met';
         if (label === 'Met (possible match)') return 'req-tag--possible';
         if (label === 'Needs review') return 'req-tag--review';

@@ -686,13 +686,7 @@
 
     <section id="add" role="tabpanel" aria-labelledby="tab-add" aria-hidden="true">
       <div id="addRenewPanel" class="staff-renew-panel" hidden role="region" aria-label="Renew training">
-        <p style="margin:0 0 0.5rem 0;">Renewing <strong id="addRenewModuleLabel">training</strong> — add a new completion with updated dates. Your previous record stays in the list.</p>
-        <div class="nhsuk-checkboxes" style="margin:0.5rem 0;">
-          <div class="nhsuk-checkboxes__item">
-            <input class="nhsuk-checkboxes__input" type="checkbox" id="addRenewReshare" checked>
-            <label class="nhsuk-label nhsuk-checkboxes__label" for="addRenewReshare">Send renewed record to HR after adding</label>
-          </div>
-        </div>
+        <p style="margin:0 0 0.5rem 0;">Renewing <strong id="addRenewModuleLabel">training</strong> — add a new completion with updated dates. Your previous record stays in the list. The renewed record is sent to HR for verification automatically when you add it.</p>
         <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnCancelRenew">Cancel renewal</button>
       </div>
       <form id="addForm">
@@ -2972,18 +2966,15 @@
         if (renewFrom) entry.supersedes_credential_id = renewFrom;
         list.push(entry);
         setStored(list);
-        var shouldAutoShare = !renewFrom || (document.getElementById('addRenewReshare') && document.getElementById('addRenewReshare').checked);
         clearRenewal();
         e.target.reset();
         lastAutoOdsSuggested = { name: '', ods: '' };
         void applyProfileToAddForm();
-        if (shouldAutoShare) {
-          var shareResult = await autoShareCredentialsWithHr([issued.credential_id], { skipRender: true });
-          if (shareResult.error) {
-            alert('Training added, but could not send to HR automatically: ' + shareResult.error);
-          } else if (shareResult.skipped === 'profile_incomplete') {
-            alert('Training added. Complete your profile to send it to HR automatically.');
-          }
+        var shareResult = await autoShareCredentialsWithHr([issued.credential_id], { skipRender: true });
+        if (shareResult.error) {
+          alert('Training added, but could not send to HR automatically: ' + shareResult.error);
+        } else if (shareResult.skipped === 'profile_incomplete') {
+          alert('Training added. Complete your profile to send it to HR automatically.');
         }
         renderList();
         document.querySelector('.nhsuk-tabs button[data-tab="list"]').click();

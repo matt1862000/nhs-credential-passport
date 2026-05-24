@@ -1,5 +1,6 @@
 """Tests for mandatory topic matching."""
 import unittest
+from datetime import date, timedelta
 
 from backend import mandatory_matching as mm
 
@@ -60,6 +61,22 @@ class MandatoryMatchingTests(unittest.TestCase):
         self.assertEqual(result["status_label"], "Expired")
         self.assertEqual(result["status"], "gap")
         self.assertIn("expired", result["reason"].lower())
+
+    def test_expiring_exact_match_label(self):
+        topic = _topic("Fire Safety")
+        soon = (date.today() + timedelta(days=30)).isoformat()
+        result = mm.match_topic_to_wallet(topic, [_cred("Fire Safety Level 1", expiry_date=soon)])
+        self.assertEqual(result["match_type"], "exact")
+        self.assertEqual(result["status_label"], "Met (expiring soon)")
+        self.assertEqual(result["status"], "expiring")
+
+    def test_expiring_alias_match_label(self):
+        topic = _topic("Fire Safety")
+        soon = (date.today() + timedelta(days=30)).isoformat()
+        result = mm.match_topic_to_wallet(topic, [_cred("Fire Awareness Refresher", expiry_date=soon)])
+        self.assertEqual(result["match_type"], "alias")
+        self.assertEqual(result["status_label"], "Met (expiring soon)")
+        self.assertEqual(result["status"], "expiring")
 
     def test_no_match(self):
         topic = _topic("Fire Safety")
