@@ -6,7 +6,7 @@ docpass.co.uk {
         Strict-Transport-Security "max-age=31536000; includeSubDomains"
         X-Frame-Options "DENY"
         X-Content-Type-Options "nosniff"
-        Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; frame-src 'self' data: blob: https://www.youtube-nocookie.com https://www.youtube.com"
+        Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' https://directory.spineservices.nhs.uk; frame-src 'self' data: blob: https://www.youtube-nocookie.com https://www.youtube.com"
         Referrer-Policy "strict-origin-when-cross-origin"
     }
     reverse_proxy 127.0.0.1:8000
@@ -17,7 +17,7 @@ www.docpass.co.uk {
         Strict-Transport-Security "max-age=31536000; includeSubDomains"
         X-Frame-Options "DENY"
         X-Content-Type-Options "nosniff"
-        Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; frame-src 'self' data: blob: https://www.youtube-nocookie.com https://www.youtube.com"
+        Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' https://directory.spineservices.nhs.uk; frame-src 'self' data: blob: https://www.youtube-nocookie.com https://www.youtube.com"
         Referrer-Policy "strict-origin-when-cross-origin"
     }
     redir https://docpass.co.uk{uri}
