@@ -67,6 +67,16 @@ class MandatoryMatchingTests(unittest.TestCase):
         self.assertEqual(result["match_type"], "none")
         self.assertEqual(result["status_label"], "No match")
 
+    def test_safeguarding_level3_without_db_hints(self):
+        """Wallet CSTF title vs trust topic label with (&) and no match_hints in DB."""
+        topic = _topic("Safeguarding (adults & children) Level 3", category="UK CSTF / trust policy")
+        result = mm.match_topic_to_wallet(
+            topic,
+            [_cred("Safeguarding Adults and Children Level 3", module_code="safeguarding_level_3")],
+        )
+        self.assertEqual(result["match_type"], "exact")
+        self.assertEqual(result["status_label"], "Met (exact match)")
+
     def test_portability_local(self):
         topic = _topic("Trust induction", category="Local — usually not portable")
         result = mm.match_topic_to_wallet(topic, [])

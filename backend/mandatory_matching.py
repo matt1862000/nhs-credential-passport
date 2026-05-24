@@ -7,6 +7,8 @@ import re
 from datetime import date, timedelta
 from typing import Any, Optional
 
+from .models import CSTF_MODULES
+
 # Global aliases keyed by normalized topic name (extends per-topic match_hints).
 ALIAS_MAP: dict[str, list[str]] = {
     "fire safety": ["fire awareness", "fire safety level 1", "fire safety level 2"],
@@ -15,7 +17,16 @@ ALIAS_MAP: dict[str, list[str]] = {
     "health, safety and welfare": ["health safety", "health & safety", "health and safety"],
     "health safety and welfare": ["health safety", "health & safety", "health and safety"],
     "equality, diversity and human rights": ["equality diversity", "edhr", "diversity and human rights"],
-    "safeguarding (adults & children) level 3": ["safeguarding level 3", "sg3", "adult safeguarding level 3"],
+    "safeguarding adults and children level 3": [
+        "safeguarding level 3",
+        "sg3",
+        "adult safeguarding level 3",
+    ],
+    "safeguarding adults children level 3": [
+        "safeguarding level 3",
+        "sg3",
+        "adult safeguarding level 3",
+    ],
 }
 
 _MIN_PARTIAL_LEN = 4
@@ -24,7 +35,8 @@ _CONFIDENCE = {"exact": 1.0, "alias": 0.8, "partial": 0.5, "none": 0.0}
 
 def normalize(text: Optional[str]) -> str:
     s = (text or "").lower().strip()
-    s = re.sub(r"[^\w\s&/-]", " ", s)
+    s = re.sub(r"\s*&\s*", " and ", s)
+    s = re.sub(r"[^\w\s/-]", " ", s)
     s = re.sub(r"\s+", " ", s)
     return s.strip()
 
@@ -48,17 +60,44 @@ def portability_from_category(category: Optional[str]) -> str:
     return "conditional"
 
 
+def _infer_cstf_hints(topic_norm: str) -> tuple[list[str], list[str]]:
+    """When DB/pack hints are missing, link topics to CSTF module codes by display name."""
+    codes: list[str] = []
+    names: list[str] = []
+    if not topic_norm:
+        return codes, names
+    for code, display in CSTF_MODULES:
+        if code == "non_cstf":
+            continue
+        dn = normalize(display)
+        if not dn:
+            continue
+        if topic_norm == dn or topic_norm in dn or dn in topic_norm:
+            codes.append(code)
+            if dn not in names:
+                names.append(dn)
+    return codes, names
+
+
 def _hints_from_topic(topic: dict) -> dict:
     raw = topic.get("match_hints")
     if not isinstance(raw, dict):
         raw = {}
     topic_name = (topic.get("topic_name") or "").strip()
+    topic_norm = normalize(topic_name)
     name_subs = list(raw.get("match_name_substrings") or [])
     if topic_name and topic_name not in name_subs:
         name_subs.insert(0, topic_name)
 
+    module_codes = [str(c).strip().lower() for c in (raw.get("match_module_codes") or []) if str(c).strip()]
+    if not module_codes:
+        inferred_codes, inferred_names = _infer_cstf_hints(topic_norm)
+        module_codes.extend(inferred_codes)
+        for dn in inferred_names:
+            if dn not in name_subs:
+                name_subs.append(dn)
+
     aliases: list[str] = []
-    topic_norm = normalize(topic_name)
     for key, vals in ALIAS_MAP.items():
         key_norm = normalize(key)
         if topic_norm == key_norm or topic_norm in key_norm or key_norm in topic_norm:
@@ -66,7 +105,7 @@ def _hints_from_topic(topic: dict) -> dict:
     alias_subs = [normalize(a) for a in aliases if normalize(a)]
 
     return {
-        "match_module_codes": [str(c).strip().lower() for c in (raw.get("match_module_codes") or []) if str(c).strip()],
+        "match_module_codes": module_codes,
         "match_name_substrings": [normalize(s) for s in name_subs if normalize(s)],
         "alias_name_substrings": alias_subs,
         "partial_module_codes": [str(c).strip().lower() for c in (raw.get("partial_module_codes") or []) if str(c).strip()],
@@ -86,7 +125,7 @@ def _substring_hit(needle: str, haystack: str) -> bool:
 def _classify_credential(topic: dict, hints: dict, pl: dict) -> tuple[str, str]:
     """Return (match_type, detail) for one credential payload."""
     code = pl.get("module_code") or ""
-    name = pl.get("module_name") or ""
+    name = normalize(pl.get("module_name") or "")
     topic_norm = normalize(topic.get("topic_name"))
 
     for mc in hints.get("match_module_codes") or []:
