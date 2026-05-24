@@ -381,7 +381,8 @@
       border: 1px solid rgba(212, 53, 56, 0.35);
       border-radius: 4px;
     }
-    .staff-esr-needs-fix__item-main { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; }
+    .staff-esr-needs-fix__item-main { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; flex: 1; min-width: 0; }
+    .staff-esr-needs-fix__item-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.5rem; }
     .staff-esr-needs-fix__tag { margin: 0; }
     .staff-esr-needs-fix__meta { margin: 0.35rem 0 0 0; font-size: 0.875rem; color: var(--nhsuk-secondary-text); line-height: 1.4; }
     .staff-esr-needs-fix__row { opacity: 0.85; }
@@ -1748,10 +1749,14 @@
       return JSON.stringify(String(s || ''));
     }
 
+    function needsFixRemoveButtonHtml(item) {
+      var label = item.module || 'ESR reminder';
+      return '<button type="button" class="staff-card-remove" onclick="dismissEsrNeedsFixItem(' + jsAttrString(item.id) + ')" aria-label="Dismiss ' + escapeHtml(label) + '" title="Dismiss">&times;</button>';
+    }
+
     function esrNeedsFixItemActionsHtml(itemId) {
       return '<div class="staff-esr-needs-fix__item-actions">'
         + '<button type="button" class="nhsuk-button" onclick="startAddFromEsrNeedsFix(' + jsAttrString(itemId) + ')">Add manually</button>'
-        + '<button type="button" class="nhsuk-button nhsuk-button--secondary" onclick="dismissEsrNeedsFixItem(' + jsAttrString(itemId) + ')">Dismiss</button>'
         + '</div>';
     }
 
@@ -1760,14 +1765,16 @@
       var meta = item.message || 'Missing required dates';
       return '<div class="nhsuk-card staff-needs-fix-card" data-needs-fix-id="' + escapeHtml(item.id) + '">'
         + '<div class="nhsuk-card__row">'
-        + '<strong>' + escapeHtml(title) + '</strong>'
-        + ' <span class="nhsuk-tag nhsuk-tag--expired">Needs fixing</span>'
+        + '<div class="staff-card-title-row">'
+        + '<div><strong>' + escapeHtml(title) + '</strong>'
+        + ' <span class="nhsuk-tag nhsuk-tag--expired">Needs fixing</span></div>'
+        + needsFixRemoveButtonHtml(item)
+        + '</div>'
         + '<p class="staff-needs-fix-card__meta">' + escapeHtml(meta)
         + (item.row ? ' <span class="staff-esr-needs-fix__row">(ESR row ' + escapeHtml(String(item.row)) + ')</span>' : '')
         + '</p>'
         + '<div class="staff-needs-fix-card__actions">'
         + '<button type="button" class="nhsuk-button" onclick="startAddFromEsrNeedsFix(' + jsAttrString(item.id) + ')">Add manually</button>'
-        + '<button type="button" class="nhsuk-button nhsuk-button--secondary" onclick="dismissEsrNeedsFixItem(' + jsAttrString(item.id) + ')">Dismiss</button>'
         + '</div>'
         + '</div>'
         + '</div>';
@@ -1814,9 +1821,12 @@
         var title = item.module || ('ESR row ' + item.row);
         var meta = item.message || 'Missing required dates';
         return '<li class="staff-esr-needs-fix__item">'
+          + '<div class="staff-esr-needs-fix__item-top">'
           + '<div class="staff-esr-needs-fix__item-main">'
           + '<strong>' + escapeHtml(title) + '</strong>'
           + '<span class="nhsuk-tag nhsuk-tag--expired staff-esr-needs-fix__tag">Needs fixing</span>'
+          + '</div>'
+          + needsFixRemoveButtonHtml(item)
           + '</div>'
           + '<p class="staff-esr-needs-fix__meta">' + escapeHtml(meta)
           + (item.row ? ' <span class="staff-esr-needs-fix__row">(CSV row ' + escapeHtml(String(item.row)) + ')</span>' : '')
