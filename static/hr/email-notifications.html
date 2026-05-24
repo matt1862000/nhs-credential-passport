@@ -80,25 +80,31 @@
         });
       }
 
-      NHSAuth.requireAuth().then(function () {
-        if (!NHSAuth.user || !NHSAuth.user.premium) {
+      (async function () {
+        await NHSAuth.refresh();
+        if (!NHSAuth.user) {
+          NHSAuth.requireAuth();
+          return;
+        }
+        if (!NHSAuth.user.premium) {
           document.getElementById('notPremium').hidden = false;
           return;
         }
+        if (window.NHSNavAccount) void NHSNavAccount.refresh();
         document.getElementById('prefsView').hidden = false;
-        return apiJson('/api/hr/email-preferences');
-      }).then(function (data) {
-        if (!data) return;
-        document.getElementById('prefEmail').textContent = data.email || '—';
-        document.getElementById('chkDigest').checked = !!data.digest_enabled;
-        document.getElementById('chkInstant').checked = !!data.instant_enabled;
-        var s = data.inbox_summary || {};
-        var snap = 'Right now: ' + (s.pending_items || 0) + ' pending verification(s), ' +
-          (s.unread_messages || 0) + ' unread message(s).';
-        document.getElementById('inboxSnapshot').textContent = snap;
-      }).catch(function (e) {
-        document.getElementById('prefStatus').textContent = e.message || 'Could not load preferences.';
-      });
+        try {
+          var data = await apiJson('/api/hr/email-preferences');
+          document.getElementById('prefEmail').textContent = data.email || '—';
+          document.getElementById('chkDigest').checked = !!data.digest_enabled;
+          document.getElementById('chkInstant').checked = !!data.instant_enabled;
+          var s = data.inbox_summary || {};
+          var snap = 'Right now: ' + (s.pending_items || 0) + ' pending verification(s), ' +
+            (s.unread_messages || 0) + ' unread message(s).';
+          document.getElementById('inboxSnapshot').textContent = snap;
+        } catch (e) {
+          document.getElementById('prefStatus').textContent = e.message || 'Could not load preferences.';
+        }
+      })();
 
       document.getElementById('btnSavePrefs').addEventListener('click', function () {
         var status = document.getElementById('prefStatus');
