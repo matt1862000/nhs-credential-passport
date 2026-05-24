@@ -584,7 +584,7 @@
       notes.push('Skipped <strong>' + skippedDup + '</strong> duplicate row(s) already in your list.');
     }
     if (invalidN > 0) {
-      notes.push('Rows that need fixing are listed on the <strong>My training</strong> tab.');
+      notes.push('Rows that need fixing appear on the <strong>My training</strong> tab — use <strong>Add manually</strong> or dismiss each reminder.');
     }
     render(el, {
       total: total,

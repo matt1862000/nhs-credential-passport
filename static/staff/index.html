@@ -385,6 +385,15 @@
     .staff-esr-needs-fix__tag { margin: 0; }
     .staff-esr-needs-fix__meta { margin: 0.35rem 0 0 0; font-size: 0.875rem; color: var(--nhsuk-secondary-text); line-height: 1.4; }
     .staff-esr-needs-fix__row { opacity: 0.85; }
+    .staff-esr-needs-fix__item-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.65rem; }
+    .staff-needs-fix-card {
+      border: 2px solid var(--nhsuk-error);
+      border-left-width: 6px;
+      background: #fff8f8;
+    }
+    .staff-needs-fix-card .nhsuk-card__row { padding: 1rem; }
+    .staff-needs-fix-card__meta { margin: 0.35rem 0 0.75rem 0; font-size: 0.875rem; color: var(--nhsuk-secondary-text); line-height: 1.4; }
+    .staff-needs-fix-card__actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
     .auth-panel h4 { margin: 0 0 0.75rem 0; font-size: 1.125rem; font-weight: 600; color: var(--nhsuk-text); }
     .auth-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; align-items: start; }
     @media (max-width: 720px) { .auth-grid { grid-template-columns: 1fr; } }
@@ -635,6 +644,9 @@
               <option value="hr-pending">Pending verification</option>
               <option value="hr-declined">Declined</option>
             </optgroup>
+            <optgroup label="Import">
+              <option value="needs-fixing">Needs fixing</option>
+            </optgroup>
           </select>
         </div>
         <div class="nhsuk-form-group">
@@ -658,11 +670,11 @@
         <div class="staff-esr-needs-fix__head">
           <div>
             <p class="staff-esr-needs-fix__title" id="esrNeedsFixTitle">Training from ESR needs fixing</p>
-            <p class="staff-esr-needs-fix__lead">These rows could not be imported — usually missing completion or expiry dates in ESR. Complete them in ESR and re-import, or add the training manually.</p>
+            <p class="staff-esr-needs-fix__lead">ESR did not include completion or expiry dates for these rows, so they could not be imported automatically. Add each one manually with the dates you have, then dismiss the reminder. They stay in your list below until you dismiss them or add matching training.</p>
           </div>
           <div class="staff-esr-needs-fix__actions">
             <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnEsrNeedsFixImport">Import from ESR</button>
-            <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnDismissEsrNeedsFix">Dismiss</button>
+            <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnDismissEsrNeedsFix">Hide this notice</button>
           </div>
         </div>
         <ul id="esrNeedsFixList" class="staff-esr-needs-fix__list"></ul>
@@ -691,6 +703,7 @@
       </div>
       <form id="addForm">
         <input type="hidden" id="addRenewFromId" value="">
+        <input type="hidden" id="addPrefillModuleName" value="">
         <div class="nhsuk-form-group"><label class="nhsuk-label" for="staff_full_name">Your full name</label><input class="nhsuk-input" id="staff_full_name" type="text" name="staff_full_name" required placeholder="Jane Smith" autocomplete="name"></div>
         <div class="nhsuk-form-group"><label class="nhsuk-label" for="staff_identifier">GMC number</label><input class="nhsuk-input" id="staff_identifier" type="text" name="staff_identifier" inputmode="numeric" required placeholder="1234567" maxlength="11" autocomplete="off"></div>
         <div class="nhsuk-form-group"><label class="nhsuk-label" for="moduleSelect">Module</label><select class="nhsuk-select" name="module_code" id="moduleSelect"></select></div>
@@ -855,6 +868,7 @@
       { code: 'safeguarding_level_1', name: 'Safeguarding Adults and Children Level 1' },
       { code: 'safeguarding_level_2', name: 'Safeguarding Adults and Children Level 2' },
       { code: 'safeguarding_level_3', name: 'Safeguarding Adults and Children Level 3' },
+      { code: 'non_cstf', name: 'Other (ESR / local competency)' },
     ];
     function getStored() { return window.NHSWallet ? NHSWallet.getWallet() : JSON.parse(localStorage.getItem('nhs_credentials') || '[]'); }
 
@@ -1576,46 +1590,206 @@
       return ESR_NEEDS_FIX_KEY + '_' + uid;
     }
 
-    function loadEsrNeedsFixItems() {
+    function normalizeEsrModuleLabel(s) {
+      return String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    }
+
+    function esrNeedsFixItemKey(item) {
+      return String(item && item.row != null ? item.row : '') + ':' + normalizeEsrModuleLabel(item && item.module);
+    }
+
+    function loadEsrNeedsFixState() {
       try {
         var raw = localStorage.getItem(esrNeedsFixStorageKey());
-        if (!raw) return [];
+        if (!raw) return { items: [], panelDismissed: false };
         var data = JSON.parse(raw);
-        return Array.isArray(data.items) ? data.items : [];
+        if (Array.isArray(data)) return { items: data, panelDismissed: false };
+        return {
+          items: Array.isArray(data.items) ? data.items : [],
+          panelDismissed: !!data.panelDismissed,
+        };
       } catch (eLoad) {
-        return [];
+        return { items: [], panelDismissed: false };
       }
     }
 
-    function saveEsrNeedsFixItems(items) {
+    function saveEsrNeedsFixState(state) {
       try {
         localStorage.setItem(esrNeedsFixStorageKey(), JSON.stringify({
-          items: items || [],
+          items: (state && state.items) || [],
+          panelDismissed: !!(state && state.panelDismissed),
           updatedAt: new Date().toISOString(),
         }));
       } catch (eSave) {}
     }
 
+    function loadEsrNeedsFixItems() {
+      return loadEsrNeedsFixState().items;
+    }
+
+    function saveEsrNeedsFixItems(items, panelDismissed) {
+      var state = loadEsrNeedsFixState();
+      saveEsrNeedsFixState({
+        items: items || [],
+        panelDismissed: panelDismissed != null ? panelDismissed : state.panelDismissed,
+      });
+    }
+
+    function walletMatchesEsrNeedsFixModule(esrModule) {
+      var target = normalizeEsrModuleLabel(esrModule);
+      if (!target) return false;
+      var list = getStored();
+      for (var i = 0; i < list.length; i++) {
+        var c = list[i];
+        if (!c || c.revoked) continue;
+        var name = normalizeEsrModuleLabel(displayModuleName(c.module_name));
+        if (!name) continue;
+        if (name === target) return true;
+        if (name.indexOf(target) >= 0 || target.indexOf(name) >= 0) return true;
+      }
+      return false;
+    }
+
+    function pruneEsrNeedsFixItems() {
+      var state = loadEsrNeedsFixState();
+      var next = (state.items || []).filter(function (item) {
+        return !walletMatchesEsrNeedsFixModule(item.module);
+      });
+      if (next.length === state.items.length) return state.items;
+      saveEsrNeedsFixState({ items: next, panelDismissed: state.panelDismissed });
+      return next;
+    }
+
     function applyEsrNeedsFixFromImport(data) {
       if (!data || !data.invalid || !data.invalid.length) return;
+      var state = loadEsrNeedsFixState();
+      var byKey = {};
+      (state.items || []).forEach(function (it) {
+        byKey[esrNeedsFixItemKey(it)] = it;
+      });
       var items = data.invalid.map(function (row) {
+        var module = (row.module_label || '').trim();
+        var key = esrNeedsFixItemKey({ row: row.row, module: module });
+        var prev = byKey[key];
         return {
+          id: (prev && prev.id) || ('ef-' + row.row + '-' + Date.now().toString(36)),
           row: row.row,
-          module: (row.module_label || '').trim(),
+          module: module,
           message: row.message || '',
         };
       });
-      saveEsrNeedsFixItems(items);
+      saveEsrNeedsFixState({ items: items, panelDismissed: false });
+      renderEsrNeedsFixUi();
+      renderList();
+    }
+
+    function dismissEsrNeedsFixPanel() {
+      var state = loadEsrNeedsFixState();
+      saveEsrNeedsFixState({ items: state.items, panelDismissed: true });
       renderEsrNeedsFixUi();
     }
 
-    function clearEsrNeedsFixItems() {
-      try { localStorage.removeItem(esrNeedsFixStorageKey()); } catch (eClr) {}
+    function dismissEsrNeedsFixItem(itemId) {
+      var state = loadEsrNeedsFixState();
+      var next = (state.items || []).filter(function (it) { return it.id !== itemId; });
+      saveEsrNeedsFixState({ items: next, panelDismissed: state.panelDismissed });
       renderEsrNeedsFixUi();
+      renderList();
+    }
+    window.dismissEsrNeedsFixItem = dismissEsrNeedsFixItem;
+
+    function findModuleForEsrLabel(label) {
+      var norm = normalizeEsrModuleLabel(label);
+      if (!norm) return null;
+      var best = null;
+      var bestLen = 0;
+      for (var i = 0; i < MODULES.length; i++) {
+        var m = MODULES[i];
+        if (m.code === 'non_cstf') continue;
+        var mn = normalizeEsrModuleLabel(m.name);
+        if (!mn) continue;
+        if (norm === mn || norm.indexOf(mn) >= 0 || mn.indexOf(norm) >= 0) {
+          if (mn.length > bestLen) {
+            best = m;
+            bestLen = mn.length;
+          }
+        }
+      }
+      if (best) return best;
+      if (norm.indexOf('resuscitation') >= 0) return MODULES.find(function (m) { return m.code === 'resuscitation'; }) || null;
+      if (norm.indexOf('fire') >= 0) return MODULES.find(function (m) { return m.code === 'fire_safety'; }) || null;
+      if (norm.indexOf('safeguarding') >= 0 && norm.indexOf('level 3') >= 0) {
+        return MODULES.find(function (m) { return m.code === 'safeguarding_level_3'; }) || null;
+      }
+      return null;
+    }
+
+    window.startAddFromEsrNeedsFix = function (itemId) {
+      var items = loadEsrNeedsFixItems();
+      var item = items.find(function (it) { return it.id === itemId; });
+      if (!item) return;
+      clearRenewal();
+      var modSel = document.getElementById('moduleSelect');
+      var prefillEl = document.getElementById('addPrefillModuleName');
+      var match = findModuleForEsrLabel(item.module);
+      if (match && modSel) {
+        modSel.value = match.code;
+        if (prefillEl) prefillEl.value = '';
+      } else {
+        if (modSel) modSel.value = 'non_cstf';
+        if (prefillEl) prefillEl.value = item.module || '';
+      }
+      void applyProfileToAddForm();
+      document.querySelector('.nhsuk-tabs button[data-tab="add"]').click();
+      document.getElementById('addForm').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
+
+    function jsAttrString(s) {
+      return JSON.stringify(String(s || ''));
+    }
+
+    function esrNeedsFixItemActionsHtml(itemId) {
+      return '<div class="staff-esr-needs-fix__item-actions">'
+        + '<button type="button" class="nhsuk-button" onclick="startAddFromEsrNeedsFix(' + jsAttrString(itemId) + ')">Add manually</button>'
+        + '<button type="button" class="nhsuk-button nhsuk-button--secondary" onclick="dismissEsrNeedsFixItem(' + jsAttrString(itemId) + ')">Dismiss</button>'
+        + '</div>';
+    }
+
+    function needsFixCardHtml(item) {
+      var title = item.module || ('ESR row ' + item.row);
+      var meta = item.message || 'Missing required dates';
+      return '<div class="nhsuk-card staff-needs-fix-card" data-needs-fix-id="' + escapeHtml(item.id) + '">'
+        + '<div class="nhsuk-card__row">'
+        + '<strong>' + escapeHtml(title) + '</strong>'
+        + ' <span class="nhsuk-tag nhsuk-tag--expired">Needs fixing</span>'
+        + '<p class="staff-needs-fix-card__meta">' + escapeHtml(meta)
+        + (item.row ? ' <span class="staff-esr-needs-fix__row">(ESR row ' + escapeHtml(String(item.row)) + ')</span>' : '')
+        + '</p>'
+        + '<div class="staff-needs-fix-card__actions">'
+        + '<button type="button" class="nhsuk-button" onclick="startAddFromEsrNeedsFix(' + jsAttrString(item.id) + ')">Add manually</button>'
+        + '<button type="button" class="nhsuk-button nhsuk-button--secondary" onclick="dismissEsrNeedsFixItem(' + jsAttrString(item.id) + ')">Dismiss</button>'
+        + '</div>'
+        + '</div>'
+        + '</div>';
+    }
+
+    function getFilteredNeedsFixItems() {
+      var items = pruneEsrNeedsFixItems();
+      var statusFilter = (document.getElementById('filterStatus') || {}).value || '';
+      if (statusFilter && statusFilter !== 'needs-fixing') return [];
+      var searchQuery = getTrainingSearchQuery();
+      return items.filter(function (item) {
+        if (!searchQuery) return true;
+        var label = normalizeEsrModuleLabel(item.module);
+        return label.indexOf(searchQuery) >= 0;
+      }).sort(function (a, b) {
+        return normalizeEsrModuleLabel(a.module).localeCompare(normalizeEsrModuleLabel(b.module), undefined, { sensitivity: 'base' });
+      });
     }
 
     function renderEsrNeedsFixUi() {
-      var items = loadEsrNeedsFixItems();
+      var items = pruneEsrNeedsFixItems();
+      var state = loadEsrNeedsFixState();
       var n = items.length;
       var summaryRow = document.getElementById('summaryNeedsFixRow');
       var countEl = document.getElementById('countNeedsFix');
@@ -1630,7 +1804,7 @@
           : (n + ' training items from ESR need fixing');
       }
       if (!panel || !listEl) return;
-      if (n === 0) {
+      if (n === 0 || state.panelDismissed) {
         panel.hidden = true;
         listEl.innerHTML = '';
         return;
@@ -1647,6 +1821,7 @@
           + '<p class="staff-esr-needs-fix__meta">' + escapeHtml(meta)
           + (item.row ? ' <span class="staff-esr-needs-fix__row">(CSV row ' + escapeHtml(String(item.row)) + ')</span>' : '')
           + '</p>'
+          + esrNeedsFixItemActionsHtml(item.id)
           + '</li>';
       }).join('');
     }
@@ -1721,7 +1896,7 @@
           html += '<tr><td>' + escapeHtml(label) + '</td><td>' + escapeHtml(String(r.row)) + '</td><td>' + escapeHtml(r.message) + '</td></tr>';
         });
         html += '</tbody></table>';
-        html += '<p class="nhsuk-hint" style="margin:0.75rem 0 0 0;">These also appear on the <strong>My training</strong> tab until you fix or dismiss them.</p>';
+        html += '<p class="nhsuk-hint" style="margin:0.75rem 0 0 0;">These also appear on the <strong>My training</strong> tab as <strong>Needs fixing</strong> reminders until you add them manually or dismiss each one.</p>';
       }
       wrap.innerHTML = html;
     }
@@ -1968,7 +2143,7 @@
     document.getElementById('btnEsrNext').addEventListener('click', function () { void esrWizardNext(); });
     var btnDismissEsrNeedsFix = document.getElementById('btnDismissEsrNeedsFix');
     if (btnDismissEsrNeedsFix) {
-      btnDismissEsrNeedsFix.addEventListener('click', function () { clearEsrNeedsFixItems(); });
+      btnDismissEsrNeedsFix.addEventListener('click', function () { dismissEsrNeedsFixPanel(); });
     }
     var btnEsrNeedsFixImport = document.getElementById('btnEsrNeedsFixImport');
     if (btnEsrNeedsFixImport) {
@@ -2512,6 +2687,7 @@
     function getFilteredList() {
       const list = getStored();
       const statusFilter = (document.getElementById('filterStatus') || {}).value || '';
+      if (statusFilter === 'needs-fixing') return [];
       const searchQuery = getTrainingSearchQuery();
       return list.filter(c => {
         if (statusFilter) {
@@ -2564,10 +2740,15 @@
       }
 
       const filtered = sortTrainingRecords(getFilteredList());
+      const needsFixFiltered = getFilteredNeedsFixItems();
+      const statusFilter = (document.getElementById('filterStatus') || {}).value || '';
+      const showNeedsFixInList = needsFixFiltered.length > 0 && (!statusFilter || statusFilter === 'needs-fixing');
       var searchActive = !!getTrainingSearchQuery();
-      const emptyMsg = list.length === 0
+      const emptyMsg = list.length === 0 && needsFixFiltered.length === 0
         ? 'No training yet. Add one from the \"Add training\" tab.'
-        : (searchActive ? 'No training matches your search.' : 'No training matches the current filter.');
+        : (statusFilter === 'needs-fixing' && needsFixFiltered.length === 0
+          ? 'No ESR items need fixing. Rows with missing dates appear here after an ESR import.'
+          : (searchActive ? 'No training matches your search.' : 'No training matches the current filter.'));
       const emptyHtml = '<p class="nhsuk-body-s">' + emptyMsg + '</p>';
 
       function cardHtml(c, withCheckbox) {
@@ -2672,7 +2853,18 @@
           </div>`;
       }
 
-      document.getElementById('credentialList').innerHTML = filtered.length === 0 ? emptyHtml : filtered.map(c => cardHtml(c, false)).join('');
+      var listHtml = '';
+      if (statusFilter === 'needs-fixing') {
+        listHtml = needsFixFiltered.length === 0 ? emptyHtml : needsFixFiltered.map(needsFixCardHtml).join('');
+      } else if (filtered.length === 0 && !showNeedsFixInList) {
+        listHtml = emptyHtml;
+      } else {
+        listHtml = filtered.map(function (c) { return cardHtml(c, false); }).join('');
+        if (showNeedsFixInList) {
+          listHtml += needsFixFiltered.map(needsFixCardHtml).join('');
+        }
+      }
+      document.getElementById('credentialList').innerHTML = listHtml;
       const bulkFiltered = filtered.filter(function (c) {
         return Boolean(c && c.credential_id && isHrVerified(c.credential_id));
       });
@@ -2724,8 +2916,10 @@
     function clearRenewal() {
       var hid = document.getElementById('addRenewFromId');
       var panel = document.getElementById('addRenewPanel');
+      var prefillEl = document.getElementById('addPrefillModuleName');
       if (hid) hid.value = '';
       if (panel) panel.hidden = true;
+      if (prefillEl) prefillEl.value = '';
       var submitBtn = document.querySelector('#addForm button[type="submit"]');
       if (submitBtn) submitBtn.textContent = 'Add training';
     }
@@ -2908,7 +3102,10 @@
       setAddBusy(true);
       const fd = new FormData(e.target);
       const module_code = fd.get('module_code');
-      const module_name = MODULES.find(m => m.code === module_code)?.name || module_code;
+      var prefillName = (document.getElementById('addPrefillModuleName') || {}).value || '';
+      const module_name = (prefillName && String(prefillName).trim())
+        ? String(prefillName).trim()
+        : (MODULES.find(m => m.code === module_code)?.name || module_code);
       const body = { records: [{ staff_full_name: fd.get('staff_full_name'), staff_identifier: fd.get('staff_identifier'), module_code, module_name, completion_date: fd.get('completion_date'), expiry_date: fd.get('expiry_date'), issuing_trust_ods_code: fd.get('issuing_trust_ods_code'), issuing_trust_name: fd.get('issuing_trust_name') }] };
       const certInput = document.getElementById('certificate_upload');
       if (certInput.files && certInput.files[0]) {
@@ -2970,6 +3167,7 @@
         e.target.reset();
         lastAutoOdsSuggested = { name: '', ods: '' };
         void applyProfileToAddForm();
+        pruneEsrNeedsFixItems();
         var shareResult = await autoShareCredentialsWithHr([issued.credential_id], { skipRender: true });
         if (shareResult.error) {
           alert('Training added, but could not send to HR automatically: ' + shareResult.error);
