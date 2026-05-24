@@ -64,6 +64,12 @@
     .profile-suggest-list li:hover,
     .profile-suggest-list li[aria-selected="true"] { background: var(--nhsuk-panel); }
     .profile-suggest-meta { display: block; font-size: 0.8125rem; color: var(--nhsuk-secondary-text); margin-top: 0.2rem; }
+    .profile-check-group { display: flex; flex-direction: column; gap: 0.6rem; margin: 0.75rem 0 0; }
+    .profile-check-group label { display: flex; align-items: flex-start; gap: 0.6rem; cursor: pointer; font-size: 0.9375rem; font-weight: 400; }
+    .profile-check-group input[type="checkbox"] { margin-top: 0.2rem; flex-shrink: 0; width: 1.125rem; height: 1.125rem; accent-color: var(--nhsuk-link); }
+    .profile-check-title { font-weight: 600; display: block; }
+    .profile-check-desc { font-size: 0.8125rem; color: var(--nhsuk-secondary-text); display: block; margin-top: 0.15rem; }
+    .profile-email-meta { margin: 0.5rem 0 0.25rem; }
   </style>
 </head>
 <body>
@@ -122,25 +128,25 @@
         <div id="hrEmailSection" hidden>
           <hr style="border:none; border-top:1px solid var(--nhsuk-border); margin:1.25rem 0;">
           <h2 id="email-notifications" style="font-size:1.125rem; font-weight:700; margin:0 0 0.35rem 0;">Email notifications</h2>
-          <p class="profile-hint" style="margin-top:0;">Get verification inbox and message alerts by email so you do not have to check DocPass every day.</p>
-          <p class="profile-hint">Emails are sent to <strong id="prefEmail">—</strong></p>
-          <p class="profile-hint" id="inboxSnapshot" aria-live="polite"></p>
+          <p class="nhsuk-body-s" style="color:var(--nhsuk-secondary-text); margin:0 0 0.75rem 0;">Get verification inbox and message alerts by email so you do not have to check DocPass every day.</p>
+          <p class="profile-hint profile-email-meta">Emails are sent to <strong id="prefEmail">—</strong></p>
+          <p class="profile-hint profile-email-meta" id="inboxSnapshot" aria-live="polite"></p>
           <p class="profile-hint" id="hrEmailLoadError" style="color:var(--nhsuk-error);"></p>
-          <div class="nhsuk-form-group">
-            <div class="nhsuk-checkboxes__item">
-              <input class="nhsuk-checkboxes__input" id="chkDigest" type="checkbox">
-              <label class="nhsuk-label nhsuk-checkboxes__label" for="chkDigest">
-                Daily summary (pending verifications and unread messages)
-              </label>
-            </div>
-          </div>
-          <div class="nhsuk-form-group">
-            <div class="nhsuk-checkboxes__item">
-              <input class="nhsuk-checkboxes__input" id="chkInstant" type="checkbox">
-              <label class="nhsuk-label nhsuk-checkboxes__label" for="chkInstant">
-                Instant email when a clinician shares training for verification
-              </label>
-            </div>
+          <div class="profile-check-group">
+            <label for="chkDigest">
+              <input type="checkbox" id="chkDigest" name="hr_email_digest">
+              <span>
+                <span class="profile-check-title">Daily summary</span>
+                <span class="profile-check-desc">Pending verifications and unread messages</span>
+              </span>
+            </label>
+            <label for="chkInstant">
+              <input type="checkbox" id="chkInstant" name="hr_email_instant">
+              <span>
+                <span class="profile-check-title">Instant alert</span>
+                <span class="profile-check-desc">When a clinician shares training for verification</span>
+              </span>
+            </label>
           </div>
         </div>
       </form>
