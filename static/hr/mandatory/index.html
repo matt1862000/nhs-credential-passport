@@ -67,7 +67,7 @@
 
   <main class="nhsuk-main mand-wrap" id="maincontent" role="main">
     <h1 class="nhsuk-page-heading">Mandatory training requirements</h1>
-    <p class="nhsuk-lead" id="trustNameLead">Manage the list of mandatory topics for your trust. Load the official trust pack once, then edit or reorder as needed.</p>
+    <p class="nhsuk-lead" id="trustNameLead">Manage the list of mandatory topics for your trust. Edit links or topics as needed.</p>
 
     <div id="notPremium" class="mand-card" hidden>
       <p style="margin:0; font-weight:700;">This page is only for HR accounts.</p>
@@ -491,7 +491,7 @@
         var trustLabel = document.getElementById('trustLabel');
         if (trustLabel && trust) trustLabel.textContent = trust;
         var lead = document.getElementById('trustNameLead');
-        if (lead && trust) lead.textContent = 'Mandatory training requirements for ' + trust + '. Load the official trust pack once, then edit links or topics as needed.';
+        if (lead && trust) lead.textContent = 'Mandatory training requirements for ' + trust + '. Edit links or topics as needed.';
 
         await loadTopics();
       })();
