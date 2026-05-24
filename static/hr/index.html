@@ -92,7 +92,8 @@
         <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnBack">&larr; Back to inbox</button>
         <div id="sessionMetaBlock" style="text-align:right; flex:1; min-width:12rem;"></div>
       </div>
-      <h2 id="sessionViewTitle" style="margin:1rem 0 0.5rem 0; font-size:1.25rem;">E-learning in this set</h2>
+      <h2 id="sessionViewTitle" style="margin:1rem 0 0.5rem 0; font-size:1.25rem;">Evidence verification</h2>
+      <p id="sessionViewLead" class="hr-session-lead">Is each training record genuine? Verify or decline the evidence first.</p>
       <div class="hr-segment" role="tablist" aria-label="Filter records in this set">
         <button type="button" role="tab" aria-selected="true" class="active" id="tab-items-new" data-tab="new">Awaiting decision</button>
         <button type="button" role="tab" aria-selected="false" id="tab-items-arch" data-tab="archived">Decided</button>
@@ -139,7 +140,7 @@
 
       <section id="mandatoryFitSection" class="hr-mandatory-fit-section" hidden aria-labelledby="mandatoryFitSectionTitle">
         <h3 id="mandatoryFitSectionTitle" class="hr-mandatory-fit-section__title">Requirement fit review</h3>
-        <p class="hr-mandatory-fit-section__lead">Separate from evidence verification above. Decide whether each training record satisfies a mandatory trust requirement.</p>
+        <p class="hr-mandatory-fit-section__lead">The same training records may appear above. Here you decide whether each record satisfies a mandatory trust requirement — a separate question from evidence verification.</p>
         <div id="mandatoryFitSectionBody"></div>
       </section>
     </div>
@@ -157,7 +158,7 @@
   <script src="/static/shared/auth.js?v=20260523-1"></script>
   <script src="/static/shared/nav-account.js?v=20260529-4"></script>
   <script>window.__HR_PAGE__ = 'inbox';</script>
-  <script src="/static/hr/hr-app.js?v=20260524-2"></script>
+  <script src="/static/hr/hr-app.js?v=20260524-3"></script>
 </body>
 </html>
 

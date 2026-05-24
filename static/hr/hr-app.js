@@ -27,6 +27,53 @@
       function show(el, on) { if (el) el.hidden = !on; }
       function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
 
+      function fitReviewCredentialIds(payload) {
+        var ids = Object.create(null);
+        (payload && payload.items || []).forEach(function (it) {
+          if ((it.mandatory_needs_review || []).length) {
+            ids[String(it.credential_id)] = true;
+          }
+        });
+        return ids;
+      }
+
+      function dedupeItemsByCredential(items) {
+        var m = Object.create(null);
+        (items || []).forEach(function (it) {
+          var cid = String(it.credential_id || '');
+          if (!cid) return;
+          var prev = m[cid];
+          if (!prev) {
+            m[cid] = it;
+            return;
+          }
+          var st = String(it.status || '').toUpperCase();
+          var pst = String(prev.status || '').toUpperCase();
+          if (pst === 'VERIFIED' && st === 'PENDING') m[cid] = it;
+          else if (!prev.session_id && it.session_id) m[cid] = it;
+        });
+        return Object.keys(m).map(function (k) {
+          return m[k];
+        });
+      }
+
+      function evidenceStatusPill(it) {
+        var st = String(it.status || '').toUpperCase();
+        if (st === 'VERIFIED') {
+          return '<span class="hr-pill hr-pill--verified">VERIFIED</span>';
+        }
+        if (st === 'DECLINED') {
+          return '<span class="hr-pill">DECLINED</span>';
+        }
+        if (st === 'NOT_SHARED') {
+          return '<span class="hr-pill">NOT SHARED</span>';
+        }
+        return (
+          '<span class="hr-pill">PENDING</span>' +
+          (it.is_resubmission ? '<span class="hr-pill hr-pill--resubmit">Resubmission</span>' : '')
+        );
+      }
+
       function renderMandatoryFitSection(payload) {
         var section = document.getElementById('mandatoryFitSection');
         var body = document.getElementById('mandatoryFitSectionBody');
@@ -54,8 +101,9 @@
             var reason = t.reason ? '<p class="hr-mandatory-fit-section__reason">' + esc(t.reason) + '</p>' : '';
             return (
               '<tr>' +
-              '<td>' + topicName + reason + '</td>' +
               '<td>' + moduleName + '</td>' +
+              '<td>' + evidenceStatusPill(it) + '</td>' +
+              '<td>' + topicName + reason + '</td>' +
               '<td>' +
               '<div class="hr-mandatory-fit-actions">' +
               '<button type="button" class="nhsuk-button hr-btn-small" data-fit-accept="1" data-cid="' +
@@ -85,7 +133,7 @@
         body.innerHTML =
           '<div class="hr-table-wrap">' +
           '<table class="hr-table" aria-label="Requirement fit review">' +
-          '<thead><tr><th scope="col">Trust requirement</th><th scope="col">Training record</th><th scope="col">Decision</th></tr></thead>' +
+          '<thead><tr><th scope="col">Training record</th><th scope="col">Evidence status</th><th scope="col">Trust requirement</th><th scope="col">Requirement fit</th></tr></thead>' +
           '<tbody>' +
           tableRows +
           '</tbody></table></div>';
@@ -616,8 +664,9 @@
       }
 
       function isItemActionable(it, merged, portfolioSession) {
+        if (it.fit_review_only && !it.session_id) return false;
         var st = String(it.status || '').toUpperCase();
-        if (st === 'VERIFIED' || st === 'DECLINED') return false;
+        if (st === 'VERIFIED' || st === 'DECLINED' || st === 'NOT_SHARED') return false;
         var portfolioRow = merged
           ? String(it.session_share_kind || '').toLowerCase() === 'portfolio'
           : portfolioSession;
@@ -1144,12 +1193,20 @@
         }
         fillItemsModuleSelect(s);
         renderMandatoryFitSection(s);
-        var items = (s.items || []).filter(function (it) {
+        var fitReviewCredIds = fitReviewCredentialIds(s);
+        var sourceItems = dedupeItemsByCredential(s.items || []);
+        var items = sourceItems.filter(function (it) {
           var st = String(it.status || '').toUpperCase();
           var pending = st !== 'VERIFIED' && st !== 'DECLINED';
+          var hasFitReview = fitReviewCredIds[String(it.credential_id)];
           var pr = merged
             ? String(it.session_share_kind || '').toLowerCase() === 'portfolio'
             : portfolioSession;
+          if (hasFitReview) {
+            if (itemsFilterModule && String(it.module_name || '') !== itemsFilterModule) return false;
+            if (itemsFilterStatus && st !== itemsFilterStatus) return false;
+            return true;
+          }
           var tabOk = pr ? itemsTab === 'new' : itemsTab === 'new' ? pending : !pending;
           if (!tabOk) return false;
           if (itemsFilterModule && String(it.module_name || '') !== itemsFilterModule) return false;
@@ -1183,18 +1240,22 @@
           var portfolioRow = merged
             ? String(it.session_share_kind || '').toLowerCase() === 'portfolio'
             : portfolioSession;
-          var pill =
-            st === 'VERIFIED'
-              ? '<span class="hr-pill hr-pill--verified">VERIFIED</span>'
-              : st === 'DECLINED'
-                ? '<span class="hr-pill">DECLINED</span>'
-                : '<span class="hr-pill">PENDING</span>'
-                  + (it.is_resubmission ? '<span class="hr-pill hr-pill--resubmit">Resubmission</span>' : '');
+          var pill = evidenceStatusPill(it);
           var isArchived = st === 'VERIFIED' || st === 'DECLINED';
+          var fitHint =
+            (it.mandatory_needs_review || []).length
+              ? '<p class="hr-evidence-fit-hint">Also in requirement fit review below — decide whether it satisfies each trust requirement.</p>'
+              : '';
+          var notSharedHint =
+            st === 'NOT_SHARED'
+              ? '<p class="hr-evidence-fit-hint">Not shared with HR yet — ask the doctor to share before you can verify evidence.</p>'
+              : '';
           var sidForApi =
             merged && it.session_id != null ? String(it.session_id) : fixedSessionId != null ? String(fixedSessionId) : '';
           var btn;
-          if (portfolioRow) {
+          if (st === 'NOT_SHARED') {
+            btn = '<span class="hr-muted">Share required</span>';
+          } else if (portfolioRow) {
             btn = '<span class="hr-muted">—</span>';
           } else if (st === 'VERIFIED') {
             btn =
@@ -1286,6 +1347,8 @@
               selectCell +
               '<td>' +
               modCell +
+              fitHint +
+              notSharedHint +
               priorNote +
               issuingLine +
               verifierTrustLine +
@@ -1503,14 +1566,14 @@
       async function loadSession(sessionId) {
         var tbody = document.getElementById('itemsTbody');
         var titleEl = document.getElementById('sessionViewTitle');
-        if (titleEl) titleEl.textContent = 'E-learning in this set';
+        if (titleEl) titleEl.textContent = 'Evidence verification';
         tbody.innerHTML = '<tr><td colspan="5" class="hr-muted">Loading…</td></tr>';
         lastSessionPayload = await apiJson('/api/hr/shares/' + encodeURIComponent(String(sessionId)));
         if (titleEl) {
           titleEl.textContent =
             String(lastSessionPayload.share_kind || '').toLowerCase() === 'portfolio'
               ? 'Reference pack (verified elsewhere)'
-              : 'E-learning in this set';
+              : 'Evidence verification';
         }
         renderItemsTable(lastSessionPayload, sessionId);
         attachItemsRowHandler(sessionId);

@@ -371,6 +371,51 @@ def doctor_compliance_snapshot(doctor_user_id: int, trust_name: str) -> dict:
     }
 
 
+def fit_review_wallet_items(
+    doctor_user_id: int,
+    fit_map: dict[str, list[dict]],
+    existing_credential_ids: set[str],
+) -> list[dict]:
+    """Share-style rows for wallet credentials needing fit review but absent from the inbox queue."""
+    wallet = _parse_wallet(db.user_wallet_get(int(doctor_user_id)))
+    verified_map = db.doctor_verified_map(int(doctor_user_id))
+    out: list[dict] = []
+    for cid, topics in (fit_map or {}).items():
+        cid_s = str(cid)
+        if cid_s in existing_credential_ids:
+            continue
+        wallet_row = next(
+            (
+                c
+                for c in wallet
+                if isinstance(c, dict)
+                and not c.get("revoked")
+                and str(c.get("credential_id") or "") == cid_s
+            ),
+            None,
+        )
+        if not wallet_row:
+            continue
+        ent = verified_map.get(cid_s) or verified_map.get(cid) or {}
+        st = (ent.get("status") or "NOT_SHARED").upper()
+        if st not in ("VERIFIED", "DECLINED", "PENDING"):
+            st = "NOT_SHARED"
+        out.append(
+            {
+                "credential_id": cid_s,
+                "module_name": wallet_row.get("module_name"),
+                "expiry_date": wallet_row.get("expiry_date"),
+                "status": st,
+                "issuing_trust_name": wallet_row.get("issuing_trust_name"),
+                "certificate_base64": wallet_row.get("certificate_base64"),
+                "certificate_filename": wallet_row.get("certificate_filename"),
+                "mandatory_needs_review": topics,
+                "fit_review_only": True,
+            }
+        )
+    return out
+
+
 def mandatory_needs_review_by_credential(doctor_user_id: int, trust_name: str) -> dict[str, list[dict]]:
     """Map credential_id → mandatory topics where requirement fit is uncertain (partial/semantic)."""
     snap = doctor_compliance_snapshot(int(doctor_user_id), trust_name)

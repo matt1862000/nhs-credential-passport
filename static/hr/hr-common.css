@@ -73,7 +73,17 @@
       border-radius: 4px;
     }
     .hr-mandatory-fit-banner[hidden] { display: none !important; }
-    .hr-mandatory-fit-section {
+    .hr-session-lead {
+      margin: 0 0 0.85rem 0;
+      font-size: 0.9375rem;
+      color: var(--nhsuk-secondary-text);
+      max-width: 42rem;
+    }
+    .hr-evidence-fit-hint {
+      margin: 0.45rem 0 0 0;
+      font-size: 0.8125rem;
+      color: #8a5b00;
+    }
       margin-top: 1.5rem;
       padding-top: 1.25rem;
       border-top: 2px solid rgba(212, 160, 0, 0.35);

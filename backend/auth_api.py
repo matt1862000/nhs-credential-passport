@@ -1205,11 +1205,17 @@ def _enrich_hr_share_payload(payload: dict, hr_trust: Optional[str]) -> dict:
         return payload
     fit_map = compliance_snapshot.mandatory_needs_review_by_credential(int(uid), trust)
     items = []
+    seen_cids: set[str] = set()
     for it in payload.get("items") or []:
         cid = str(it.get("credential_id") or "")
         row = dict(it)
         row["mandatory_needs_review"] = fit_map.get(cid) or []
         items.append(row)
+        if cid:
+            seen_cids.add(cid)
+    for extra in compliance_snapshot.fit_review_wallet_items(int(uid), fit_map, seen_cids):
+        items.append(extra)
+        seen_cids.add(str(extra.get("credential_id") or ""))
     topics: list[dict] = []
     seen: set[str] = set()
     for topic_rows in fit_map.values():
