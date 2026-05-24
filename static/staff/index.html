@@ -1371,6 +1371,10 @@
           })();
         }
         if (btn.dataset.tab === 'bulk') {
+          try {
+            var uid = window.NHSAuth && NHSAuth.user && (NHSAuth.user.id || NHSAuth.user.email);
+            if (uid) localStorage.setItem('nhs_used_export_' + uid, '1');
+          } catch (eExp) { /* ignore */ }
           void (async function () {
             await refreshVerifiedMap();
             renderList();

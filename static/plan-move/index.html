@@ -228,6 +228,10 @@
       if (!NHSAuth.requireAuth()) return;
       if (!NHSAuth.requireProfileComplete()) return;
       if (window.NHSNavAccount) void NHSNavAccount.refresh();
+      try {
+        var uid = NHSAuth.user && (NHSAuth.user.id || NHSAuth.user.email);
+        if (uid) localStorage.setItem('nhs_used_plan_move_' + uid, '1');
+      } catch (ePlan) { /* ignore */ }
       /* populate leaving trust from profile */
       var currentTrust = (NHSAuth.trustDisplayName && NHSAuth.trustDisplayName()) || (NHSAuth.user && NHSAuth.user.current_trust) || '';
       var leaveDisplay = document.getElementById('leaveTrustDisplay');
