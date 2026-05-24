@@ -1165,12 +1165,12 @@
         return;
       }
       var existing = head.nextElementSibling;
-      if (existing && existing.classList.contains('onb-nudge') && existing.getAttribute('data-onb-step') === '4') {
+      if (existing && existing.classList.contains('onb-nudge') && existing.getAttribute('data-onb-step') === '3') {
         return;
       }
       NHSOnboardingNudge.show({
         insertAfterId: 'staffPageHeading',
-        step: 4,
+        step: 3,
         total: 4,
         message:
           'Import existing training from <a href="/static/staff/#import">ESR</a> using the <strong>Import from ESR</strong> tab below.',

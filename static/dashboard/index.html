@@ -660,8 +660,8 @@
       var GS_STEPS_DEF = [
         { id: 'gs1', label: 'Sign in with your personal email (from HR)' },
         { id: 'gs2', label: 'Complete your profile' },
-        { id: 'gs3', label: '<a href="/static/requirements/">Check your trust\u2019s requirements</a>' },
-        { id: 'gs4', label: '<a href="/static/staff/#import">Import existing training from ESR</a>' },
+        { id: 'gs3', label: '<a href="/static/staff/#import">Import existing training from ESR</a>' },
+        { id: 'gs4', label: '<a href="/static/requirements/">Check your trust\u2019s requirements</a>' },
       ];
 
       function renderGettingStarted(doctorAdded, wallet) {
@@ -672,7 +672,7 @@
         if (Array.isArray(wallet)) _gsWalletList = wallet;
 
         var reqsVisited = !!localStorage.getItem(GS_REQS_VISITED_KEY);
-        var done = [true, true, reqsVisited, !!doctorAdded];
+        var done = [true, true, !!doctorAdded, reqsVisited];
         var doneCount = done.filter(Boolean).length;
         var allDone = doneCount === 4;
 
