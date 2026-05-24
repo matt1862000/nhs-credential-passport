@@ -11,8 +11,13 @@ from fastapi import FastAPI, Request, HTTPException, File, UploadFile, Query
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+
+from .rate_limit import limiter
 
 from . import crypto
 from . import db
@@ -51,6 +56,18 @@ from .auth_api import (
 
 # Base URL for verification links (default for local dev)
 BASE_URL = os.environ.get("BASE_URL", "http://localhost:8000")
+
+
+def _cors_origins() -> list[str]:
+    origins = {
+        "https://docpass.co.uk",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+    }
+    base = BASE_URL.rstrip("/")
+    if base:
+        origins.add(base)
+    return sorted(origins)
 
 
 class NoCacheStaticHtmlMiddleware(BaseHTTPMiddleware):
@@ -106,10 +123,13 @@ app = FastAPI(
     description="DocPass (docpass.co.uk) — issue, verify, revoke credentials",
     lifespan=lifespan,
 )
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # Trust X-Forwarded-* from Render/nginx so request.url uses public https host (fixes share / verify links).
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(CORSMiddleware, allow_origins=_cors_origins(), allow_methods=["*"], allow_headers=["*"])
 app.add_middleware(NoCacheStaticHtmlMiddleware)
+app.add_middleware(SlowAPIMiddleware)
 app.include_router(auth_router)
 
 

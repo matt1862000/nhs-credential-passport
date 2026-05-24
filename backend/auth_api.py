@@ -16,6 +16,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Upload
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from . import compliance_snapshot, crypto, db, session_auth
+from .rate_limit import limiter
 from .credential_service import (
     completion_dedupe_key,
     get_verification_url_base,
@@ -643,6 +644,7 @@ def _session_response(data: dict, user_id: int, email: str, request: Request) ->
 
 
 @router.post("/auth/register")
+@limiter.limit("10/minute")
 def auth_register(request: Request, body: dict):
     """Self-service registration disabled; HR provisions accounts via cohorts."""
     raise HTTPException(
@@ -652,6 +654,7 @@ def auth_register(request: Request, body: dict):
 
 
 @router.post("/auth/login")
+@limiter.limit("10/minute")
 def auth_login(request: Request, body: dict):
     email = _normalize_email(body.get("email") or "")
     password = body.get("password") or ""
