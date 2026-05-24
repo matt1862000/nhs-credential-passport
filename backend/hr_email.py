@@ -23,7 +23,7 @@ def _messages_url() -> str:
 
 
 def _prefs_url() -> str:
-    return f"{_app_base_url()}/static/hr/email-notifications.html"
+    return f"{_app_base_url()}/static/profile/#email-notifications"
 
 
 def _hr_recipient_name(hr_user: dict) -> str:

@@ -119,6 +119,30 @@
           <textarea class="nhsuk-input" id="hrWelcomeTemplate" name="hr_welcome_message_template" rows="4" maxlength="4000" style="min-height:5rem;resize:vertical;" placeholder="Welcome {name} to {trust}. Please reply if you have any queries or concerns."></textarea>
           <p class="profile-hint" id="hrWelcomePreview" aria-live="polite" style="margin-top:0.5rem;"></p>
         </div>
+        <div id="hrEmailSection" hidden>
+          <hr style="border:none; border-top:1px solid var(--nhsuk-border); margin:1.25rem 0;">
+          <h2 id="email-notifications" style="font-size:1.125rem; font-weight:700; margin:0 0 0.35rem 0;">Email notifications</h2>
+          <p class="profile-hint" style="margin-top:0;">Get verification inbox and message alerts by email so you do not have to check DocPass every day.</p>
+          <p class="profile-hint">Emails are sent to <strong id="prefEmail">—</strong></p>
+          <p class="profile-hint" id="inboxSnapshot" aria-live="polite"></p>
+          <p class="profile-hint" id="hrEmailLoadError" style="color:var(--nhsuk-error);"></p>
+          <div class="nhsuk-form-group">
+            <div class="nhsuk-checkboxes__item">
+              <input class="nhsuk-checkboxes__input" id="chkDigest" type="checkbox">
+              <label class="nhsuk-label nhsuk-checkboxes__label" for="chkDigest">
+                Daily summary (pending verifications and unread messages)
+              </label>
+            </div>
+          </div>
+          <div class="nhsuk-form-group">
+            <div class="nhsuk-checkboxes__item">
+              <input class="nhsuk-checkboxes__input" id="chkInstant" type="checkbox">
+              <label class="nhsuk-label nhsuk-checkboxes__label" for="chkInstant">
+                Instant email when a clinician shares training for verification
+              </label>
+            </div>
+          </div>
+        </div>
       </form>
       <p id="profileStatus" role="status" aria-live="polite"></p>
 
@@ -334,13 +358,50 @@
         prev.textContent = 'Preview: ' + text;
       }
 
+      async function loadHrEmailPrefs() {
+        if (!NHSAuth.user || !NHSAuth.user.premium) return;
+        try {
+          var r = await fetch('/api/hr/email-preferences', { credentials: 'include' });
+          if (!r.ok) throw new Error('Could not load email preferences');
+          var data = await r.json();
+          document.getElementById('prefEmail').textContent = data.email || '—';
+          document.getElementById('chkDigest').checked = !!data.digest_enabled;
+          document.getElementById('chkInstant').checked = !!data.instant_enabled;
+          var s = data.inbox_summary || {};
+          document.getElementById('inboxSnapshot').textContent =
+            'Right now: ' + (s.pending_items || 0) + ' pending verification(s), ' +
+            (s.unread_messages || 0) + ' unread message(s).';
+        } catch (e) {
+          var errEl = document.getElementById('hrEmailLoadError');
+          if (errEl) errEl.textContent = e.message || 'Could not load email preferences.';
+        }
+      }
+
+      async function saveHrEmailPrefs() {
+        var r = await fetch('/api/hr/email-preferences', {
+          method: 'PUT',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            digest_enabled: document.getElementById('chkDigest').checked,
+            instant_enabled: document.getElementById('chkInstant').checked,
+          }),
+        });
+        if (!r.ok) {
+          var j = await r.json().catch(function () { return {}; });
+          throw new Error((j && j.detail) || 'Could not save email preferences');
+        }
+      }
+
       function applyPremiumProfileUi() {
         var gmcGrp = document.getElementById('gmcFormGroup');
         var gmcInp = document.getElementById('gmcNumber');
         var hrWelcomeGrp = document.getElementById('hrWelcomeFormGroup');
+        var hrEmailSec = document.getElementById('hrEmailSection');
         var prem = NHSAuth.user && NHSAuth.user.premium;
         if (gmcGrp) gmcGrp.style.display = prem ? 'none' : '';
         if (hrWelcomeGrp) hrWelcomeGrp.hidden = !prem;
+        if (hrEmailSec) hrEmailSec.hidden = !prem;
         if (!gmcInp) return;
         if (prem) {
           gmcInp.removeAttribute('required');
@@ -364,9 +425,14 @@
         if (hrWelcomeInp) hrWelcomeInp.addEventListener('input', updateHrWelcomePreview);
         wireVisibilityPanel();
         await loadVisibility();
+        if (NHSAuth.user.premium) await loadHrEmailPrefs();
         var lead = document.getElementById('profileLead');
         if (lead && NHSAuth.user.premium) {
           lead.textContent = 'Optional details for your HR profile. You can change them any time.';
+        }
+        if (window.location.hash === '#email-notifications') {
+          var anchor = document.getElementById('email-notifications');
+          if (anchor) anchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
 
         /* Onboarding nudge — step 2: show only until they've visited requirements */
@@ -523,6 +589,16 @@
               body: JSON.stringify({ mode: newVisMode, allowlist: _visAllowlist }),
             });
           } catch (err) { /* non-fatal */ }
+        } else {
+          try {
+            await saveHrEmailPrefs();
+          } catch (err) {
+            setSaveStatus(err.message || 'Could not save email preferences.', 'err');
+            btn.disabled = false;
+            btn.classList.remove('is-loading');
+            btn.removeAttribute('aria-busy');
+            return;
+          }
         }
 
         // 3. Navigate to dashboard
