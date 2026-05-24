@@ -824,8 +824,21 @@
       return !!resolveCredCertificate(c);
     }
 
+    function displayModuleName(raw) {
+      var s = String(raw || '').trim();
+      if (!s) return s;
+      var m = s.match(/^([A-Z0-9]{2,6})\s+(.+)$/i);
+      if (!m) return s;
+      var pfx = m[1].toUpperCase();
+      var rest = m[2].trim();
+      if (!rest) return s;
+      if (/^(NHS|CSTF|LOCAL|CORE|MANDATORY|DEMO|BLS|ALS|ILS)$/.test(pfx)) return s;
+      if (/^\d{2,6}$/.test(pfx)) return rest;
+      return s;
+    }
+
     function credentialTitleHtml(c) {
-      var name = escapeHtml(c.module_name || 'Training');
+      var name = escapeHtml(displayModuleName(c.module_name) || 'Training');
       if (!credHasUploadedCertificate(c)) {
         return '<span class="staff-card-title-text">' + name + '</span>';
       }
@@ -2061,7 +2074,7 @@
             if (status !== statusFilter) return false;
           }
         }
-        if (moduleFilter && (c.module_name || '') !== moduleFilter) return false;
+        if (moduleFilter && displayModuleName(c.module_name) !== moduleFilter) return false;
         return true;
       });
     }
@@ -2078,7 +2091,7 @@
 
       var moduleSelect = document.getElementById('filterModule');
       if (moduleSelect && list.length > 0) {
-        var names = [...new Set(list.map(c => c.module_name).filter(Boolean))].sort();
+        var names = [...new Set(list.map(function (c) { return displayModuleName(c.module_name); }).filter(Boolean))].sort();
         var current = moduleSelect.value;
         moduleSelect.innerHTML = '<option value="">All modules</option>' + names.map(n => '<option value="' + n.replace(/"/g, '&quot;') + '">' + n + '</option>').join('');
         if (names.indexOf(current) !== -1) moduleSelect.value = current;

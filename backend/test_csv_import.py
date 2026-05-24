@@ -1,7 +1,7 @@
 """Light tests for ESR CSV import generalisation."""
 import unittest
 
-from .csv_import import ImportProfileContext, analyze_csv_import, parse_completion_csv
+from .csv_import import ImportProfileContext, analyze_csv_import, parse_completion_csv, strip_esr_org_prefix_from_display
 
 
 class CsvImportEsrTests(unittest.TestCase):
@@ -99,7 +99,29 @@ class CsvImportEsrTests(unittest.TestCase):
         self.assertFalse(by_header["Competence Level"].get("canonical"))
         parsed, fatal = parse_completion_csv(csv_text, profile=profile)
         self.assertIsNone(fatal)
-        self.assertEqual(len([p for p in parsed if p.record]), 1)
+        valid = [p for p in parsed if p.record]
+        self.assertEqual(len(valid), 1)
+        self.assertEqual(
+            valid[0].record.module_name,
+            "Clinical Risk (PAR) - 3 Years",
+        )
+
+    def test_strip_esr_org_prefix_from_plain_title(self):
+        self.assertEqual(
+            strip_esr_org_prefix_from_display(
+                "457 Clinical Risk - Personalised Assessment of Risk (PAR)",
+                {"457"},
+            ),
+            "Clinical Risk - Personalised Assessment of Risk (PAR)",
+        )
+        self.assertEqual(
+            strip_esr_org_prefix_from_display("457 Clinical Risk", {"457"}),
+            "Clinical Risk",
+        )
+        self.assertEqual(
+            strip_esr_org_prefix_from_display("NHS Fire Safety", {"457"}),
+            "NHS Fire Safety",
+        )
 
     def test_detect_employer_from_vpd_without_profile_pack(self):
         csv_text = (

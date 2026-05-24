@@ -2,6 +2,8 @@
 Parse completion CSV for bulk issue. Supports canonical headers and common aliases
 (ESR-style exports can be mapped via column names in the first row).
 """
+from __future__ import annotations
+
 import csv
 import io
 import re
@@ -177,8 +179,56 @@ def _parse_date(raw: str) -> Optional[date]:
         return None
 
 
-def _esr_infer_module_display(row: dict[str, str]) -> str:
-    """Same module text used for issuing — if empty, row is junk (e.g. blank line in export)."""
+def _esr_org_prefixes(profile: Optional[ImportProfileContext] = None) -> set[str]:
+    """Known ESR VPD / org codes from trust packs (e.g. Sheffield 457)."""
+    prefixes: set[str] = set()
+    for pack_id in trust_packs.all_pack_ids():
+        cfg = trust_packs.esr_import_config_for_pack_id(pack_id) or {}
+        for key in ("esr_org_prefixes", "esr_vpd_codes"):
+            for raw in cfg.get(key) or []:
+                if raw:
+                    prefixes.add(str(raw).strip().upper())
+    if profile and profile.esr_import_config:
+        for key in ("esr_org_prefixes", "esr_vpd_codes"):
+            for raw in profile.esr_import_config.get(key) or []:
+                if raw:
+                    prefixes.add(str(raw).strip().upper())
+    return prefixes
+
+
+_ESR_PREFIX_SKIP = frozenset({"NHS", "CSTF", "LOCAL", "CORE", "MANDATORY", "DEMO", "BLS", "ALS", "ILS"})
+
+
+def strip_esr_org_prefix_from_display(
+    name: str,
+    org_prefixes: Optional[set[str]] = None,
+) -> str:
+    """Remove leading ESR org/VPD code from plain-text titles (e.g. '457 Clinical Risk' → 'Clinical Risk')."""
+    t = (name or "").strip()
+    if not t:
+        return t
+    m = re.match(r"^([A-Z0-9]{2,6})\s+(.+)$", t, re.I)
+    if not m:
+        return t
+    pfx = m.group(1).upper()
+    rest = m.group(2).strip()
+    if not rest or pfx in _ESR_PREFIX_SKIP:
+        return t
+    prefixes = org_prefixes or set()
+    if prefixes:
+        if pfx in prefixes:
+            return rest
+        return t
+    if pfx.isdigit():
+        return rest
+    return t
+
+
+def _esr_infer_module_display(
+    row: dict[str, str],
+    profile: Optional[ImportProfileContext] = None,
+) -> str:
+    """Module title for issuing — prefer Competency Name cell over Title when ESR prefixes differ."""
 
     def gx(k: str) -> str:
         v = row.get(k)
@@ -186,12 +236,17 @@ def _esr_infer_module_display(row: dict[str, str]) -> str:
             return ""
         return str(v).strip()
 
-    bits = [
-        gx("module_name"),
-        _first_line(gx("esr_description")),
+    prefixes = _esr_org_prefixes(profile)
+    candidates = [
         _parse_esr_competency_cell(gx("esr_competency_name")),
+        _first_line(gx("esr_description")),
+        gx("module_name"),
     ]
-    return next((b for b in bits if b), "")
+    for raw in candidates:
+        cleaned = strip_esr_org_prefix_from_display(raw, prefixes)
+        if cleaned:
+            return cleaned
+    return ""
 
 
 def _parse_esr_competency_cell(raw: str) -> str:
@@ -955,7 +1010,7 @@ def _row_to_record(
             skipped = staff_err.startswith("SKIP:")
             return None, staff_err, skipped
 
-        module_display = _esr_infer_module_display(row)
+        module_display = _esr_infer_module_display(row, profile)
         if not module_display:
             return None, "missing module (Title, Description, or Competency Name)", False
 
@@ -1172,7 +1227,7 @@ def parse_completion_csv(
                     row_dict[canonical] = cells[col_idx]
                 else:
                     row_dict[canonical] = ""
-            if is_esr_layout and not _esr_infer_module_display(row_dict):
+            if is_esr_layout and not _esr_infer_module_display(row_dict, profile):
                 continue
             preview_rows.append(row_dict)
             if len(preview_rows) >= 500:
@@ -1190,7 +1245,7 @@ def parse_completion_csv(
                 row_dict[canonical] = cells[col_idx]
             else:
                 row_dict[canonical] = ""
-        if is_esr_layout and not _esr_infer_module_display(row_dict):
+        if is_esr_layout and not _esr_infer_module_display(row_dict, profile):
             continue
         data_row_index += 1
         if data_row_index > MAX_DATA_ROWS:
