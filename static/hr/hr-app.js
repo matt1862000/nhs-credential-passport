@@ -27,16 +27,6 @@
       function show(el, on) { if (el) el.hidden = !on; }
       function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
 
-      function fitReviewCredentialIds(payload) {
-        var ids = Object.create(null);
-        (payload && payload.items || []).forEach(function (it) {
-          if ((it.mandatory_needs_review || []).length) {
-            ids[String(it.credential_id)] = true;
-          }
-        });
-        return ids;
-      }
-
       function dedupeItemsByCredential(items) {
         var m = Object.create(null);
         (items || []).forEach(function (it) {
@@ -1193,20 +1183,13 @@
         }
         fillItemsModuleSelect(s);
         renderMandatoryFitSection(s);
-        var fitReviewCredIds = fitReviewCredentialIds(s);
         var sourceItems = dedupeItemsByCredential(s.items || []);
         var items = sourceItems.filter(function (it) {
           var st = String(it.status || '').toUpperCase();
           var pending = st !== 'VERIFIED' && st !== 'DECLINED';
-          var hasFitReview = fitReviewCredIds[String(it.credential_id)];
           var pr = merged
             ? String(it.session_share_kind || '').toLowerCase() === 'portfolio'
             : portfolioSession;
-          if (hasFitReview) {
-            if (itemsFilterModule && String(it.module_name || '') !== itemsFilterModule) return false;
-            if (itemsFilterStatus && st !== itemsFilterStatus) return false;
-            return true;
-          }
           var tabOk = pr ? itemsTab === 'new' : itemsTab === 'new' ? pending : !pending;
           if (!tabOk) return false;
           if (itemsFilterModule && String(it.module_name || '') !== itemsFilterModule) return false;
