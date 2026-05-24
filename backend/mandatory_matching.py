@@ -40,6 +40,15 @@ _CONFIDENCE = {
 }
 _SEMANTIC_CONFIDENT = 0.90
 _SEMANTIC_REVIEW = 0.70
+
+
+def topic_needs_hr_fit_review(match_type: Optional[str], status_label: Optional[str] = None) -> bool:
+    """True when HR should judge whether a wallet record satisfies a mandatory topic."""
+    mt = (match_type or "").strip().lower()
+    if mt in ("partial", "semantic_low"):
+        return True
+    label = (status_label or "").strip()
+    return label.startswith("Needs review")
 _EMBEDDING_MODEL = "models/gemini-embedding-001"
 _GCP_SCOPES = ("https://www.googleapis.com/auth/generative-language.retriever",)
 

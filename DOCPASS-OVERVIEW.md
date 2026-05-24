@@ -95,6 +95,7 @@ When **exact** and **alias** matching fail, the matcher calls **Google Gemini em
 - **Production:** credentials at `/var/lib/docpass/keys/gcp-embeddings.json`, mounted in container as `/app/keys/gcp-embeddings.json`  
 - **Caching:** trust-pack topic embeddings cached in memory per pack fingerprint; credential embeddings cached by normalised title  
 - **HR verification:** not required for matching — pending records can still show semantic matches; `hr_status` is display-only on requirements  
+- **HR requirement-fit decisions:** when status is **Needs review** (partial or semantic_low), HR can **Counts for requirement** / **Does not count** in the verification inbox — stored per doctor, trust, topic, and credential; accepted → **Met (HR confirmed)**; rejected → **No match**
 
 **Example:** pack topic “Information Governance” + wallet record “Protecting patient confidentiality and NHS data” → **Needs review (possible semantic match)** at ~86% similarity (≥90% required for Met).
 
@@ -206,6 +207,7 @@ HR accounts see **Trust tools** on the dashboard instead of the doctor wallet. C
 - Inbox of **shared sets** from doctors grouped by doctor
 - Filter: needs action / completed; by module; by record status
 - Per-record actions: **Verify**, **Decline** (with reason), **Unverify**
+- **Requirement fit review** — for partial/semantic uncertain matches, **Counts for requirement** / **Does not count** (separate from evidence verification)
 - Bulk verify / bulk decline within a set
 - Header **bell** — hover preview shows **Training to verify** only; badge = pending verification count
 
@@ -585,6 +587,7 @@ DocPass demonstrates ideas aligned with StatMand direction:
 | ESR import evidence storage | Server-side `csv_import_evidence` table; wallet stores `import_evidence_id` — fixes localStorage quota on bulk import |
 | ESR needs-fix matching | Exact wallet title match only (removed fuzzy prune that hid valid fix rows) |
 | Onboarding checklist | Steps 3–4 swapped: import from ESR before check trust requirements; step 4 links to requirements page |
+| HR requirement-fit decisions | HR accepts/rejects uncertain partial and semantic matches; stored decisions override compliance snapshot |
 
 ---
 

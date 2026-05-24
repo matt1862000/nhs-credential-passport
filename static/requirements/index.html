@@ -168,9 +168,9 @@
         if (topic.status === 'expiring') return 'req-tag--expiring';
         var label = topic.status_label || '';
         if (label === 'Met (expiring soon)') return 'req-tag--expiring';
-        if (label === 'Met (exact match)') return 'req-tag--met';
-        if (label === 'Met (possible match)') return 'req-tag--possible';
-        if (label === 'Needs review') return 'req-tag--review';
+        if (label === 'Met (exact match)' || label === 'Met (HR confirmed)') return 'req-tag--met';
+        if (label === 'Met (possible match)' || label === 'Met (semantic match)') return 'req-tag--possible';
+        if (label === 'Needs review' || label.indexOf('Needs review') === 0) return 'req-tag--review';
         if (label === 'Expired') return 'req-tag--expired';
         if (topic.status === 'expiring') return 'req-tag--expiring';
         return 'req-tag--gap';

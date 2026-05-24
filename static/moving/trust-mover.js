@@ -48,7 +48,7 @@
     if (t.status === 'expiring') return 'tag-partial';
     var label = t.status_label || '';
     if (label.indexOf('Met') === 0) return 'tag-met';
-    if (label === 'Needs review') return 'tag-partial';
+    if (label === 'Needs review' || label.indexOf('Needs review') === 0) return 'tag-partial';
     return 'tag-miss';
   }
 

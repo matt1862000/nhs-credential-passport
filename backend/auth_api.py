@@ -2242,6 +2242,74 @@ def hr_doctor_queue(request: Request, doctor_user_id: int):
     return _enrich_hr_share_payload(q, _hr_trust(hr))
 
 
+@router.post("/hr/doctors/{doctor_user_id}/mandatory-fit-decisions")
+async def hr_mandatory_fit_decision(request: Request, doctor_user_id: int):
+    """HR accepts or rejects whether a wallet record satisfies a mandatory topic."""
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Expected a JSON object")
+
+    topic_name = str(body.get("topic_name") or "").strip()
+    credential_id = str(body.get("credential_id") or "").strip()
+    decision = str(body.get("decision") or "").strip().lower()
+    topic_id_raw = body.get("topic_id")
+    topic_id = int(topic_id_raw) if topic_id_raw is not None and str(topic_id_raw).strip() != "" else None
+
+    if not topic_name or not credential_id:
+        raise HTTPException(status_code=400, detail="topic_name and credential_id are required")
+    if decision not in ("accepted", "rejected"):
+        raise HTTPException(status_code=400, detail="decision must be accepted or rejected")
+
+    doc = db.user_get_by_id(int(doctor_user_id))
+    if not doc or int(doc.get("premium") or 0) != 0:
+        raise HTTPException(status_code=404, detail="Doctor not found")
+    doc_trust = (doc.get("current_trust") or "").strip().lower()
+    if doc_trust != trust.strip().lower():
+        raise HTTPException(status_code=403, detail="This doctor is not at your trust.")
+
+    fit_map = compliance_snapshot.mandatory_needs_review_by_credential(int(doctor_user_id), trust)
+    pending = fit_map.get(credential_id) or []
+    match = next(
+        (
+            t
+            for t in pending
+            if (topic_id is not None and t.get("topic_id") == topic_id)
+            or (topic_name and str(t.get("topic_name") or "").strip().lower() == topic_name.lower())
+        ),
+        None,
+    )
+    if not match:
+        raise HTTPException(
+            status_code=400,
+            detail="This topic and training record are not awaiting requirement-fit review.",
+        )
+
+    saved = db.mandatory_match_decision_upsert(
+        doctor_user_id=int(doctor_user_id),
+        trust_name=trust,
+        topic_id=topic_id if topic_id is not None else match.get("topic_id"),
+        topic_name=topic_name,
+        credential_id=credential_id,
+        decision=decision,
+        hr_user_id=int(hr["id"]),
+    )
+    action = "mandatory_fit_accept" if decision == "accepted" else "mandatory_fit_reject"
+    _audit_hr_action(
+        hr,
+        action,
+        doctor_user_id=int(doctor_user_id),
+        credential_id=credential_id,
+        detail=f"{topic_name} ↔ {match.get('module_name') or credential_id}",
+        meta={"topic_id": saved.get("topic_id"), "topic_name": topic_name, "decision": decision},
+    )
+    return {"ok": True, "decision": saved}
+
+
 @router.get("/hr/shares/{session_id}")
 def hr_shares_get(request: Request, session_id: int):
     hr = require_premium_user(request)

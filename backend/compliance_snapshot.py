@@ -83,6 +83,70 @@ def _hr_status_for_credential(verified_map: dict, credential_id: Optional[str]) 
     return (ent.get("status") or "").upper() or None
 
 
+def _decision_lookup_key(topic_id: Optional[int], topic_name: str, credential_id: str) -> str:
+    tid = topic_id if topic_id is not None else (topic_name or "").strip()
+    return f"{tid}::{credential_id}"
+
+
+def _apply_hr_fit_decision(row: dict[str, Any], decision: Optional[dict]) -> dict[str, Any]:
+    if not decision:
+        return row
+    dec = (decision.get("decision") or "").lower()
+    topic_name = (row.get("topic_name") or "").strip()
+    module_name = (row.get("module_name") or "").strip()
+    expiry_bucket = row.get("expiry_status") or "met"
+    out = dict(row)
+    out["hr_fit_decision"] = dec
+    out["hr_fit_decided_at"] = decision.get("decided_at")
+    if dec == "accepted":
+        if expiry_bucket == "expired":
+            out.update(
+                {
+                    "status": "gap",
+                    "status_label": "Expired",
+                    "match_type": "hr_confirmed",
+                    "reason": f"HR confirmed requirement fit, but record expired: {module_name or topic_name}",
+                }
+            )
+        elif expiry_bucket == "expiring":
+            out.update(
+                {
+                    "status": "expiring",
+                    "status_label": "Met (expiring soon)",
+                    "match_type": "hr_confirmed",
+                    "reason": f"HR confirmed {module_name or 'this record'} satisfies {topic_name}",
+                }
+            )
+        else:
+            out.update(
+                {
+                    "status": "met",
+                    "status_label": "Met (HR confirmed)",
+                    "match_type": "hr_confirmed",
+                    "reason": f"HR confirmed {module_name or 'this record'} satisfies {topic_name}",
+                }
+            )
+    elif dec == "rejected":
+        out.update(
+            {
+                "status": "gap",
+                "status_label": "No match",
+                "match_type": "none",
+                "reason": f"HR confirmed {module_name or 'this record'} does not satisfy {topic_name}",
+            }
+        )
+    return out
+
+
+def _topic_needs_hr_fit_review_row(tr: dict) -> bool:
+    if tr.get("hr_fit_decision"):
+        return False
+    return mandatory_matching.topic_needs_hr_fit_review(
+        tr.get("match_type"),
+        tr.get("status_label"),
+    )
+
+
 def _summary_counts(topic_rows: list[dict]) -> dict[str, int]:
     n_met = n_expiring = n_gap = n_needs_review = n_possible = 0
     for tr in topic_rows:
@@ -96,7 +160,7 @@ def _summary_counts(topic_rows: list[dict]) -> dict[str, int]:
             n_expiring += 1
         else:
             n_gap += 1
-            if label == "Needs review":
+            if _topic_needs_hr_fit_review_row(tr):
                 n_needs_review += 1
     return {
         "met": n_met,
@@ -247,12 +311,18 @@ def doctor_compliance_snapshot(doctor_user_id: int, trust_name: str) -> dict:
 
     pack_key = trust
     mandatory_matching.prepare_semantic_match_cache(pack_key, topics)
+    fit_decisions = db.mandatory_match_decisions_map(int(doctor_user_id), trust)
     topic_rows: list[dict] = []
     for t in topics:
         result = mandatory_matching.match_topic_to_wallet(
             t, payloads, pack_key=pack_key, pack_topics=topics
         )
-        topic_rows.append(_topic_result_row(t, result, verified_map))
+        row = _topic_result_row(t, result, verified_map)
+        cid = row.get("credential_id")
+        if cid:
+            dkey = _decision_lookup_key(row.get("topic_id"), row.get("topic_name") or "", str(cid))
+            row = _apply_hr_fit_decision(row, fit_decisions.get(dkey))
+        topic_rows.append(row)
 
     summary = _summary_counts(topic_rows)
     summary["total_topics"] = len(topics)
@@ -302,11 +372,11 @@ def doctor_compliance_snapshot(doctor_user_id: int, trust_name: str) -> dict:
 
 
 def mandatory_needs_review_by_credential(doctor_user_id: int, trust_name: str) -> dict[str, list[dict]]:
-    """Map credential_id → mandatory topics where requirement fit is uncertain (partial match)."""
+    """Map credential_id → mandatory topics where requirement fit is uncertain (partial/semantic)."""
     snap = doctor_compliance_snapshot(int(doctor_user_id), trust_name)
     out: dict[str, list[dict]] = {}
     for tr in snap.get("topics") or []:
-        if tr.get("status_label") != "Needs review":
+        if not _topic_needs_hr_fit_review_row(tr):
             continue
         cid = tr.get("credential_id")
         if not cid:
@@ -314,9 +384,12 @@ def mandatory_needs_review_by_credential(doctor_user_id: int, trust_name: str) -
         key = str(cid)
         out.setdefault(key, []).append(
             {
+                "topic_id": tr.get("topic_id"),
                 "topic_name": tr.get("topic_name"),
                 "reason": tr.get("reason"),
                 "module_name": tr.get("module_name"),
+                "match_type": tr.get("match_type"),
+                "status_label": tr.get("status_label"),
             }
         )
     return out
@@ -406,7 +479,7 @@ def cohort_compliance_snapshot(cohort_id: int, hr_trust: str) -> Optional[dict]:
                 topic_agg[tkey]["expiring"] += 1
             else:
                 topic_agg[tkey]["gap"] += 1
-                if tr.get("status_label") == "Needs review":
+                if _topic_needs_hr_fit_review_row(tr):
                     topic_agg[tkey]["needs_review"] += 1
         member_rows.append(
             {

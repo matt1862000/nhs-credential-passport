@@ -97,6 +97,7 @@ def init_db():
         _ensure_messaging_tables(conn)
         _ensure_expiry_reminder_sent_table(conn)
         _ensure_hr_attestations_table(conn)
+        _ensure_mandatory_match_decisions_table(conn)
         _ensure_users_provision_columns(conn)
         _ensure_hr_cohorts_tables(conn)
         _ensure_notifications_table(conn)
@@ -555,6 +556,113 @@ def hr_attestation_delete(doctor_user_id: int, credential_id: str, hr_trust: str
         )
         conn.commit()
         return cur.rowcount > 0
+
+
+def _ensure_mandatory_match_decisions_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS mandatory_match_decisions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            doctor_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            trust_name TEXT NOT NULL,
+            topic_id INTEGER,
+            topic_name TEXT NOT NULL,
+            credential_id TEXT NOT NULL,
+            decision TEXT NOT NULL CHECK(decision IN ('accepted', 'rejected')),
+            hr_user_id INTEGER NOT NULL REFERENCES users(id),
+            decided_at TEXT NOT NULL,
+            UNIQUE(doctor_user_id, trust_name, topic_name, credential_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_mandatory_match_decisions_doctor_trust
+        ON mandatory_match_decisions(doctor_user_id, trust_name)
+        """
+    )
+
+
+def mandatory_match_decision_upsert(
+    *,
+    doctor_user_id: int,
+    trust_name: str,
+    topic_id: Optional[int],
+    topic_name: str,
+    credential_id: str,
+    decision: str,
+    hr_user_id: int,
+) -> dict:
+    dec = (decision or "").strip().lower()
+    if dec not in ("accepted", "rejected"):
+        raise ValueError("decision must be accepted or rejected")
+    trust = (trust_name or "").strip()
+    topic = (topic_name or "").strip()
+    cid = (credential_id or "").strip()
+    if not trust or not topic or not cid:
+        raise ValueError("trust_name, topic_name, and credential_id are required")
+    now = datetime.utcnow().isoformat()
+    tid = int(topic_id) if topic_id is not None else None
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_mandatory_match_decisions_table(conn)
+        conn.execute(
+            """
+            INSERT INTO mandatory_match_decisions (
+                doctor_user_id, trust_name, topic_id, topic_name, credential_id,
+                decision, hr_user_id, decided_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(doctor_user_id, trust_name, topic_name, credential_id) DO UPDATE SET
+                topic_id = excluded.topic_id,
+                decision = excluded.decision,
+                hr_user_id = excluded.hr_user_id,
+                decided_at = excluded.decided_at
+            """,
+            (int(doctor_user_id), trust, tid, topic, cid, dec, int(hr_user_id), now),
+        )
+        conn.commit()
+    return {
+        "doctor_user_id": int(doctor_user_id),
+        "trust_name": trust,
+        "topic_id": tid,
+        "topic_name": topic,
+        "credential_id": cid,
+        "decision": dec,
+        "hr_user_id": int(hr_user_id),
+        "decided_at": now,
+    }
+
+
+def mandatory_match_decisions_map(doctor_user_id: int, trust_name: str) -> dict[str, dict]:
+    """Map decision lookup keys to decision rows for one doctor at a trust."""
+    trust = (trust_name or "").strip()
+    if not trust:
+        return {}
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_mandatory_match_decisions_table(conn)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT topic_id, topic_name, credential_id, decision, hr_user_id, decided_at
+            FROM mandatory_match_decisions
+            WHERE doctor_user_id = ? AND LOWER(TRIM(trust_name)) = LOWER(TRIM(?))
+            """,
+            (int(doctor_user_id), trust),
+        ).fetchall()
+    out: dict[str, dict] = {}
+    for r in rows:
+        tid = r["topic_id"]
+        tname = (r["topic_name"] or "").strip()
+        cid = str(r["credential_id"] or "")
+        key = f"{tid if tid is not None else tname}::{cid}"
+        out[key] = {
+            "topic_id": tid,
+            "topic_name": tname,
+            "credential_id": cid,
+            "decision": (r["decision"] or "").lower(),
+            "hr_user_id": r["hr_user_id"],
+            "decided_at": r["decided_at"],
+        }
+    return out
 
 
 def share_item_find_verified_for_trust(

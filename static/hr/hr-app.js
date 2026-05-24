@@ -27,16 +27,44 @@
       function show(el, on) { if (el) el.hidden = !on; }
       function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
 
-      function formatMandatoryFitNote(topics) {
+      function formatMandatoryFitNote(topics, ctx) {
         if (!topics || !topics.length) return '';
+        var credId = ctx && ctx.credentialId ? String(ctx.credentialId) : '';
+        var doctorId = ctx && ctx.doctorUserId != null ? String(ctx.doctorUserId) : '';
+        var canAct = !!(credId && doctorId);
         var items = topics.map(function (t) {
           var line = esc(t.topic_name || 'Mandatory requirement');
           if (t.reason) line += ' — ' + esc(t.reason);
-          return '<li>' + line + '</li>';
+          var actions = '';
+          if (canAct) {
+            actions =
+              '<div class="hr-mandatory-fit-actions">' +
+              '<button type="button" class="nhsuk-button hr-btn-small" data-fit-accept="1" data-cid="' +
+              esc(credId) +
+              '" data-doctor-id="' +
+              esc(doctorId) +
+              '" data-topic-id="' +
+              esc(t.topic_id != null ? String(t.topic_id) : '') +
+              '" data-topic-name="' +
+              esc(t.topic_name || '') +
+              '">Counts for requirement</button>' +
+              '<button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" data-fit-reject="1" data-cid="' +
+              esc(credId) +
+              '" data-doctor-id="' +
+              esc(doctorId) +
+              '" data-topic-id="' +
+              esc(t.topic_id != null ? String(t.topic_id) : '') +
+              '" data-topic-name="' +
+              esc(t.topic_name || '') +
+              '">Does not count</button>' +
+              '</div>';
+          }
+          return '<li>' + line + actions + '</li>';
         }).join('');
         return (
           '<div class="hr-mandatory-fit-note" role="note">' +
           '<strong>Possible mandatory match — confirm requirement fit</strong>' +
+          '<p class="hr-mandatory-fit-note__hint">Verify the evidence separately. These buttons record whether this training satisfies the trust requirement.</p>' +
           '<ul class="hr-mandatory-fit-note__list">' + items + '</ul>' +
           '</div>'
         );
@@ -1255,7 +1283,10 @@
               modLabel +
               '</button>'
             : modLabel;
-          var fitNote = formatMandatoryFitNote(it.mandatory_needs_review);
+          var fitNote = formatMandatoryFitNote(it.mandatory_needs_review, {
+            credentialId: it.credential_id,
+            doctorUserId: s.doctor_user_id,
+          });
           parts.push(
             '<tr>' +
               selectCell +
@@ -1325,6 +1356,51 @@
             return;
           }
           if (actionInFlight) return;
+          var fitAccept = e.target && e.target.closest('button[data-fit-accept="1"]');
+          var fitReject = e.target && e.target.closest('button[data-fit-reject="1"]');
+          if (fitAccept || fitReject) {
+            e.preventDefault();
+            var fitBtn = fitAccept || fitReject;
+            var doctorId = fitBtn.getAttribute('data-doctor-id');
+            var fitCid = fitBtn.getAttribute('data-cid');
+            var topicName = (fitBtn.getAttribute('data-topic-name') || '').trim();
+            var topicIdRaw = fitBtn.getAttribute('data-topic-id');
+            if (!doctorId || !fitCid || !topicName) {
+              alert('Missing requirement-fit details.');
+              return;
+            }
+            var decision = fitAccept ? 'accepted' : 'rejected';
+            var confirmMsg = fitAccept
+              ? 'Record that this training counts toward "' + topicName + '"?'
+              : 'Record that this training does NOT count toward "' + topicName + '"?';
+            if (!confirm(confirmMsg)) return;
+            actionInFlight = true;
+            fitBtn.disabled = true;
+            try {
+              var body = {
+                topic_name: topicName,
+                credential_id: fitCid,
+                decision: decision,
+              };
+              if (topicIdRaw) body.topic_id = Number(topicIdRaw);
+              await apiJson(
+                '/api/hr/doctors/' + encodeURIComponent(String(doctorId)) + '/mandatory-fit-decisions',
+                {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(body),
+                }
+              );
+              await refreshPayloadAfterAction(fixedSessionId);
+              updateMandatoryFitBanner(lastSessionPayload);
+            } catch (err) {
+              alert(err.message || err);
+              fitBtn.disabled = false;
+            } finally {
+              actionInFlight = false;
+            }
+            return;
+          }
           var v = e.target && e.target.closest('button[data-verify="1"]');
           var d = e.target && e.target.closest('button[data-decline="1"]');
           var u = e.target && e.target.closest('button[data-unverify="1"]');
