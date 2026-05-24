@@ -73,6 +73,28 @@
       border-radius: 4px;
     }
     .hr-mandatory-fit-banner[hidden] { display: none !important; }
+    .hr-mandatory-fit-section {
+      margin-top: 1.5rem;
+      padding-top: 1.25rem;
+      border-top: 2px solid rgba(212, 160, 0, 0.35);
+    }
+    .hr-mandatory-fit-section[hidden] { display: none !important; }
+    .hr-mandatory-fit-section__title {
+      margin: 0 0 0.35rem 0;
+      font-size: 1.125rem;
+      font-weight: 700;
+    }
+    .hr-mandatory-fit-section__lead {
+      margin: 0 0 0.85rem 0;
+      font-size: 0.9375rem;
+      color: var(--nhsuk-secondary-text);
+      max-width: 42rem;
+    }
+    .hr-mandatory-fit-section__reason {
+      margin: 0.35rem 0 0 0;
+      font-size: 0.8125rem;
+      color: var(--nhsuk-secondary-text);
+    }
     .hr-mandatory-fit-banner__text { margin: 0 0 0.5rem 0; font-size: 0.9375rem; }
     .hr-mandatory-fit-note {
       margin-top: 0.65rem;

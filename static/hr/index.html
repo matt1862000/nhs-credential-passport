@@ -8,7 +8,7 @@
 
   <title>Verify shared training &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
-  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260524-1">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260524-2">
   <link rel="stylesheet" href="/static/shared/training-add-form.css?v=20260526-2">
 
 </head>
@@ -93,7 +93,6 @@
         <div id="sessionMetaBlock" style="text-align:right; flex:1; min-width:12rem;"></div>
       </div>
       <h2 id="sessionViewTitle" style="margin:1rem 0 0.5rem 0; font-size:1.25rem;">E-learning in this set</h2>
-      <div id="mandatoryFitBanner" class="hr-mandatory-fit-banner" hidden role="note"></div>
       <div class="hr-segment" role="tablist" aria-label="Filter records in this set">
         <button type="button" role="tab" aria-selected="true" class="active" id="tab-items-new" data-tab="new">Awaiting decision</button>
         <button type="button" role="tab" aria-selected="false" id="tab-items-arch" data-tab="archived">Decided</button>
@@ -137,6 +136,12 @@
           <tbody id="itemsTbody"></tbody>
         </table>
       </div>
+
+      <section id="mandatoryFitSection" class="hr-mandatory-fit-section" hidden aria-labelledby="mandatoryFitSectionTitle">
+        <h3 id="mandatoryFitSectionTitle" class="hr-mandatory-fit-section__title">Requirement fit review</h3>
+        <p class="hr-mandatory-fit-section__lead">Separate from evidence verification above. Decide whether each training record satisfies a mandatory trust requirement.</p>
+        <div id="mandatoryFitSectionBody"></div>
+      </section>
     </div>
 
     <div id="hrCertModal" class="hr-modal" hidden role="dialog" aria-modal="true" aria-labelledby="hrCertModalTitle">
@@ -152,7 +157,7 @@
   <script src="/static/shared/auth.js?v=20260523-1"></script>
   <script src="/static/shared/nav-account.js?v=20260529-4"></script>
   <script>window.__HR_PAGE__ = 'inbox';</script>
-  <script src="/static/hr/hr-app.js?v=20260524-1"></script>
+  <script src="/static/hr/hr-app.js?v=20260524-2"></script>
 </body>
 </html>
 

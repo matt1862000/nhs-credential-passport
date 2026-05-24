@@ -27,70 +27,68 @@
       function show(el, on) { if (el) el.hidden = !on; }
       function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
 
-      function formatMandatoryFitNote(topics, ctx) {
-        if (!topics || !topics.length) return '';
-        var credId = ctx && ctx.credentialId ? String(ctx.credentialId) : '';
-        var doctorId = ctx && ctx.doctorUserId != null ? String(ctx.doctorUserId) : '';
-        var canAct = !!(credId && doctorId);
-        var items = topics.map(function (t) {
-          var line = esc(t.topic_name || 'Mandatory requirement');
-          if (t.reason) line += ' — ' + esc(t.reason);
-          var actions = '';
-          if (canAct) {
-            actions =
+      function renderMandatoryFitSection(payload) {
+        var section = document.getElementById('mandatoryFitSection');
+        var body = document.getElementById('mandatoryFitSectionBody');
+        if (!section || !body) return;
+        var doctorId = payload && payload.doctor_user_id;
+        var rows = [];
+        (payload && payload.items || []).forEach(function (it) {
+          (it.mandatory_needs_review || []).forEach(function (t) {
+            rows.push({ item: it, topic: t });
+          });
+        });
+        if (!rows.length || doctorId == null) {
+          section.hidden = true;
+          body.innerHTML = '';
+          return;
+        }
+        section.hidden = false;
+        var tableRows = rows
+          .map(function (row) {
+            var it = row.item;
+            var t = row.topic;
+            var credId = String(it.credential_id || '');
+            var moduleName = esc(it.module_name || credId || 'Training record');
+            var topicName = esc(t.topic_name || 'Mandatory requirement');
+            var reason = t.reason ? '<p class="hr-mandatory-fit-section__reason">' + esc(t.reason) + '</p>' : '';
+            return (
+              '<tr>' +
+              '<td>' + topicName + reason + '</td>' +
+              '<td>' + moduleName + '</td>' +
+              '<td>' +
               '<div class="hr-mandatory-fit-actions">' +
               '<button type="button" class="nhsuk-button hr-btn-small" data-fit-accept="1" data-cid="' +
               esc(credId) +
               '" data-doctor-id="' +
-              esc(doctorId) +
+              esc(String(doctorId)) +
               '" data-topic-id="' +
               esc(t.topic_id != null ? String(t.topic_id) : '') +
               '" data-topic-name="' +
               esc(t.topic_name || '') +
-              '">Counts for requirement</button>' +
+              '">Satisfies requirement</button>' +
               '<button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" data-fit-reject="1" data-cid="' +
               esc(credId) +
               '" data-doctor-id="' +
-              esc(doctorId) +
+              esc(String(doctorId)) +
               '" data-topic-id="' +
               esc(t.topic_id != null ? String(t.topic_id) : '') +
               '" data-topic-name="' +
               esc(t.topic_name || '') +
-              '">Does not count</button>' +
-              '</div>';
-          }
-          return '<li>' + line + actions + '</li>';
-        }).join('');
-        return (
-          '<div class="hr-mandatory-fit-note" role="note">' +
-          '<strong>Possible mandatory match — confirm requirement fit</strong>' +
-          '<p class="hr-mandatory-fit-note__hint">Verify the evidence separately. These buttons record whether this training satisfies the trust requirement.</p>' +
-          '<ul class="hr-mandatory-fit-note__list">' + items + '</ul>' +
-          '</div>'
-        );
-      }
-
-      function updateMandatoryFitBanner(payload) {
-        var banner = document.getElementById('mandatoryFitBanner');
-        if (!banner) return;
-        var summary = payload && payload.mandatory_needs_review_summary;
-        var topicCount = summary && Number(summary.topic_count || 0);
-        if (!topicCount) {
-          banner.hidden = true;
-          banner.innerHTML = '';
-          return;
-        }
-        var credCount = Number(summary.credential_count || 0);
-        var lead =
-          credCount === 1
-            ? 'One training record may only partly match a mandatory requirement.'
-            : String(credCount) + ' training records may only partly match mandatory requirements.';
-        banner.hidden = false;
-        banner.innerHTML =
-          '<p class="hr-mandatory-fit-banner__text"><strong>Requirement fit review</strong> — ' +
-          esc(lead) +
-          ' When verifying, confirm whether the training satisfies the trust requirement (not just whether the evidence is genuine).</p>' +
-          formatMandatoryFitNote(summary.topics || []);
+              '">Does not satisfy</button>' +
+              '</div>' +
+              '</td>' +
+              '</tr>'
+            );
+          })
+          .join('');
+        body.innerHTML =
+          '<div class="hr-table-wrap">' +
+          '<table class="hr-table" aria-label="Requirement fit review">' +
+          '<thead><tr><th scope="col">Trust requirement</th><th scope="col">Training record</th><th scope="col">Decision</th></tr></thead>' +
+          '<tbody>' +
+          tableRows +
+          '</tbody></table></div>';
       }
 
       function formatSharedAt(iso) {
@@ -1145,7 +1143,7 @@
             tail;
         }
         fillItemsModuleSelect(s);
-        updateMandatoryFitBanner(s);
+        renderMandatoryFitSection(s);
         var items = (s.items || []).filter(function (it) {
           var st = String(it.status || '').toUpperCase();
           var pending = st !== 'VERIFIED' && st !== 'DECLINED';
@@ -1283,16 +1281,11 @@
               modLabel +
               '</button>'
             : modLabel;
-          var fitNote = formatMandatoryFitNote(it.mandatory_needs_review, {
-            credentialId: it.credential_id,
-            doctorUserId: s.doctor_user_id,
-          });
           parts.push(
             '<tr>' +
               selectCell +
               '<td>' +
               modCell +
-              fitNote +
               priorNote +
               issuingLine +
               verifierTrustLine +
@@ -1326,9 +1319,10 @@
 
       function attachItemsRowHandler(fixedSessionId) {
         lastItemsFixedSessionId = fixedSessionId;
-        var tbody = document.getElementById('itemsTbody');
+        var sessionView = document.getElementById('sessionView');
+        if (!sessionView) return;
         var actionInFlight = false;
-        tbody.onclick = async function (e) {
+        sessionView.onclick = async function (e) {
           var viewCert = e.target && e.target.closest('button[data-view-cert="1"]');
           if (viewCert) {
             e.preventDefault();
@@ -1369,10 +1363,14 @@
               alert('Missing requirement-fit details.');
               return;
             }
+            var fitItem = (lastSessionPayload.items || []).find(function (x) {
+              return String(x.credential_id) === String(fitCid);
+            });
+            var moduleLabel = (fitItem && fitItem.module_name) || 'this training';
             var decision = fitAccept ? 'accepted' : 'rejected';
             var confirmMsg = fitAccept
-              ? 'Record that this training counts toward "' + topicName + '"?'
-              : 'Record that this training does NOT count toward "' + topicName + '"?';
+              ? 'Record that "' + moduleLabel + '" satisfies "' + topicName + '"?'
+              : 'Record that "' + moduleLabel + '" does not satisfy "' + topicName + '"?';
             if (!confirm(confirmMsg)) return;
             actionInFlight = true;
             fitBtn.disabled = true;
@@ -1392,7 +1390,7 @@
                 }
               );
               await refreshPayloadAfterAction(fixedSessionId);
-              updateMandatoryFitBanner(lastSessionPayload);
+              renderMandatoryFitSection(lastSessionPayload);
             } catch (err) {
               alert(err.message || err);
               fitBtn.disabled = false;
