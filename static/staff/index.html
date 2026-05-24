@@ -671,7 +671,7 @@
         <div class="staff-esr-needs-fix__head">
           <div>
             <p class="staff-esr-needs-fix__title" id="esrNeedsFixTitle">Training from ESR needs fixing</p>
-            <p class="staff-esr-needs-fix__lead">ESR did not include completion or expiry dates for these rows, so they could not be imported automatically. They stay in your list below until you dismiss them or add them manually.</p>
+            <p class="staff-esr-needs-fix__lead">ESR did not include completion or expiry dates for these rows, so they could not be imported automatically. Hide this notice to manage them in your list below.</p>
           </div>
           <div class="staff-esr-needs-fix__actions">
             <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnDismissEsrNeedsFix">Hide this notice</button>
@@ -1687,6 +1687,7 @@
       var state = loadEsrNeedsFixState();
       saveEsrNeedsFixState({ items: state.items, panelDismissed: true });
       renderEsrNeedsFixUi();
+      renderList();
     }
 
     function dismissEsrNeedsFixItem(itemId) {
@@ -1753,12 +1754,6 @@
       return '<button type="button" class="staff-card-remove" onclick="dismissEsrNeedsFixItem(' + jsAttrString(item.id) + ')" aria-label="Dismiss ' + escapeHtml(label) + '" title="Dismiss">&times;</button>';
     }
 
-    function esrNeedsFixItemActionsHtml(itemId) {
-      return '<div class="staff-esr-needs-fix__item-actions">'
-        + '<button type="button" class="nhsuk-button" onclick="startAddFromEsrNeedsFix(' + jsAttrString(itemId) + ')">Add manually</button>'
-        + '</div>';
-    }
-
     function needsFixCardHtml(item) {
       var title = item.module || ('ESR row ' + item.row);
       var meta = item.message || 'Missing required dates';
@@ -1820,17 +1815,13 @@
         var title = item.module || ('ESR row ' + item.row);
         var meta = item.message || 'Missing required dates';
         return '<li class="staff-esr-needs-fix__item">'
-          + '<div class="staff-esr-needs-fix__item-top">'
           + '<div class="staff-esr-needs-fix__item-main">'
           + '<strong>' + escapeHtml(title) + '</strong>'
           + '<span class="nhsuk-tag nhsuk-tag--expired staff-esr-needs-fix__tag">Needs fixing</span>'
           + '</div>'
-          + needsFixRemoveButtonHtml(item)
-          + '</div>'
           + '<p class="staff-esr-needs-fix__meta">' + escapeHtml(meta)
           + (item.row ? ' <span class="staff-esr-needs-fix__row">(CSV row ' + escapeHtml(String(item.row)) + ')</span>' : '')
           + '</p>'
-          + esrNeedsFixItemActionsHtml(item.id)
           + '</li>';
       }).join('');
     }
@@ -2741,14 +2732,19 @@
 
       const filtered = sortTrainingRecords(getFilteredList());
       const needsFixFiltered = getFilteredNeedsFixItems();
+      const esrNeedsFixState = loadEsrNeedsFixState();
       const statusFilter = (document.getElementById('filterStatus') || {}).value || '';
-      const showNeedsFixInList = needsFixFiltered.length > 0 && (!statusFilter || statusFilter === 'needs-fixing');
+      const showNeedsFixInList = needsFixFiltered.length > 0
+        && esrNeedsFixState.panelDismissed
+        && (!statusFilter || statusFilter === 'needs-fixing');
       var searchActive = !!getTrainingSearchQuery();
       const emptyMsg = list.length === 0 && needsFixFiltered.length === 0
         ? 'No training yet. Add one from the \"Add training\" tab.'
         : (statusFilter === 'needs-fixing' && needsFixFiltered.length === 0
           ? 'No ESR items need fixing. Rows with missing dates appear here after an ESR import.'
-          : (searchActive ? 'No training matches your search.' : 'No training matches the current filter.'));
+          : (statusFilter === 'needs-fixing' && needsFixFiltered.length > 0 && !esrNeedsFixState.panelDismissed
+            ? 'Hide the notice above to manage ESR items that need fixing here.'
+            : (searchActive ? 'No training matches your search.' : 'No training matches the current filter.')));
       const emptyHtml = '<p class="nhsuk-body-s">' + emptyMsg + '</p>';
 
       function cardHtml(c, withCheckbox) {
@@ -2855,7 +2851,9 @@
 
       var listHtml = '';
       if (statusFilter === 'needs-fixing') {
-        listHtml = needsFixFiltered.length === 0 ? emptyHtml : needsFixFiltered.map(needsFixCardHtml).join('');
+        listHtml = !showNeedsFixInList
+          ? emptyHtml
+          : needsFixFiltered.map(needsFixCardHtml).join('');
       } else if (filtered.length === 0 && !showNeedsFixInList) {
         listHtml = emptyHtml;
       } else {
