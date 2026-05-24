@@ -599,7 +599,16 @@
             <option value="">All modules</option>
           </select>
         </div>
+        <div class="nhsuk-form-group" style="align-self:flex-end;">
+          <div class="nhsuk-checkboxes">
+            <div class="nhsuk-checkboxes__item" style="margin-bottom:0;">
+              <input class="nhsuk-checkboxes__input" type="checkbox" id="showSuperseded" name="showSuperseded">
+              <label class="nhsuk-label nhsuk-checkboxes__label" for="showSuperseded">Show superseded copies</label>
+            </div>
+          </div>
+        </div>
       </div>
+      <p id="supersededHiddenNotice" class="nhsuk-hint" style="margin:0 0 1rem 0;" hidden></p>
       <div id="verifyAllHrBanner" class="staff-verify-all-banner" hidden>
         <div class="staff-verify-all-banner__text">
           <p class="staff-verify-all-banner__title">Send outstanding records to HR</p>
@@ -1336,6 +1345,8 @@
     var filterModuleEl = document.getElementById('filterModule');
     if (filterStatusEl) filterStatusEl.addEventListener('change', renderList);
     if (filterModuleEl) filterModuleEl.addEventListener('change', renderList);
+    var showSupersededEl = document.getElementById('showSuperseded');
+    if (showSupersededEl) showSupersededEl.addEventListener('change', renderList);
     function closeBulkActionsMenu() {
       var d = document.getElementById('bulkActionsMenu');
       if (d && d.open) d.open = false;
@@ -2002,12 +2013,12 @@
         return !other.revoked && String(other.supersedes_credential_id || '').trim() === cid;
       });
       if (linked) return true;
-      var module = (c.module_name || '').trim().toLowerCase();
+      var module = moduleDisplayKey(c);
       if (!module) return false;
       var myExp = String(c.expiry_date || '');
       return list.some(function (other) {
         if (other.credential_id === c.credential_id || other.revoked) return false;
-        if ((other.module_name || '').trim().toLowerCase() !== module) return false;
+        if (moduleDisplayKey(other) !== module) return false;
         if (statusClass(other.expiry_date, false) !== 'valid') return false;
         return String(other.expiry_date || '') > myExp;
       });
@@ -2017,21 +2028,73 @@
     function isRenewalCredential(list, c) {
       if (!c) return false;
       if (String(c.supersedes_credential_id || '').trim()) return true;
-      var module = (c.module_name || '').trim().toLowerCase();
+      var module = moduleDisplayKey(c);
       if (!module || statusClass(c.expiry_date, false) !== 'valid') return false;
       var myExp = String(c.expiry_date || '');
       var hasOlderSibling = list.some(function (other) {
         if (other.credential_id === c.credential_id || other.revoked) return false;
-        if ((other.module_name || '').trim().toLowerCase() !== module) return false;
+        if (moduleDisplayKey(other) !== module) return false;
         var st = statusClass(other.expiry_date, false);
         return (st === 'expiring' || st === 'expired') && String(other.expiry_date || '') < myExp;
       });
       if (!hasOlderSibling) return false;
       return !list.some(function (other) {
         if (other.credential_id === c.credential_id || other.revoked) return false;
-        if ((other.module_name || '').trim().toLowerCase() !== module) return false;
+        if (moduleDisplayKey(other) !== module) return false;
         return statusClass(other.expiry_date, false) === 'valid' && String(other.expiry_date || '') > myExp;
       });
+    }
+
+    function moduleDisplayKey(c) {
+      return displayModuleName(c && c.module_name).trim().toLowerCase();
+    }
+
+    function hrShareRank(credentialId) {
+      var v = (verifiedMap && verifiedMap[String(credentialId || '').trim()]) || null;
+      if (!v || !v.shared) return 0;
+      var st = String(v.status || '').toUpperCase().trim();
+      if (st === 'VERIFIED') return 4;
+      if (st === 'PENDING') return 3;
+      if (st === 'DECLINED') return 2;
+      return 1;
+    }
+
+    /** Hide older renewal cycles and duplicate import rows (same module + expiry). */
+    function isSupersededTrainingRecord(c, list) {
+      list = list || getStored();
+      if (!c || !c.credential_id || c.revoked) return false;
+      if (hasRenewalReplacement(list, c)) return true;
+      var module = moduleDisplayKey(c);
+      var exp = String(c.expiry_date || '');
+      if (!module || !exp) return false;
+      var peers = list.filter(function (other) {
+        return other && !other.revoked
+          && moduleDisplayKey(other) === module
+          && String(other.expiry_date || '') === exp;
+      });
+      if (peers.length <= 1) return false;
+      var best = peers[0];
+      peers.forEach(function (p) {
+        var pr = hrShareRank(p.credential_id);
+        var br = hrShareRank(best.credential_id);
+        if (pr > br || (pr === br && String(p.credential_id) < String(best.credential_id))) {
+          best = p;
+        }
+      });
+      return String(c.credential_id) !== String(best.credential_id);
+    }
+
+    function showSupersededTraining() {
+      var el = document.getElementById('showSuperseded');
+      return !!(el && el.checked);
+    }
+
+    function countSupersededHidden(list) {
+      list = list || getStored();
+      if (showSupersededTraining()) return 0;
+      return list.filter(function (c) {
+        return c && !c.revoked && isSupersededTrainingRecord(c, list);
+      }).length;
     }
 
     /** Same rules as auto-send: skip superseded rows and duplicate copies already sent. */
@@ -2039,12 +2102,12 @@
       list = list || getStored();
       if (!c || !c.credential_id || c.revoked) return false;
       if (hasRenewalReplacement(list, c)) return false;
-      var module = (c.module_name || '').trim().toLowerCase();
+      var module = moduleDisplayKey(c);
       var exp = String(c.expiry_date || '');
       if (module && exp) {
         var dupSent = list.some(function (other) {
           if (other.credential_id === c.credential_id || other.revoked) return false;
-          if ((other.module_name || '').trim().toLowerCase() !== module) return false;
+          if (moduleDisplayKey(other) !== module) return false;
           if (String(other.expiry_date || '') !== exp) return false;
           var ov = (verifiedMap && verifiedMap[String(other.credential_id).trim()]) || null;
           var ost = ov && ov.status ? String(ov.status).toUpperCase().trim() : '';
@@ -2075,15 +2138,19 @@
           }
         }
         if (moduleFilter && displayModuleName(c.module_name) !== moduleFilter) return false;
+        if (!showSupersededTraining() && isSupersededTrainingRecord(c, list)) return false;
         return true;
       });
     }
 
     function renderList() {
       const list = getStored();
-      const valid = list.filter(c => !c.revoked && statusClass(c.expiry_date, false) === 'valid').length;
-      const expiring = list.filter(c => !c.revoked && statusClass(c.expiry_date, false) === 'expiring').length;
-      const expired = list.filter(c => statusClass(c.expiry_date, c.revoked) === 'expired' && !c.revoked).length;
+      const visibleForStats = list.filter(function (c) {
+        return !c.revoked && (showSupersededTraining() || !isSupersededTrainingRecord(c, list));
+      });
+      const valid = visibleForStats.filter(c => statusClass(c.expiry_date, false) === 'valid').length;
+      const expiring = visibleForStats.filter(c => statusClass(c.expiry_date, false) === 'expiring').length;
+      const expired = visibleForStats.filter(c => statusClass(c.expiry_date, c.revoked) === 'expired').length;
 
       document.getElementById('countValid').textContent = valid;
       document.getElementById('countExpiring').textContent = expiring;
@@ -2091,10 +2158,24 @@
 
       var moduleSelect = document.getElementById('filterModule');
       if (moduleSelect && list.length > 0) {
-        var names = [...new Set(list.map(function (c) { return displayModuleName(c.module_name); }).filter(Boolean))].sort();
+        var names = [...new Set(visibleForStats.map(function (c) { return displayModuleName(c.module_name); }).filter(Boolean))].sort();
         var current = moduleSelect.value;
         moduleSelect.innerHTML = '<option value="">All modules</option>' + names.map(n => '<option value="' + n.replace(/"/g, '&quot;') + '">' + n + '</option>').join('');
         if (names.indexOf(current) !== -1) moduleSelect.value = current;
+      }
+
+      var hiddenSuperseded = countSupersededHidden(list);
+      var supersededNotice = document.getElementById('supersededHiddenNotice');
+      if (supersededNotice) {
+        if (hiddenSuperseded > 0) {
+          supersededNotice.hidden = false;
+          supersededNotice.textContent = hiddenSuperseded + ' older or duplicate '
+            + (hiddenSuperseded === 1 ? 'copy is' : 'copies are')
+            + ' hidden. Tick “Show superseded copies” to view them.';
+        } else {
+          supersededNotice.hidden = true;
+          supersededNotice.textContent = '';
+        }
       }
 
       const filtered = getFilteredList();
