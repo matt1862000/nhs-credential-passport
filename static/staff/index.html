@@ -604,7 +604,7 @@
       <div id="verifyAllHrBanner" class="staff-verify-all-banner" hidden>
         <div class="staff-verify-all-banner__text">
           <p class="staff-verify-all-banner__title">Send outstanding records to HR</p>
-          <p class="staff-verify-all-banner__desc">Some training was not sent to HR automatically (for example if your profile was incomplete when you added it). Send the rest in one go.</p>
+          <p class="staff-verify-all-banner__desc">Some records were not sent to HR automatically (for example if sending failed or they were added before automatic sending was enabled). Send them in one go.</p>
         </div>
         <button type="button" class="nhsuk-button" id="btnVerifyAllHrList" disabled title="Add training first">Send outstanding to HR</button>
       </div>
@@ -655,7 +655,7 @@
           </div>
         </div>
         <button type="submit" class="nhsuk-button">Add training</button>
-        <p class="nhsuk-hint" style="margin-top:0.75rem;">Sent to HR for verification automatically when your profile is complete.</p>
+        <p class="nhsuk-hint" style="margin-top:0.75rem;">Sent to HR for verification automatically when you add it.</p>
       </form>
       
     </section>
@@ -1013,7 +1013,7 @@
         step: 4,
         total: 4,
         message:
-          'Add your first training record using the <strong>Add training</strong> tab below — it is sent to HR automatically once your profile is complete.',
+          'Add your first training record using the <strong>Add training</strong> tab below — it is sent to HR automatically when you add it.',
         ctaLabel: 'Add training',
         ctaHref: '/static/staff/#add',
       });

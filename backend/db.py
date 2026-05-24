@@ -112,6 +112,7 @@ def init_db():
         _migrate_normalize_conversation_trust_labels(conn)
         _backfill_onboarding_completed(conn)
         _cleanup_orphan_cohort_members(conn)
+        conn.execute("PRAGMA journal_mode=WAL")
         conn.commit()
 
 
@@ -238,16 +239,19 @@ def share_credential_was_declined(
     doctor_user_id: int,
     credential_id: str,
     hr_trust: Optional[str] = None,
+    *,
+    conn: Optional[sqlite3.Connection] = None,
 ) -> bool:
     """True if this credential was previously DECLINED for the doctor (optionally at a trust)."""
     cid = (credential_id or "").strip()
     if not cid:
         return False
     trust = (hr_trust or "").strip().lower()
-    with sqlite3.connect(DB_PATH) as conn:
-        _ensure_share_tables(conn)
+
+    def _query(c: sqlite3.Connection) -> bool:
+        _ensure_share_tables(c)
         if trust:
-            row = conn.execute(
+            row = c.execute(
                 """
                 SELECT 1 FROM share_items i
                 JOIN share_sessions s ON s.id = i.session_id
@@ -259,7 +263,7 @@ def share_credential_was_declined(
                 (int(doctor_user_id), cid, trust),
             ).fetchone()
         else:
-            row = conn.execute(
+            row = c.execute(
                 """
                 SELECT 1 FROM share_items i
                 JOIN share_sessions s ON s.id = i.session_id
@@ -268,7 +272,12 @@ def share_credential_was_declined(
                 """,
                 (int(doctor_user_id), cid),
             ).fetchone()
-    return row is not None
+        return row is not None
+
+    if conn is not None:
+        return _query(conn)
+    with sqlite3.connect(DB_PATH, timeout=30) as own:
+        return _query(own)
 
 
 def _doctor_visible_to_trust(doctor_user_id: int, hr_trust: str, conn: sqlite3.Connection) -> bool:
@@ -1657,7 +1666,7 @@ def share_session_create(
                 )
             else:
                 resub = 1 if share_credential_was_declined(
-                    doctor_user_id, cid, target_trust
+                    doctor_user_id, cid, target_trust, conn=conn
                 ) else 0
                 conn.execute(
                     """
