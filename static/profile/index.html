@@ -151,6 +151,13 @@
                 <span class="profile-check-desc">When a clinician shares training for verification</span>
               </span>
             </label>
+            <label for="chkExpiryReminders">
+              <input type="checkbox" id="chkExpiryReminders" name="hr_expiry_reminders">
+              <span>
+                <span class="profile-check-title">Automatic expiry reminders</span>
+                <span class="profile-check-desc">Daily in-app messages to clinicians when mandatory training is expiring (30 days, 7 days, and after expiry)</span>
+              </span>
+            </label>
           </div>
         </div>
       </form>
@@ -385,9 +392,11 @@
           }
           document.getElementById('chkDigest').checked = !!data.digest_enabled;
           document.getElementById('chkInstant').checked = !!data.instant_enabled;
+          var expiryChk = document.getElementById('chkExpiryReminders');
+          if (expiryChk) expiryChk.checked = data.expiry_reminders_enabled !== false;
           var s = data.inbox_summary || {};
           document.getElementById('inboxSnapshot').textContent =
-            'Right now: ' + (s.pending_items || 0) + ' pending verification(s), ' +
+            'Right now: ' + (s.pending_items || 0) + ' shared training record(s) awaiting verification, ' +
             (s.unread_messages || 0) + ' unread message(s).';
         } catch (e) {
           var errEl = document.getElementById('hrEmailLoadError');
@@ -404,6 +413,9 @@
           body: JSON.stringify({
             digest_enabled: document.getElementById('chkDigest').checked,
             instant_enabled: document.getElementById('chkInstant').checked,
+            expiry_reminders_enabled: document.getElementById('chkExpiryReminders')
+              ? document.getElementById('chkExpiryReminders').checked
+              : true,
             notification_email: notifInp ? String(notifInp.value || '').trim() : '',
           }),
         });

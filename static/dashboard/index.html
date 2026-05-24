@@ -405,10 +405,14 @@
           }
           var data = await r.json();
           var sessions = data.sessions || [];
-          var total = 0;
-          sessions.forEach(function (s) {
-            total += Number(s.pending_count || 0);
-          });
+          var total = Number(data.actionable_pending_items);
+          if (!Number.isFinite(total) || data.actionable_pending_items == null) {
+            total = 0;
+            sessions.forEach(function (s) {
+              if (String(s.share_kind || 'review').toLowerCase() === 'portfolio') return;
+              total += Number(s.pending_count || 0);
+            });
+          }
           badge.textContent = String(total);
           badge.hidden = false;
           badge.setAttribute('data-empty', total === 0 ? '1' : '0');

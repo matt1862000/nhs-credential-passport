@@ -1187,7 +1187,13 @@ def _enrich_hr_share_payload(payload: dict, hr_trust: Optional[str]) -> dict:
 @router.get("/hr/shares")
 def hr_shares_list(request: Request, limit: int = 50):
     hr = require_premium_user(request)
-    return {"sessions": db.share_inbox_list(limit=limit, hr_trust=_hr_trust(hr))}
+    trust = _hr_trust(hr)
+    db.share_reconcile_stale_pending(trust)
+    summary = db.hr_inbox_activity_summary((hr.get("current_trust") or "").strip())
+    return {
+        "sessions": db.share_inbox_list(limit=limit, hr_trust=trust),
+        "actionable_pending_items": int(summary.get("pending_items") or 0),
+    }
 
 
 @router.get("/hr/email-preferences")
@@ -1196,8 +1202,9 @@ def hr_email_preferences_get(request: Request):
     prefs = db.hr_email_prefs_get(int(hr["id"]))
     if not prefs:
         raise HTTPException(status_code=400, detail="HR account required")
-    summary = db.hr_inbox_activity_summary((hr.get("current_trust") or "").strip())
     trust = (hr.get("current_trust") or "").strip()
+    db.share_reconcile_stale_pending(_hr_trust(hr))
+    summary = db.hr_inbox_activity_summary(trust)
     if trust:
         summary = {**summary, **compliance_snapshot.trust_mandatory_needs_review_summary(trust)}
     return {**prefs, "inbox_summary": summary}
@@ -4089,8 +4096,10 @@ async def internal_cron_hr_jobs(request: Request):
 
     digest_sent = hr_email.send_daily_digests()
     expiry_stats = hr_expiry_reminders.send_automatic_expiry_reminders()
+    stale_pending = db.share_reconcile_stale_pending()
     return {
         "ok": True,
         "digest_emails_sent": digest_sent,
         "expiry_reminders": expiry_stats,
+        "stale_pending_reconciled": stale_pending,
     }

@@ -1824,16 +1824,22 @@ def share_inbox_list(limit: int = 50, hr_trust: Optional[str] = None) -> list[di
                   COUNT(i.credential_id) as total_count,
                   SUM(CASE WHEN i.status = 'VERIFIED' THEN 1 ELSE 0 END) as verified_count,
                   SUM(CASE WHEN i.status = 'DECLINED' THEN 1 ELSE 0 END) as declined_count,
-                  SUM(CASE WHEN i.status = 'PENDING' THEN 1 ELSE 0 END) as pending_count,
+                  SUM(CASE WHEN UPPER(TRIM(i.status)) = 'PENDING' THEN 1 ELSE 0 END) as pending_count,
                   GROUP_CONCAT(DISTINCT NULLIF(TRIM(i.module_name), '')) as module_names_raw,
-                  GROUP_CONCAT(DISTINCT CASE WHEN i.status = 'PENDING'
+                  GROUP_CONCAT(DISTINCT CASE WHEN UPPER(TRIM(i.status)) = 'PENDING'
                     THEN NULLIF(TRIM(i.module_name), '') END) as pending_module_names_raw
                 FROM share_sessions s
                 JOIN users u ON u.id = s.doctor_user_id
                 LEFT JOIN share_items i ON i.session_id = s.id
                 WHERE LOWER(TRIM(COALESCE(s.target_trust, ''))) = ?
                 GROUP BY s.id
-                ORDER BY s.id DESC
+                ORDER BY
+                  CASE
+                    WHEN LOWER(TRIM(COALESCE(s.share_kind, 'review'))) != 'portfolio'
+                     AND SUM(CASE WHEN UPPER(TRIM(i.status)) = 'PENDING' THEN 1 ELSE 0 END) > 0
+                    THEN 0 ELSE 1
+                  END,
+                  s.id DESC
                 LIMIT ?
                 """,
                 (trust_filter, max(1, min(int(limit or 50), 200))),
@@ -2156,6 +2162,102 @@ def share_withdraw_pending_for_doctor(doctor_user_id: int, credential_ids: list[
         )
         conn.commit()
     return removed
+
+
+def _wallet_credential_ids(doctor_user_id: int) -> set[str]:
+    try:
+        wallet = json.loads(user_wallet_get(int(doctor_user_id)) or "[]")
+    except Exception:
+        wallet = []
+    if not isinstance(wallet, list):
+        return set()
+    return {
+        str(entry.get("credential_id") or "").strip()
+        for entry in wallet
+        if isinstance(entry, dict) and str(entry.get("credential_id") or "").strip()
+    }
+
+
+def share_reconcile_stale_pending(hr_trust: Optional[str] = None) -> dict[str, int]:
+    """
+    Drop PENDING review share items that HR can no longer action:
+    orphaned sessions (doctor account removed) or credentials no longer in the wallet.
+    """
+    trust_key = (hr_trust or "").strip().lower()
+    trust_clause = ""
+    params: list = []
+    if trust_key:
+        trust_clause = "AND LOWER(TRIM(COALESCE(s.target_trust, ''))) = ?"
+        params.append(trust_key)
+
+    removed_orphan_user = 0
+    removed_not_in_wallet = 0
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_share_tables(conn)
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute(
+            f"""
+            DELETE FROM share_items
+            WHERE (session_id, credential_id) IN (
+              SELECT i.session_id, i.credential_id
+              FROM share_items i
+              JOIN share_sessions s ON s.id = i.session_id
+              LEFT JOIN users u ON u.id = s.doctor_user_id
+              WHERE UPPER(TRIM(i.status)) = 'PENDING'
+                AND LOWER(TRIM(COALESCE(s.share_kind, 'review'))) = 'review'
+                {trust_clause}
+                AND u.id IS NULL
+            )
+            """,
+            params,
+        )
+        removed_orphan_user = int(cur.rowcount or 0)
+
+        rows = conn.execute(
+            f"""
+            SELECT i.session_id, i.credential_id, s.doctor_user_id
+            FROM share_items i
+            JOIN share_sessions s ON s.id = i.session_id
+            JOIN users u ON u.id = s.doctor_user_id
+            WHERE UPPER(TRIM(i.status)) = 'PENDING'
+              AND LOWER(TRIM(COALESCE(s.share_kind, 'review'))) = 'review'
+              {trust_clause}
+            """,
+            params,
+        ).fetchall()
+        wallet_cache: dict[int, set[str]] = {}
+        stale: list[tuple[int, str]] = []
+        for row in rows:
+            uid = int(row["doctor_user_id"])
+            cid = str(row["credential_id"] or "").strip()
+            if not cid:
+                continue
+            if uid not in wallet_cache:
+                wallet_cache[uid] = _wallet_credential_ids(uid)
+            if cid not in wallet_cache[uid]:
+                stale.append((int(row["session_id"]), cid))
+        for session_id, cid in stale:
+            cur = conn.execute(
+                """
+                DELETE FROM share_items
+                WHERE session_id = ? AND credential_id = ?
+                  AND UPPER(TRIM(status)) = 'PENDING'
+                """,
+                (session_id, cid),
+            )
+            removed_not_in_wallet += int(cur.rowcount or 0)
+
+        conn.execute(
+            """
+            DELETE FROM share_sessions
+            WHERE id NOT IN (SELECT session_id FROM share_items)
+            """
+        )
+        conn.commit()
+    return {
+        "removed_orphan_user": removed_orphan_user,
+        "removed_not_in_wallet": removed_not_in_wallet,
+    }
 
 
 def doctor_verified_map(doctor_user_id: int) -> dict:
@@ -4274,7 +4376,7 @@ def hr_premium_users_for_trust(trust: str) -> list[dict]:
 
 
 def hr_inbox_activity_summary(hr_trust: str) -> dict:
-    """Pending verification counts and unread clinician messages for one HR trust."""
+    """Actionable pending verification counts and unread clinician messages for one HR trust."""
     trust_key = (hr_trust or "").strip().lower()
     pending_sessions = 0
     pending_items = 0
@@ -4292,7 +4394,8 @@ def hr_inbox_activity_summary(hr_trust: str) -> dict:
             SELECT COUNT(DISTINCT s.id) AS sessions,
                    COUNT(i.credential_id) AS items
             FROM share_sessions s
-            JOIN share_items i ON i.session_id = s.id AND i.status = 'PENDING'
+            JOIN share_items i ON i.session_id = s.id AND UPPER(TRIM(i.status)) = 'PENDING'
+            JOIN users u ON u.id = s.doctor_user_id
             WHERE LOWER(TRIM(COALESCE(s.target_trust, ''))) = ?
               AND LOWER(TRIM(COALESCE(s.share_kind, 'review'))) = 'review'
             """,
