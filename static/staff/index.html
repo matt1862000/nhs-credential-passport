@@ -703,10 +703,14 @@
       </div>
       <form id="addForm">
         <input type="hidden" id="addRenewFromId" value="">
-        <input type="hidden" id="addPrefillModuleName" value="">
         <div class="nhsuk-form-group"><label class="nhsuk-label" for="staff_full_name">Your full name</label><input class="nhsuk-input" id="staff_full_name" type="text" name="staff_full_name" required placeholder="Jane Smith" autocomplete="name"></div>
         <div class="nhsuk-form-group"><label class="nhsuk-label" for="staff_identifier">GMC number</label><input class="nhsuk-input" id="staff_identifier" type="text" name="staff_identifier" inputmode="numeric" required placeholder="1234567" maxlength="11" autocomplete="off"></div>
         <div class="nhsuk-form-group"><label class="nhsuk-label" for="moduleSelect">Module</label><select class="nhsuk-select" name="module_code" id="moduleSelect"></select></div>
+        <div class="nhsuk-form-group" id="customModuleTitleGroup" hidden>
+          <label class="nhsuk-label" for="customModuleTitle">Competency title</label>
+          <input class="nhsuk-input" id="customModuleTitle" type="text" name="custom_module_title" maxlength="200" placeholder="e.g. Defibrillator Familiarisation" autocomplete="off" spellcheck="true">
+          <span class="nhsuk-hint">Enter the training or competency name as it appears on your certificate or in ESR.</span>
+        </div>
         <div class="nhsuk-form-group"><label class="nhsuk-label" for="completion_date">Completion date</label><input class="nhsuk-input" id="completion_date" type="date" name="completion_date" required></div>
         <div class="nhsuk-form-group"><label class="nhsuk-label" for="expiry_date">Expiry date</label><input class="nhsuk-input" id="expiry_date" type="date" name="expiry_date" required></div>
         <div class="nhsuk-form-group">
@@ -1773,17 +1777,29 @@
       return items.find(function (it) { return esrNeedsFixItemKey(it) === itemId; }) || null;
     }
 
+    function syncCustomModuleTitleField() {
+      var modSel = document.getElementById('moduleSelect');
+      var group = document.getElementById('customModuleTitleGroup');
+      var titleEl = document.getElementById('customModuleTitle');
+      if (!modSel || !group || !titleEl) return;
+      var isOther = modSel.value === 'non_cstf';
+      group.hidden = !isOther;
+      titleEl.required = isOther;
+      if (!isOther) titleEl.value = '';
+    }
+
     function applyEsrNeedsFixPrefillToAddForm(item) {
       var modSel = document.getElementById('moduleSelect');
-      var prefillEl = document.getElementById('addPrefillModuleName');
+      var titleEl = document.getElementById('customModuleTitle');
       var match = findModuleForEsrLabel(item.module);
       if (match && modSel) {
         modSel.value = match.code;
-        if (prefillEl) prefillEl.value = '';
+        if (titleEl) titleEl.value = '';
       } else if (modSel) {
         modSel.value = 'non_cstf';
-        if (prefillEl) prefillEl.value = item.module || '';
+        if (titleEl) titleEl.value = item.module || '';
       }
+      syncCustomModuleTitleField();
     }
 
     window.startAddFromEsrNeedsFix = function (itemId) {
@@ -2403,6 +2419,8 @@
       opt.textContent = m.name;
       sel.appendChild(opt);
     });
+    sel.addEventListener('change', syncCustomModuleTitleField);
+    syncCustomModuleTitleField();
 
     function statusClass(expiryDate, revoked) {
       if (revoked) return 'revoked';
@@ -2969,10 +2987,11 @@
     function clearRenewal() {
       var hid = document.getElementById('addRenewFromId');
       var panel = document.getElementById('addRenewPanel');
-      var prefillEl = document.getElementById('addPrefillModuleName');
+      var titleEl = document.getElementById('customModuleTitle');
       if (hid) hid.value = '';
       if (panel) panel.hidden = true;
-      if (prefillEl) prefillEl.value = '';
+      if (titleEl) titleEl.value = '';
+      syncCustomModuleTitleField();
       var submitBtn = document.querySelector('#addForm button[type="submit"]');
       if (submitBtn) submitBtn.textContent = 'Add training';
     }
@@ -2984,8 +3003,16 @@
       document.getElementById('addRenewModuleLabel').textContent = c.module_name || 'training';
       document.getElementById('addRenewPanel').hidden = false;
       var modSel = document.getElementById('moduleSelect');
+      var titleEl = document.getElementById('customModuleTitle');
       var match = MODULES.find(function (m) { return m.name === c.module_name; });
-      if (match && modSel) modSel.value = match.code;
+      if (match && modSel) {
+        modSel.value = match.code;
+        if (titleEl) titleEl.value = '';
+      } else if (modSel) {
+        modSel.value = 'non_cstf';
+        if (titleEl) titleEl.value = c.module_name || '';
+      }
+      syncCustomModuleTitleField();
       var today = new Date();
       var comp = today.toISOString().slice(0, 10);
       var exp = new Date(today);
@@ -3155,10 +3182,17 @@
       setAddBusy(true);
       const fd = new FormData(e.target);
       const module_code = fd.get('module_code');
-      var prefillName = (document.getElementById('addPrefillModuleName') || {}).value || '';
-      const module_name = (prefillName && String(prefillName).trim())
-        ? String(prefillName).trim()
-        : (MODULES.find(m => m.code === module_code)?.name || module_code);
+      var module_name;
+      if (module_code === 'non_cstf') {
+        module_name = String(fd.get('custom_module_title') || '').trim();
+        if (!module_name) {
+          alert('Enter a title for this competency.');
+          setAddBusy(false);
+          return;
+        }
+      } else {
+        module_name = MODULES.find(m => m.code === module_code)?.name || module_code;
+      }
       const body = { records: [{ staff_full_name: fd.get('staff_full_name'), staff_identifier: fd.get('staff_identifier'), module_code, module_name, completion_date: fd.get('completion_date'), expiry_date: fd.get('expiry_date'), issuing_trust_ods_code: fd.get('issuing_trust_ods_code'), issuing_trust_name: fd.get('issuing_trust_name') }] };
       const certInput = document.getElementById('certificate_upload');
       if (certInput.files && certInput.files[0]) {
@@ -3218,6 +3252,7 @@
         setStored(list);
         clearRenewal();
         e.target.reset();
+        syncCustomModuleTitleField();
         lastAutoOdsSuggested = { name: '', ods: '' };
         void applyProfileToAddForm();
         pruneEsrNeedsFixItems();
