@@ -208,6 +208,92 @@
       }
     },
 
+    async changePassword(currentPassword, newPassword) {
+      if (!this.user) return;
+      var r = await fetch('/api/auth/change-password', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          current_password: currentPassword,
+          new_password: newPassword,
+        }),
+      });
+      var parsed = await readJsonOrText(r);
+      if (!r.ok) {
+        var d = parsed.data && parsed.data.detail;
+        throw new Error(typeof d === 'string' ? d : 'Could not change password');
+      }
+      await this.refresh();
+    },
+
+    mustChangePassword() {
+      return !!(this.user && this.user.must_change_password);
+    },
+
+    /**
+     * After sign-in or on protected pages: password change, then profile onboarding.
+     */
+    hasCompletedOnboarding() {
+      return !!(this.user && this.user.onboarding_completed);
+    },
+
+    needsOnboarding() {
+      return !!(this.user && !this.user.premium && !this.hasCompletedOnboarding());
+    },
+
+    postLoginPath(fallback) {
+      if (!this.user) return (fallback || '/static/dashboard/');
+      if (this.user.premium) return (fallback || '/static/dashboard/');
+      if (this.mustChangePassword()) return '/static/auth/change-password.html';
+      if (this.needsOnboarding()) return '/static/auth/onboarding.html';
+      if (!this.isProfileComplete()) return '/static/auth/onboarding.html';
+      return (fallback || '/static/dashboard/');
+    },
+
+    redirectPostLogin(fallback) {
+      var p = new URLSearchParams(window.location.search);
+      var next = p.get('next');
+      var dest = this.postLoginPath(fallback);
+      if (
+        next &&
+        /^\/(static\/)?[a-zA-Z0-9_\-/?=&%.#]*$/.test(next) &&
+        !this.mustChangePassword() &&
+        (this.user.premium || this.isProfileComplete())
+      ) {
+        window.location.replace(next);
+        return;
+      }
+      window.location.replace(dest);
+    },
+
+    requirePasswordChanged(loginUrl) {
+      if (!this.user) {
+        this.requireAuth(loginUrl);
+        return false;
+      }
+      if (this.user.premium || !this.mustChangePassword()) return true;
+      var path = window.location.pathname || '';
+      if (path.indexOf('/static/auth/change-password') >= 0) return true;
+      window.location.replace('/static/auth/change-password.html');
+      return false;
+    },
+
+    requireOnboardingComplete(loginUrl) {
+      if (!this.requirePasswordChanged(loginUrl)) return false;
+      if (!this.user || this.user.premium || !this.needsOnboarding()) return true;
+      if (this.isProfileComplete()) return true;
+      var path = window.location.pathname || '';
+      if (
+        path.indexOf('/static/auth/onboarding') >= 0 ||
+        path.indexOf('/static/profile/') === 0
+      ) {
+        return true;
+      }
+      window.location.replace('/static/auth/onboarding.html');
+      return false;
+    },
+
     async updateProfile(payload) {
       if (!this.user) return;
       var r = await fetch('/api/me/profile', {
@@ -224,6 +310,17 @@
       await this.refresh();
     },
 
+    /** Persist onboarding_completed when HR already pre-filled mandatory profile fields. */
+    async syncOnboardingIfProfileComplete() {
+      if (!this.user || this.user.premium) return;
+      if (!this.isProfileComplete() || this.hasCompletedOnboarding()) return;
+      await this.updateProfile({
+        display_name: String(this.user.display_name || '').trim(),
+        gmc_number: String(this.user.gmc_number || '').trim(),
+        current_trust: String(this.user.current_trust || '').trim(),
+      });
+    },
+
     /**
      * Force redirect to /static/auth/ if not authenticated. Returns true if
      * authenticated, false otherwise.
@@ -234,6 +331,29 @@
       var next = encodeURIComponent(path);
       window.location.replace((loginUrl || '/static/auth/') + '?next=' + next);
       return false;
+    },
+
+    /** Preferred label for UI greetings (profile full name, else HR demo label, else email local-part). */
+    displayName(user) {
+      var u = user || this.user;
+      if (!u) return '';
+      var name = String(u.display_name || '').trim();
+      if (name) return name;
+      var email = String(u.email || '').trim().toLowerCase();
+      if (u.premium && email) {
+        var local = email.indexOf('@') > 0 ? email.split('@')[0] : email;
+        if (local === 'sheffieldhr') return 'Sheffield HR';
+        if (local === 'rotherhamhr') return 'Rotherham HR';
+      }
+      if (email && email.indexOf('@') > 0) return email.split('@')[0];
+      return email;
+    },
+
+    /** Human-readable trust name for UI copy (not raw ODS all-caps). */
+    trustDisplayName(user) {
+      var u = user || this.user;
+      if (!u) return '';
+      return String(u.current_trust_display || u.current_trust || '').trim();
     },
 
     /** Full name, GMC, current trust — required for standard (non-premium) accounts. */
@@ -252,11 +372,12 @@
      * Premium (e.g. HR) accounts are exempt. Profile and auth pages are exempt.
      */
     requireProfileComplete() {
+      if (!this.requireOnboardingComplete()) return false;
       if (!this.user || this.user.premium) return true;
       if (this.isProfileComplete()) return true;
       var path = window.location.pathname || '';
       if (path.indexOf('/static/profile/') === 0 || path.indexOf('/static/auth/') === 0) return true;
-      window.location.replace('/static/profile/?required=1');
+      window.location.replace('/static/auth/onboarding.html');
       return false;
     },
 
