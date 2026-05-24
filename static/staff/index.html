@@ -465,6 +465,55 @@
     .esr-map-conf { font-size: 0.75rem; color: var(--nhsuk-secondary-text); white-space: nowrap; }
     .esr-map-conf--auto { color: #00703c; }
     .esr-map-conf--suggested { color: #856404; }
+    .esr-map-summary {
+      margin: 0 0 0.85rem 0; padding: 0.65rem 0.85rem; font-size: 0.875rem;
+      background: #ecfdf3; border-left: 4px solid #00703c; border-radius: 0 2px 2px 0;
+    }
+    .esr-map-summary--warn {
+      background: #fff8e8; border-left-color: #856404;
+    }
+    .esr-map-summary--error {
+      background: #fef7f7; border-left-color: var(--nhsuk-error);
+    }
+    .esr-map-section { margin: 0 0 0.75rem 0; }
+    .esr-map-section__title {
+      margin: 0 0 0.4rem 0; font-size: 0.9375rem; font-weight: 700;
+    }
+    .esr-map-mapped {
+      margin: 0; padding: 0; list-style: none; border: 1px solid var(--nhsuk-border);
+      border-radius: 4px; overflow: hidden;
+    }
+    .esr-map-mapped li {
+      display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+      gap: 0.5rem; padding: 0.45rem 0.65rem; border-bottom: 1px solid var(--nhsuk-border);
+      font-size: 0.875rem; align-items: center;
+    }
+    .esr-map-mapped li:last-child { border-bottom: none; }
+    .esr-map-mapped li:nth-child(even) { background: #fafafa; }
+    .esr-map-mapped__csv { color: var(--nhsuk-secondary-text); }
+    .esr-map-mapped__field { font-weight: 600; }
+    .esr-map-mapped li.esr-map-mapped--edit { grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); }
+    .esr-map-mapped li.esr-map-mapped--edit select { width: 100%; font-size: 0.875rem; }
+    .esr-map-details {
+      margin: 0 0 0.5rem 0; border: 1px solid var(--nhsuk-border); border-radius: 4px;
+      background: #fafafa;
+    }
+    .esr-map-details summary {
+      padding: 0.55rem 0.75rem; cursor: pointer; font-size: 0.875rem; font-weight: 600;
+      list-style: none;
+    }
+    .esr-map-details summary::-webkit-details-marker { display: none; }
+    .esr-map-details summary::before {
+      content: '▸ '; color: var(--nhsuk-link); font-weight: 700;
+    }
+    .esr-map-details[open] summary::before { content: '▾ '; }
+    .esr-map-details__body { padding: 0 0.75rem 0.75rem; font-size: 0.875rem; }
+    .esr-map-unused-chips { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0; padding: 0; list-style: none; }
+    .esr-map-unused-chips li {
+      padding: 0.2rem 0.45rem; background: #fff; border: 1px solid var(--nhsuk-border);
+      border-radius: 3px; font-size: 0.8125rem; color: var(--nhsuk-secondary-text);
+    }
+    .esr-map-advanced .esr-map-table { margin-top: 0.35rem; }
     .staff-renew-panel {
       margin-bottom: 1rem; padding: 0.85rem 1rem;
       background: #f0f7fb; border: 1px solid var(--nhsuk-border); border-left: 4px solid var(--nhsuk-link);
@@ -659,7 +708,7 @@
         </div>
 
         <div id="esrStep3" class="esr-wizard-panel" hidden>
-          <p class="nhsuk-hint" style="margin-top:0;">Confirm how CSV columns map to training fields. Adjust anything that looks wrong, then continue.</p>
+          <p class="nhsuk-hint" style="margin-top:0;">We matched your CSV columns automatically. Check the summary below, then continue — you only need to change something if a field looks wrong.</p>
           <div id="esrMappingWrap"></div>
         </div>
 
@@ -1474,6 +1523,25 @@
       wrap.innerHTML = html;
     }
 
+    function esrMapLabel(canonical) {
+      if (!canonical) return '';
+      for (var i = 0; i < ESR_MAP_TARGETS.length; i++) {
+        if (ESR_MAP_TARGETS[i].value === canonical) return ESR_MAP_TARGETS[i].label;
+      }
+      return canonical;
+    }
+
+    function esrMapSelectHtml(col, idx, selectedCanonical, extraClass) {
+      var cls = 'nhsuk-select esr-map-select' + (extraClass ? ' ' + extraClass : '');
+      var html = '<select class="' + cls + '" data-map-idx="' + idx + '" aria-label="Map ' + escapeHtml(col.source_header) + '">';
+      ESR_MAP_TARGETS.forEach(function (opt) {
+        var sel = (selectedCanonical || '') === opt.value ? ' selected' : '';
+        html += '<option value="' + escapeHtml(opt.value) + '"' + sel + '>' + escapeHtml(opt.label) + '</option>';
+      });
+      html += '</select>';
+      return html;
+    }
+
     function renderEsrMappingPanel(data) {
       var wrap = document.getElementById('esrMappingWrap');
       if (!wrap) return;
@@ -1482,33 +1550,94 @@
         wrap.innerHTML = '<p style="color:var(--nhsuk-error);">' + escapeHtml(data.fatal_error) + '</p>';
         return;
       }
+
+      var columns = data.columns || [];
+      var mapped = [];
+      var unused = [];
+      var review = [];
+      columns.forEach(function (col, idx) {
+        var entry = { col: col, idx: idx };
+        if (col.canonical) {
+          mapped.push(entry);
+          if (col.confidence === 'suggested') review.push(entry);
+        } else {
+          unused.push(entry);
+        }
+      });
+
       var html = '';
       if (data.trust_format && data.trust_format.label) {
         html += '<p class="esr-map-trust"><strong>Detected format:</strong> ' + escapeHtml(data.trust_format.label) + '</p>';
       }
-      if (data.notes && data.notes.length) {
-        html += '<ul class="esr-map-notes">';
-        data.notes.forEach(function (n) { html += '<li>' + escapeHtml(n) + '</li>'; });
-        html += '</ul>';
-      }
+
+      var summaryCls = 'esr-map-summary';
+      var summaryText = '';
       if (data.missing_required && data.missing_required.length) {
-        html += '<p style="color:var(--nhsuk-error);">Missing required fields: ' +
-          escapeHtml(data.missing_required.join(', ')) + '. Adjust mapping below.</p>';
+        summaryCls += ' esr-map-summary--error';
+        summaryText = 'Missing required fields: ' + escapeHtml(data.missing_required.join(', '))
+          + '. Expand <strong>Advanced column mapping</strong> below to fix them.';
+      } else if (review.length > 0) {
+        summaryCls += ' esr-map-summary--warn';
+        summaryText = '<strong>' + mapped.length + ' fields mapped</strong>'
+          + (unused.length ? ' · ' + unused.length + ' column' + (unused.length === 1 ? '' : 's') + ' ignored' : '')
+          + ' · Please confirm ' + review.length + ' suggested mapping' + (review.length === 1 ? '' : 's') + ' below.';
+      } else if (mapped.length) {
+        summaryText = '<strong>' + mapped.length + ' fields mapped automatically</strong>'
+          + (unused.length ? ' · ' + unused.length + ' other column' + (unused.length === 1 ? '' : 's') + ' will be ignored' : '')
+          + '. You can continue unless something looks wrong.';
+      } else {
+        summaryCls += ' esr-map-summary--warn';
+        summaryText = 'No columns were mapped automatically. Expand <strong>Advanced column mapping</strong> to set them manually.';
       }
-      html += '<table class="esr-map-table" aria-label="Column mapping"><thead><tr>' +
-        '<th>CSV column</th><th>Maps to</th><th>Match</th></tr></thead><tbody>';
-      (data.columns || []).forEach(function (col, idx) {
-        var conf = col.confidence || 'unmapped';
-        var confCls = conf === 'auto' ? ' esr-map-conf--auto' : (conf === 'suggested' ? ' esr-map-conf--suggested' : '');
-        html += '<tr><td>' + escapeHtml(col.source_header) + '</td><td>' +
-          '<select class="nhsuk-select esr-map-select" data-map-idx="' + idx + '" aria-label="Map ' + escapeHtml(col.source_header) + '">';
-        ESR_MAP_TARGETS.forEach(function (opt) {
-          var sel = (col.canonical || '') === opt.value ? ' selected' : '';
-          html += '<option value="' + escapeHtml(opt.value) + '"' + sel + '>' + escapeHtml(opt.label) + '</option>';
+      html += '<p class="' + summaryCls + '">' + summaryText + '</p>';
+
+      if (data.notes && data.notes.length) {
+        html += '<details class="esr-map-details"><summary>About this export (' + data.notes.length + ' note'
+          + (data.notes.length === 1 ? '' : 's') + ')</summary><div class="esr-map-details__body"><ul class="esr-map-notes">';
+        data.notes.forEach(function (n) { html += '<li>' + escapeHtml(n) + '</li>'; });
+        html += '</ul></div></details>';
+      }
+
+      if (mapped.length) {
+        html += '<div class="esr-map-section"><h4 class="esr-map-section__title">Mapped fields</h4><ul class="esr-map-mapped">';
+        mapped.forEach(function (entry) {
+          var col = entry.col;
+          html += '<li><span class="esr-map-mapped__csv">' + escapeHtml(col.source_header) + '</span>';
+          html += '<span class="esr-map-mapped__field">' + escapeHtml(col.canonical_label || esrMapLabel(col.canonical)) + '</span></li>';
         });
-        html += '</select></td><td class="esr-map-conf' + confCls + '">' + escapeHtml(conf) + '</td></tr>';
+        html += '</ul></div>';
+      }
+
+      if (review.length) {
+        html += '<div class="esr-map-section"><h4 class="esr-map-section__title">Confirm suggested mappings</h4><ul class="esr-map-mapped">';
+        review.forEach(function (entry) {
+          var col = entry.col;
+          var idx = entry.idx;
+          html += '<li class="esr-map-mapped--edit"><span class="esr-map-mapped__csv">' + escapeHtml(col.source_header) + '</span>';
+          html += esrMapSelectHtml(col, idx, col.canonical) + '</li>';
+        });
+        html += '</ul></div>';
+      }
+
+      if (unused.length) {
+        html += '<details class="esr-map-details"><summary>Unused columns (' + unused.length + ') — ignored</summary>';
+        html += '<div class="esr-map-details__body"><p class="nhsuk-hint" style="margin:0 0 0.5rem 0;">These CSV columns are not needed for import. Expand <strong>Advanced column mapping</strong> only if you want to map one.</p>';
+        html += '<ul class="esr-map-unused-chips">';
+        unused.forEach(function (entry) {
+          html += '<li>' + escapeHtml(entry.col.source_header) + '</li>';
+        });
+        html += '</ul></div></details>';
+      }
+
+      html += '<details class="esr-map-details esr-map-advanced"><summary>Advanced column mapping</summary><div class="esr-map-details__body">';
+      html += '<p class="nhsuk-hint" style="margin:0 0 0.5rem 0;">Change how any CSV column maps to a training field.</p>';
+      html += '<table class="esr-map-table" aria-label="Advanced column mapping"><thead><tr>';
+      html += '<th>CSV column</th><th>Maps to</th></tr></thead><tbody>';
+      columns.forEach(function (col, idx) {
+        html += '<tr><td>' + escapeHtml(col.source_header) + '</td><td>' + esrMapSelectHtml(col, idx, col.canonical, 'esr-map-select-advanced') + '</td></tr>';
       });
-      html += '</tbody></table>';
+      html += '</tbody></table></div></details>';
+
       wrap.innerHTML = html;
     }
 
@@ -1516,12 +1645,26 @@
       var out = {};
       var data = _esrAnalyzeData;
       if (!data || !data.columns) return out;
-      document.querySelectorAll('.esr-map-select').forEach(function (sel) {
+      if (data.detected_mapping) {
+        Object.keys(data.detected_mapping).forEach(function (header) {
+          out[header] = data.detected_mapping[header];
+        });
+      }
+      data.columns.forEach(function (col) {
+        if (!(col.source_header in out)) out[col.source_header] = col.canonical || '';
+      });
+      document.querySelectorAll('.esr-map-select:not(.esr-map-select-advanced)').forEach(function (sel) {
         var idx = parseInt(sel.getAttribute('data-map-idx'), 10);
         if (isNaN(idx) || !data.columns[idx]) return;
-        var header = data.columns[idx].source_header;
-        out[header] = sel.value || '';
+        out[data.columns[idx].source_header] = sel.value || '';
       });
+      if (document.querySelector('.esr-map-advanced[open]')) {
+        document.querySelectorAll('.esr-map-select-advanced').forEach(function (sel) {
+          var idx = parseInt(sel.getAttribute('data-map-idx'), 10);
+          if (isNaN(idx) || !data.columns[idx]) return;
+          out[data.columns[idx].source_header] = sel.value || '';
+        });
+      }
       return out;
     }
 
