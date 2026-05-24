@@ -292,6 +292,55 @@ def doctor_compliance_snapshot(doctor_user_id: int, trust_name: str) -> dict:
     }
 
 
+def mandatory_needs_review_by_credential(doctor_user_id: int, trust_name: str) -> dict[str, list[dict]]:
+    """Map credential_id → mandatory topics where requirement fit is uncertain (partial match)."""
+    snap = doctor_compliance_snapshot(int(doctor_user_id), trust_name)
+    out: dict[str, list[dict]] = {}
+    for tr in snap.get("topics") or []:
+        if tr.get("status_label") != "Needs review":
+            continue
+        cid = tr.get("credential_id")
+        if not cid:
+            continue
+        key = str(cid)
+        out.setdefault(key, []).append(
+            {
+                "topic_name": tr.get("topic_name"),
+                "reason": tr.get("reason"),
+                "module_name": tr.get("module_name"),
+            }
+        )
+    return out
+
+
+def trust_mandatory_needs_review_summary(hr_trust: str) -> dict[str, int]:
+    """Trust-wide counts for mandatory topics needing HR requirement-fit judgement."""
+    trust = (hr_trust or "").strip()
+    if not trust:
+        return {"clinicians_needing_review": 0, "mandatory_topics_needing_review": 0}
+    clinicians = 0
+    topic_items = 0
+    with __import__("sqlite3").connect(db.DB_PATH) as conn:
+        conn.row_factory = __import__("sqlite3").Row
+        rows = conn.execute(
+            """
+            SELECT id FROM users
+            WHERE premium = 0 AND LOWER(TRIM(COALESCE(current_trust, ''))) = ?
+            """,
+            (trust.lower(),),
+        ).fetchall()
+    for r in rows:
+        summary = (doctor_compliance_snapshot(int(r["id"]), trust).get("summary") or {})
+        n = int(summary.get("needs_review") or 0)
+        if n > 0:
+            clinicians += 1
+            topic_items += n
+    return {
+        "clinicians_needing_review": clinicians,
+        "mandatory_topics_needing_review": topic_items,
+    }
+
+
 def cohort_compliance_snapshot(cohort_id: int, hr_trust: str) -> Optional[dict]:
     """Aggregate mandatory compliance for all members of a cohort."""
     cohort = db.cohort_get(int(cohort_id), hr_trust)
@@ -317,11 +366,15 @@ def cohort_compliance_snapshot(cohort_id: int, hr_trust: str) -> Optional[dict]:
     fully_compliant = 0
     has_gaps = 0
     expiring_any = 0
+    needs_review_any = 0
 
     for m in members:
         snap = doctor_compliance_snapshot(int(m["user_id"]), trust)
         summary = snap.get("summary") or {}
         gaps = int(summary.get("gap") or 0) + int(summary.get("expiring") or 0)
+        needs_review_n = int(summary.get("needs_review") or 0)
+        if needs_review_n > 0:
+            needs_review_any += 1
         if gaps == 0 and summary.get("total_topics", 0) > 0:
             fully_compliant += 1
         elif gaps > 0:
@@ -366,6 +419,7 @@ def cohort_compliance_snapshot(cohort_id: int, hr_trust: str) -> Optional[dict]:
             "fully_compliant": fully_compliant,
             "has_gaps": has_gaps,
             "expiring_any": expiring_any,
+            "needs_review_any": needs_review_any,
             "total_members": len(members),
         },
         "topics": list(topic_agg.values()),
@@ -431,12 +485,13 @@ def cohort_compliance_csv(cohort_id: int, hr_trust: str) -> Optional[tuple[str, 
     topic_names = [(t.get("topic_name") or "Topic").strip() for t in topics]
     buf = io.StringIO()
     writer = csv.writer(buf)
-    header = ["Name", "Email", "GMC"] + topic_names + ["Gaps", "Expiring topics", "Fully compliant"]
+    header = ["Name", "Email", "GMC"] + topic_names + ["Needs review", "Gaps", "Expiring topics", "Fully compliant"]
     writer.writerow(header)
     for row in matrix.get("rows") or []:
         summary = row.get("summary") or {}
         gaps = int(summary.get("gap") or 0)
         expiring = int(summary.get("expiring") or 0)
+        needs_review = int(summary.get("needs_review") or 0)
         fully = gaps == 0 and expiring == 0 and (summary.get("total_topics") or 0) > 0
         statuses = row.get("topic_statuses") or {}
         cells = [
@@ -446,7 +501,7 @@ def cohort_compliance_csv(cohort_id: int, hr_trust: str) -> Optional[tuple[str, 
         ]
         for t in topics:
             cells.append(statuses.get(_topic_row_key(t), "No match"))
-        cells.extend([gaps, expiring, "yes" if fully else "no"])
+        cells.extend([needs_review, gaps, expiring, "yes" if fully else "no"])
         writer.writerow(cells)
     slug = re.sub(r"[^a-z0-9]+", "-", (matrix.get("cohort_name") or "cohort").lower()).strip("-") or "cohort"
     filename = f"{slug}-mandatory-compliance.csv"

@@ -188,12 +188,6 @@
         return '';
       }
 
-      function confidenceHint(topic) {
-        if (!topic.confidence_label || topic.match_type === 'none') return '';
-        var label = topic.confidence_label.charAt(0).toUpperCase() + topic.confidence_label.slice(1);
-        return '<span class="req-badge">' + esc(label + ' confidence') + '</span>';
-      }
-
       function completeTrainingCell(topic) {
         var url = (topic.resource_url || '').trim();
         var ch = (topic.delivery_channel || '').toLowerCase();
@@ -238,7 +232,6 @@
           var metaHtml =
             '<div class="req-meta">' +
             portabilityBadge(t.portability) +
-            confidenceHint(t) +
             '</div>';
           return (
             '<tr>' +

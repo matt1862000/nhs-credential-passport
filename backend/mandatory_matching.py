@@ -186,22 +186,24 @@ def _build_reason(
     expiry_bucket: str,
     expiry_date: Optional[str],
     partial_hint: Optional[str],
+    module_display: Optional[str] = None,
 ) -> str:
     if match_type == "none":
-        return "No matching training record found"
+        return "No matching training record found in your wallet"
     if expiry_bucket == "expired":
         exp = (expiry_date or "")[:10]
-        return f"Matching record found but expired on {exp}" if exp else "Matching record found but expired"
+        return f"Record found but expired on {exp}" if exp else "Record found but expired"
     if match_type == "exact":
-        label = detail or topic_name
-        return f"Exact match: {label}"
+        label = module_display or detail or topic_name
+        return f"Matched your training record: {label}"
     if match_type == "alias":
-        return f"Matched by alias: {detail} → {topic_name}"
+        record = detail or module_display or "your record"
+        return f"Equivalent training recognised: {record}"
     if partial_hint:
-        return f"Partial match found ({detail}); {partial_hint}" if detail else partial_hint
+        return partial_hint if not detail else f"Possible match ({detail}). {partial_hint}"
     if detail:
-        return f"Partial match found ({detail}); manual review recommended"
-    return "Partial match found; manual review recommended"
+        return f"Possible match ({detail}). Check with HR if unsure."
+    return "Possible match. Check with HR if unsure."
 
 
 def _status_label(match_type: str, expiry_bucket: str) -> str:
@@ -289,6 +291,7 @@ def match_topic_to_wallet(
             expiry_bucket=expiry_bucket,
             expiry_date=expiry_date,
             partial_hint=hints.get("partial_hint"),
+            module_display=pl.get("module_name_display") or pl.get("module_name"),
         ),
         "portability": portability_from_category(category),
         "credential_id": pl.get("credential_id"),

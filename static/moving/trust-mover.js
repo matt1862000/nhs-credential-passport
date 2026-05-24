@@ -86,12 +86,6 @@
             (t.hr_status ? ' · HR ' + escapeHtml(t.hr_status) : '') +
             '</span>';
         }
-        if (t.confidence_label && t.match_type !== 'none') {
-          detail +=
-            '<br><span class="moving-muted">' +
-            escapeHtml(t.confidence_label.charAt(0).toUpperCase() + t.confidence_label.slice(1)) +
-            ' confidence</span>';
-        }
         return (
           '<tr><td>' +
           escapeHtml(t.topic_name) +

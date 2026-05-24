@@ -1150,6 +1150,40 @@ def _assert_same_trust(hr_user: dict, session: dict) -> None:
         raise HTTPException(status_code=403, detail="This submission is not from your trust.")
 
 
+def _enrich_hr_share_payload(payload: dict, hr_trust: Optional[str]) -> dict:
+    """Attach mandatory requirement-fit flags for partial matches (Needs review)."""
+    uid = payload.get("doctor_user_id")
+    if not uid:
+        return payload
+    trust = (payload.get("doctor_trust") or payload.get("target_trust") or hr_trust or "").strip()
+    if not trust:
+        return payload
+    fit_map = compliance_snapshot.mandatory_needs_review_by_credential(int(uid), trust)
+    items = []
+    for it in payload.get("items") or []:
+        cid = str(it.get("credential_id") or "")
+        row = dict(it)
+        row["mandatory_needs_review"] = fit_map.get(cid) or []
+        items.append(row)
+    topics: list[dict] = []
+    seen: set[str] = set()
+    for topic_rows in fit_map.values():
+        for t in topic_rows:
+            key = str(t.get("topic_name") or "")
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            topics.append(t)
+    out = dict(payload)
+    out["items"] = items
+    out["mandatory_needs_review_summary"] = {
+        "credential_count": len(fit_map),
+        "topic_count": sum(len(v) for v in fit_map.values()),
+        "topics": topics,
+    }
+    return out
+
+
 @router.get("/hr/shares")
 def hr_shares_list(request: Request, limit: int = 50):
     hr = require_premium_user(request)
@@ -1163,6 +1197,9 @@ def hr_email_preferences_get(request: Request):
     if not prefs:
         raise HTTPException(status_code=400, detail="HR account required")
     summary = db.hr_inbox_activity_summary((hr.get("current_trust") or "").strip())
+    trust = (hr.get("current_trust") or "").strip()
+    if trust:
+        summary = {**summary, **compliance_snapshot.trust_mandatory_needs_review_summary(trust)}
     return {**prefs, "inbox_summary": summary}
 
 
@@ -2146,7 +2183,7 @@ def hr_doctor_queue(request: Request, doctor_user_id: int):
     q = db.share_doctor_queue(int(doctor_user_id), hr_trust=_hr_trust(hr))
     if not q:
         raise HTTPException(status_code=404, detail="Clinician not found")
-    return q
+    return _enrich_hr_share_payload(q, _hr_trust(hr))
 
 
 @router.get("/hr/shares/{session_id}")
@@ -2156,7 +2193,7 @@ def hr_shares_get(request: Request, session_id: int):
     if not s:
         raise HTTPException(status_code=404, detail="Share not found")
     _assert_same_trust(hr, s)
-    return s
+    return _enrich_hr_share_payload(s, _hr_trust(hr))
 
 
 @router.post("/hr/shares/{session_id}/items/{credential_id}/verify")

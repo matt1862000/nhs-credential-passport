@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#005eb8">
   <title>Cohorts &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
-  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260528-1">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260524-1">
   <link rel="stylesheet" href="/static/shared/training-add-form.css?v=20260526-2">
   <link rel="stylesheet" href="/static/shared/messages-compose.css?v=20260528-1">
 </head>
@@ -370,14 +370,14 @@
           <h4 class="hr-comp-subhead">By mandatory topic</h4>
           <div class="hr-table-wrap">
             <table class="hr-table hr-comp-table" aria-label="Topic compliance">
-              <thead><tr><th>Topic</th><th>Met</th><th>Expiring</th><th>Gaps</th></tr></thead>
+              <thead><tr><th>Topic</th><th>Met</th><th>Expiring</th><th>Needs review</th><th>Gaps</th></tr></thead>
               <tbody id="cohortCompTopicsTbody"></tbody>
             </table>
           </div>
           <h4 class="hr-comp-subhead">By clinician</h4>
           <div class="hr-table-wrap">
             <table class="hr-table hr-comp-table" aria-label="Member compliance">
-              <thead><tr><th>Name</th><th>Met</th><th>Expiring</th><th>Gaps</th><th></th></tr></thead>
+              <thead><tr><th>Name</th><th>Met</th><th>Expiring</th><th>Needs review</th><th>Gaps</th><th></th></tr></thead>
               <tbody id="cohortCompMembersTbody"></tbody>
             </table>
           </div>
@@ -1356,24 +1356,29 @@
           summaryEl.innerHTML =
             '<div class="hr-comp-pill hr-comp-pill--ok"><span class="hr-comp-pill__n">' + esc(sum.fully_compliant || 0) + '</span><span class="hr-comp-pill__l">Fully compliant</span></div>'
             + '<div class="hr-comp-pill hr-comp-pill--warn"><span class="hr-comp-pill__n">' + esc(sum.has_gaps || 0) + '</span><span class="hr-comp-pill__l">With gaps or expiring</span></div>'
+            + (Number(sum.needs_review_any || 0) > 0
+              ? '<div class="hr-comp-pill hr-comp-pill--review"><span class="hr-comp-pill__n">' + esc(sum.needs_review_any || 0) + '</span><span class="hr-comp-pill__l">Need requirement review</span></div>'
+              : '')
             + '<div class="hr-comp-pill"><span class="hr-comp-pill__n">' + esc(sum.total_members || members.length) + '</span><span class="hr-comp-pill__l">Members</span></div>';
         }
         if (!topics.length) {
-          if (topicsTb) topicsTb.innerHTML = '<tr><td colspan="4" class="hr-muted">No mandatory topics configured. <a href="/static/hr/mandatory/">Set requirements</a>.</td></tr>';
+          if (topicsTb) topicsTb.innerHTML = '<tr><td colspan="5" class="hr-muted">No mandatory topics configured. <a href="/static/hr/mandatory/">Set requirements</a>.</td></tr>';
         } else if (topicsTb) {
           topicsTb.innerHTML = topics.map(function (t) {
             return '<tr><td>' + esc(t.topic_name || 'Topic') + '</td><td>' + esc(t.met || 0)
-              + '</td><td>' + esc(t.expiring || 0) + '</td><td>' + esc(t.gap || 0) + '</td></tr>';
+              + '</td><td>' + esc(t.expiring || 0) + '</td><td>' + esc(t.needs_review || 0)
+              + '</td><td>' + esc(t.gap || 0) + '</td></tr>';
           }).join('');
         }
         if (!members.length) {
-          if (membersTb) membersTb.innerHTML = '<tr><td colspan="5" class="hr-muted">No members in this cohort.</td></tr>';
+          if (membersTb) membersTb.innerHTML = '<tr><td colspan="6" class="hr-muted">No members in this cohort.</td></tr>';
         } else if (membersTb) {
           membersTb.innerHTML = members.map(function (m) {
             var s = m.summary || {};
             var searchUrl = '/static/hr/search.html?q=' + encodeURIComponent(m.email || m.display_name || '');
             return '<tr><td>' + esc(memberDisplayLabel(m)) + '</td><td>' + esc(s.met || 0)
-              + '</td><td>' + esc(s.expiring || 0) + '</td><td>' + esc(s.gap || 0)
+              + '</td><td>' + esc(s.expiring || 0) + '</td><td>' + esc(s.needs_review || 0)
+              + '</td><td>' + esc(s.gap || 0)
               + '</td><td class="hr-open-wrap"><a class="hr-open-btn hr-open-btn--small" href="' + esc(searchUrl) + '">View</a></td></tr>';
           }).join('');
         }

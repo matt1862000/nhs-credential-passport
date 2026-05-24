@@ -27,6 +27,44 @@
       function show(el, on) { if (el) el.hidden = !on; }
       function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
 
+      function formatMandatoryFitNote(topics) {
+        if (!topics || !topics.length) return '';
+        var items = topics.map(function (t) {
+          var line = esc(t.topic_name || 'Mandatory requirement');
+          if (t.reason) line += ' — ' + esc(t.reason);
+          return '<li>' + line + '</li>';
+        }).join('');
+        return (
+          '<div class="hr-mandatory-fit-note" role="note">' +
+          '<strong>Possible mandatory match — confirm requirement fit</strong>' +
+          '<ul class="hr-mandatory-fit-note__list">' + items + '</ul>' +
+          '</div>'
+        );
+      }
+
+      function updateMandatoryFitBanner(payload) {
+        var banner = document.getElementById('mandatoryFitBanner');
+        if (!banner) return;
+        var summary = payload && payload.mandatory_needs_review_summary;
+        var topicCount = summary && Number(summary.topic_count || 0);
+        if (!topicCount) {
+          banner.hidden = true;
+          banner.innerHTML = '';
+          return;
+        }
+        var credCount = Number(summary.credential_count || 0);
+        var lead =
+          credCount === 1
+            ? 'One training record may only partly match a mandatory requirement.'
+            : String(credCount) + ' training records may only partly match mandatory requirements.';
+        banner.hidden = false;
+        banner.innerHTML =
+          '<p class="hr-mandatory-fit-banner__text"><strong>Requirement fit review</strong> — ' +
+          esc(lead) +
+          ' When verifying, confirm whether the training satisfies the trust requirement (not just whether the evidence is genuine).</p>' +
+          formatMandatoryFitNote(summary.topics || []);
+      }
+
       function formatSharedAt(iso) {
         if (!iso) return '—';
         var d = new Date(iso);
@@ -1054,6 +1092,7 @@
             tail;
         }
         fillItemsModuleSelect(s);
+        updateMandatoryFitBanner(s);
         var items = (s.items || []).filter(function (it) {
           var st = String(it.status || '').toUpperCase();
           var pending = st !== 'VERIFIED' && st !== 'DECLINED';
@@ -1191,11 +1230,13 @@
               modLabel +
               '</button>'
             : modLabel;
+          var fitNote = formatMandatoryFitNote(it.mandatory_needs_review);
           parts.push(
             '<tr>' +
               selectCell +
               '<td>' +
               modCell +
+              fitNote +
               priorNote +
               issuingLine +
               verifierTrustLine +

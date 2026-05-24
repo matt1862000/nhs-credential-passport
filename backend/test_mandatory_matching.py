@@ -35,7 +35,7 @@ class MandatoryMatchingTests(unittest.TestCase):
         result = mm.match_topic_to_wallet(topic, [_cred("Fire Awareness Refresher")])
         self.assertEqual(result["match_type"], "alias")
         self.assertEqual(result["status_label"], "Met (possible match)")
-        self.assertIn("alias", result["reason"].lower())
+        self.assertIn("equivalent", result["reason"].lower())
 
     def test_ipc_alias(self):
         topic = _topic("Infection Prevention and Control")

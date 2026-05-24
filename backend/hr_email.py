@@ -4,7 +4,7 @@ import logging
 import os
 from typing import Optional
 
-from . import db
+from . import compliance_snapshot, db
 from .email_service import send_email
 
 logger = logging.getLogger(__name__)
@@ -155,17 +155,29 @@ def _format_record_lines(items: list[dict], *, max_listed: int = 20) -> tuple[st
     return text_block, html_block
 
 
+def _cohorts_url() -> str:
+    return f"{_app_base_url()}/static/hr/cohorts/"
+
+
 def _format_digest_bodies(hr_user: dict, stats: dict) -> tuple[str, str, str]:
     """Return (subject, text_body, html_body)."""
     trust = _trust_label(hr_user)
     pending_sessions = int(stats.get("pending_sessions") or 0)
     pending_items = int(stats.get("pending_items") or 0)
     unread_messages = int(stats.get("unread_messages") or 0)
+    clinicians_review = int(stats.get("clinicians_needing_review") or 0)
+    topics_review = int(stats.get("mandatory_topics_needing_review") or 0)
     inbox = _inbox_url()
     messages = _messages_url()
+    cohorts = _cohorts_url()
     prefs = _prefs_url()
 
     subject = f"DocPass daily summary — {pending_items} pending, {unread_messages} unread messages"
+    if clinicians_review > 0:
+        subject = (
+            f"DocPass daily summary — {pending_items} pending, "
+            f"{clinicians_review} clinician(s) need requirement review"
+        )
 
     lines = [
         f"Hello {_hr_recipient_name(hr_user)},",
@@ -174,29 +186,54 @@ def _format_digest_bodies(hr_user: dict, stats: dict) -> tuple[str, str, str]:
         "",
         f"• Pending verifications: {pending_items} record(s) across {pending_sessions} shared set(s)",
         f"• Unread messages from clinicians: {unread_messages}",
-        "",
-        f"Open verification inbox: {inbox}",
-        f"Open messages: {messages}",
-        "",
-        f"Manage email preferences: {prefs}",
-        "",
-        "— DocPass",
     ]
+    if clinicians_review > 0:
+        lines.append(
+            f"• Mandatory requirement fit: {clinicians_review} clinician(s) with "
+            f"{topics_review} topic(s) needing your judgement"
+        )
+    lines.extend(
+        [
+            "",
+            f"Open verification inbox: {inbox}",
+            f"Open messages: {messages}",
+        ]
+    )
+    if clinicians_review > 0:
+        lines.append(f"Review cohort compliance: {cohorts}")
+    lines.extend(
+        [
+            "",
+            f"Manage email preferences: {prefs}",
+            "",
+            "— DocPass",
+        ]
+    )
     text_body = "\n".join(lines)
+
+    html_items = (
+        f"<li><strong>{pending_items}</strong> training record(s) awaiting verification across "
+        f"<strong>{pending_sessions}</strong> shared set(s)</li>"
+        f"<li><strong>{unread_messages}</strong> unread message(s) from clinicians</li>"
+    )
+    if clinicians_review > 0:
+        html_items += (
+            f"<li><strong>{clinicians_review}</strong> clinician(s) with "
+            f"<strong>{topics_review}</strong> mandatory topic(s) needing requirement-fit review</li>"
+        )
+    html_actions: list[tuple[str, str]] = [
+        (inbox, "Open verification inbox"),
+        (messages, "Open messages"),
+    ]
+    if clinicians_review > 0:
+        html_actions.append((cohorts, "Review cohort compliance"))
+    html_actions.append((prefs, "Email notification preferences"))
 
     html_body = _email_html_document(
         _email_p(f"Hello {html.escape(_hr_recipient_name(hr_user))},")
         + _email_p(f"Your DocPass summary for <strong>{html.escape(trust)}</strong>:")
-        + f'<ul style="{_EMAIL_LIST_STYLE}">'
-        + f"<li><strong>{pending_items}</strong> training record(s) awaiting verification across "
-        f"<strong>{pending_sessions}</strong> shared set(s)</li>"
-        + f"<li><strong>{unread_messages}</strong> unread message(s) from clinicians</li>"
-        + "</ul>"
-        + _email_actions(
-            (inbox, "Open verification inbox"),
-            (messages, "Open messages"),
-            (prefs, "Email notification preferences"),
-        )
+        + f'<ul style="{_EMAIL_LIST_STYLE}">{html_items}</ul>'
+        + _email_actions(*html_actions)
         + _email_signoff()
     )
 
@@ -267,9 +304,11 @@ def send_daily_digests(*, skip_if_empty: bool = True) -> int:
         if not trust:
             continue
         stats = db.hr_inbox_activity_summary(trust)
+        stats = {**stats, **compliance_snapshot.trust_mandatory_needs_review_summary(trust)}
         pending_items = int(stats.get("pending_items") or 0)
         unread_messages = int(stats.get("unread_messages") or 0)
-        if skip_if_empty and pending_items == 0 and unread_messages == 0:
+        clinicians_review = int(stats.get("clinicians_needing_review") or 0)
+        if skip_if_empty and pending_items == 0 and unread_messages == 0 and clinicians_review == 0:
             continue
         subject, text_body, html_body = _format_digest_bodies(hr_user, stats)
         if send_email(
