@@ -75,5 +75,5 @@ def test_build_manual_expiry_reminder_body():
         ),
     ]
     body = build_expiry_reminder_body(doc, "ROTHERHAM NHS FT", due, manual=True)
-    assert "mandatory training is expiring soon" in body
+    assert "mandatory training is expiring soon" in body.lower() or "training on your docpass" in body.lower()
     assert "Safeguarding" in body

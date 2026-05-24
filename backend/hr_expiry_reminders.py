@@ -70,7 +70,7 @@ def build_expiry_reminder_body(
         parts: list[str] = [
             f"Hi {name},",
             "",
-            "The following mandatory training is expiring soon or already expired:",
+            "The following training on your DocPass wallet is expiring soon or already expired:",
         ]
         parts.extend(_format_cred_line(c) for _, c in due_items)
         parts.append("")
@@ -264,16 +264,15 @@ def send_manual_expiry_reminders(
     window_days: int = 30,
     cohort_id: Optional[int] = None,
     module_query: Optional[str] = None,
-    topic_id: Optional[int] = None,
     doctor_user_ids: Optional[list[int]] = None,
 ) -> dict:
     """
-    HR-triggered reminders for mandatory training in the selected expiry window.
-    Does not affect automatic milestone deduplication.
+    HR-triggered reminders for non-mandatory wallet training in the selected expiry window.
+    Mandatory topics are covered by automatic reminders — not included here.
     """
     trust = (hr_trust or "").strip()
     if not trust:
-        return {"sent": 0, "failed": [], "scope": "mandatory"}
+        return {"sent": 0, "failed": [], "scope": "other"}
 
     clinicians = _clinicians_in_scope(
         trust, cohort_id=cohort_id, doctor_user_ids=doctor_user_ids
@@ -290,10 +289,9 @@ def send_manual_expiry_reminders(
             continue
 
         snap = compliance_snapshot.doctor_compliance_snapshot(uid, trust)
-        creds = compliance_snapshot.mandatory_expiring_credentials(
+        creds = compliance_snapshot.non_mandatory_expiring_credentials(
             snap,
             window_days=window_days,
-            topic_id=topic_id,
             module_query=module_query,
         )
         if not creds:
@@ -313,5 +311,5 @@ def send_manual_expiry_reminders(
         "sent": sent,
         "failed": failed,
         "credentials_included": credentials_included,
-        "scope": "mandatory",
+        "scope": "other",
     }

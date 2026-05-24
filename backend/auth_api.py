@@ -2462,6 +2462,7 @@ def hr_compliance_expiring(
     cohort_id: Optional[int] = None,
     module_query: Optional[str] = None,
     topic_id: Optional[int] = None,
+    scope: str = "mandatory",
 ):
     hr = require_premium_user(request)
     trust = _hr_trust_required(hr)
@@ -2471,12 +2472,13 @@ def hr_compliance_expiring(
         cohort_id=cohort_id,
         module_query=module_query,
         topic_id=topic_id,
+        scope=scope,
     )
 
 
 @router.post("/hr/compliance/expiring/send-reminders")
 async def hr_compliance_expiring_send_reminders(request: Request):
-    """Send in-app mandatory training expiry reminders now (HR manual trigger)."""
+    """Send in-app reminders for non-mandatory expiring wallet training (manual HR trigger)."""
     hr = require_premium_user(request)
     trust = _hr_trust_required(hr)
     try:
@@ -2505,14 +2507,7 @@ async def hr_compliance_expiring_send_reminders(request: Request):
     else:
         cohort_id = None
 
-    topic_id = body.get("topic_id")
-    if topic_id is not None and topic_id != "":
-        try:
-            topic_id = int(topic_id)
-        except (TypeError, ValueError):
-            raise HTTPException(status_code=400, detail="topic_id must be an integer")
-    else:
-        topic_id = None
+    topic_id = None
 
     module_query = body.get("module_query")
     if module_query is not None and not isinstance(module_query, str):
@@ -2532,7 +2527,6 @@ async def hr_compliance_expiring_send_reminders(request: Request):
         window_days=window_days,
         cohort_id=cohort_id,
         module_query=module_query,
-        topic_id=topic_id,
         doctor_user_ids=doctor_ids or None,
     )
 

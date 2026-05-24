@@ -493,6 +493,56 @@ def mandatory_expiring_credentials(
     return items
 
 
+def mandatory_matched_credential_ids(snap: dict) -> set[str]:
+    """Credential IDs linked to any mandatory topic match (exact, alias, or partial)."""
+    ids: set[str] = set()
+    for tr in snap.get("topics") or []:
+        cid = tr.get("credential_id")
+        if not cid:
+            continue
+        if (tr.get("match_type") or "none") == "none":
+            continue
+        ids.add(str(cid))
+    return ids
+
+
+def non_mandatory_expiring_credentials(
+    snap: dict,
+    *,
+    window_days: Optional[int] = None,
+    module_query: Optional[str] = None,
+) -> list[dict]:
+    """
+    Wallet records expiring or expired that do not match any mandatory topic.
+    These are not covered by automatic mandatory reminders.
+    """
+    mq = (module_query or "").strip().lower() or None
+    mandatory_ids = mandatory_matched_credential_ids(snap)
+    items: list[dict] = []
+    seen: set[str] = set()
+    for c in snap.get("expiring_credentials") or []:
+        cid_s = str(c.get("credential_id") or "")
+        if not cid_s or cid_s in seen or cid_s in mandatory_ids:
+            continue
+        module_name = (c.get("module_name") or "Training").strip()
+        if mq and mq not in module_name.lower():
+            continue
+        if window_days is not None and not _credential_in_expiry_window(c, window_days):
+            continue
+        seen.add(cid_s)
+        items.append(
+            {
+                "credential_id": cid_s,
+                "module_name": module_name,
+                "expiry_date": c.get("expiry_date"),
+                "status": c.get("status"),
+                "days_until": c.get("days_until"),
+            }
+        )
+    items.sort(key=lambda x: (x.get("days_until") is None, x.get("days_until") or 99999))
+    return items
+
+
 def trust_mandatory_topics_summary(trust: str) -> list[dict]:
     """Lightweight topic list for HR expiring report filters."""
     return [
@@ -575,10 +625,14 @@ def trust_expiring_report(
     cohort_id: Optional[int] = None,
     module_query: Optional[str] = None,
     topic_id: Optional[int] = None,
+    scope: str = "mandatory",
 ) -> dict:
-    """Doctors at trust with mandatory-topic matches expiring within window."""
+    """Doctors at trust with expiring training in the chosen scope (mandatory or other)."""
     trust = (hr_trust or "").strip()
     mq = (module_query or "").strip().lower() or None
+    scope_key = (scope or "mandatory").strip().lower()
+    if scope_key not in ("mandatory", "other"):
+        scope_key = "mandatory"
     if not trust:
         return {
             "trust": None,
@@ -587,7 +641,7 @@ def trust_expiring_report(
             "cohort_id": cohort_id,
             "module_query": module_query,
             "topic_id": topic_id,
-            "scope": "mandatory",
+            "scope": scope_key,
             "mandatory_topics": [],
         }
     member_ids: Optional[set[int]] = None
@@ -611,12 +665,19 @@ def trust_expiring_report(
         if member_ids is not None and uid not in member_ids:
             continue
         snap = doctor_compliance_snapshot(uid, trust)
-        exp = mandatory_expiring_credentials(
-            snap,
-            window_days=window_days,
-            topic_id=topic_id,
-            module_query=mq,
-        )
+        if scope_key == "other":
+            exp = non_mandatory_expiring_credentials(
+                snap,
+                window_days=window_days,
+                module_query=mq,
+            )
+        else:
+            exp = mandatory_expiring_credentials(
+                snap,
+                window_days=window_days,
+                topic_id=topic_id,
+                module_query=mq,
+            )
         if not exp:
             continue
         items.append(
@@ -635,9 +696,10 @@ def trust_expiring_report(
         "cohort_id": cohort_id,
         "module_query": module_query,
         "topic_id": topic_id,
-        "scope": "mandatory",
-        "mandatory_topics": trust_mandatory_topics_summary(trust),
+        "scope": scope_key,
+        "mandatory_topics": trust_mandatory_topics_summary(trust) if scope_key == "mandatory" else [],
         "items": items,
         "doctor_count": len(items),
         "auto_reminders_enabled": db.trust_expiry_reminders_enabled(trust),
+        "manual_send_available": scope_key == "other",
     }
