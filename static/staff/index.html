@@ -674,7 +674,6 @@
             <p class="staff-esr-needs-fix__lead">ESR did not include completion or expiry dates for these rows, so they could not be imported automatically. Add each one manually with the dates you have, then dismiss the reminder. They stay in your list below until you dismiss them or add matching training.</p>
           </div>
           <div class="staff-esr-needs-fix__actions">
-            <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnEsrNeedsFixImport">Import from ESR</button>
             <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnDismissEsrNeedsFix">Hide this notice</button>
           </div>
         </div>
@@ -1836,11 +1835,6 @@
       }).join('');
     }
 
-    function openStaffImportTab() {
-      var tab = document.getElementById('tab-import');
-      if (tab) tab.click();
-    }
-
     var ESR_MAP_TARGETS = [
       { value: '', label: '(ignore column)' },
       { value: 'esr_competency_name', label: 'Competency name' },
@@ -2154,10 +2148,6 @@
     var btnDismissEsrNeedsFix = document.getElementById('btnDismissEsrNeedsFix');
     if (btnDismissEsrNeedsFix) {
       btnDismissEsrNeedsFix.addEventListener('click', function () { dismissEsrNeedsFixPanel(); });
-    }
-    var btnEsrNeedsFixImport = document.getElementById('btnEsrNeedsFixImport');
-    if (btnEsrNeedsFixImport) {
-      btnEsrNeedsFixImport.addEventListener('click', function () { openStaffImportTab(); });
     }
     document.getElementById('btnEsrBack').addEventListener('click', function () {
       if (_esrWizardStep > 1) setEsrWizardStep(_esrWizardStep - 1);
