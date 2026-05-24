@@ -1443,6 +1443,24 @@
 
     var filterStatusEl = document.getElementById('filterStatus');
     if (filterStatusEl) filterStatusEl.addEventListener('change', renderList);
+
+    (function wireNeedsFixListActions() {
+      var listRoot = document.getElementById('credentialList');
+      if (!listRoot) return;
+      listRoot.addEventListener('click', function (e) {
+        var addBtn = e.target.closest('[data-needs-fix-add]');
+        if (addBtn) {
+          e.preventDefault();
+          startAddFromEsrNeedsFix(addBtn.getAttribute('data-needs-fix-add'));
+          return;
+        }
+        var dismissBtn = e.target.closest('[data-needs-fix-dismiss]');
+        if (dismissBtn) {
+          e.preventDefault();
+          dismissEsrNeedsFixItem(dismissBtn.getAttribute('data-needs-fix-dismiss'));
+        }
+      });
+    })();
     wireTrainingSearchSuggest();
     var showSupersededEl = document.getElementById('showSuperseded');
     if (showSupersededEl) showSupersededEl.addEventListener('change', renderList);
@@ -1598,16 +1616,38 @@
       return String(item && item.row != null ? item.row : '') + ':' + normalizeEsrModuleLabel(item && item.module);
     }
 
+    function normalizeEsrNeedsFixItem(item, idx) {
+      item = item || {};
+      if (item.id) {
+        return {
+          id: item.id,
+          row: item.row,
+          module: item.module || '',
+          message: item.message || '',
+        };
+      }
+      var slug = normalizeEsrModuleLabel(item.module).replace(/[^a-z0-9]+/g, '').slice(0, 10);
+      return {
+        id: 'ef-' + (item.row != null ? item.row : idx) + (slug ? '-' + slug : ''),
+        row: item.row,
+        module: item.module || '',
+        message: item.message || '',
+      };
+    }
+
     function loadEsrNeedsFixState() {
       try {
         var raw = localStorage.getItem(esrNeedsFixStorageKey());
         if (!raw) return { items: [], panelDismissed: false };
         var data = JSON.parse(raw);
-        if (Array.isArray(data)) return { items: data, panelDismissed: false };
-        return {
-          items: Array.isArray(data.items) ? data.items : [],
-          panelDismissed: !!data.panelDismissed,
-        };
+        var panelDismissed = Array.isArray(data) ? false : !!data.panelDismissed;
+        var rawItems = Array.isArray(data) ? data : (Array.isArray(data.items) ? data.items : []);
+        var items = rawItems.map(normalizeEsrNeedsFixItem);
+        var migrated = rawItems.some(function (it, i) { return !it || !it.id; });
+        if (migrated) {
+          saveEsrNeedsFixState({ items: items, panelDismissed: panelDismissed });
+        }
+        return { items: items, panelDismissed: panelDismissed };
       } catch (eLoad) {
         return { items: [], panelDismissed: false };
       }
@@ -1725,24 +1765,39 @@
       return null;
     }
 
-    window.startAddFromEsrNeedsFix = function (itemId) {
+    function findEsrNeedsFixItem(itemId) {
       var items = loadEsrNeedsFixItems();
+      if (!itemId) return null;
       var item = items.find(function (it) { return it.id === itemId; });
-      if (!item) return;
-      clearRenewal();
+      if (item) return item;
+      return items.find(function (it) { return esrNeedsFixItemKey(it) === itemId; }) || null;
+    }
+
+    function applyEsrNeedsFixPrefillToAddForm(item) {
       var modSel = document.getElementById('moduleSelect');
       var prefillEl = document.getElementById('addPrefillModuleName');
       var match = findModuleForEsrLabel(item.module);
       if (match && modSel) {
         modSel.value = match.code;
         if (prefillEl) prefillEl.value = '';
-      } else {
-        if (modSel) modSel.value = 'non_cstf';
+      } else if (modSel) {
+        modSel.value = 'non_cstf';
         if (prefillEl) prefillEl.value = item.module || '';
       }
-      void applyProfileToAddForm();
-      document.querySelector('.nhsuk-tabs button[data-tab="add"]').click();
-      document.getElementById('addForm').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    window.startAddFromEsrNeedsFix = function (itemId) {
+      var item = findEsrNeedsFixItem(itemId);
+      if (!item) return;
+      var addTab = document.getElementById('tab-add');
+      if (addTab) addTab.click();
+      setTimeout(function () {
+        clearRenewal();
+        applyEsrNeedsFixPrefillToAddForm(item);
+        void applyProfileToAddForm();
+        var form = document.getElementById('addForm');
+        if (form) form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 0);
     };
 
     function jsAttrString(s) {
@@ -1751,7 +1806,7 @@
 
     function needsFixRemoveButtonHtml(item) {
       var label = item.module || 'ESR reminder';
-      return '<button type="button" class="staff-card-remove" onclick="dismissEsrNeedsFixItem(' + jsAttrString(item.id) + ')" aria-label="Dismiss ' + escapeHtml(label) + '" title="Dismiss">&times;</button>';
+      return '<button type="button" class="staff-card-remove" data-needs-fix-dismiss="' + escapeHtml(item.id) + '" aria-label="Dismiss ' + escapeHtml(label) + '" title="Dismiss">&times;</button>';
     }
 
     function needsFixCardHtml(item) {
@@ -1768,7 +1823,7 @@
         + (item.row ? ' <span class="staff-esr-needs-fix__row">(ESR row ' + escapeHtml(String(item.row)) + ')</span>' : '')
         + '</p>'
         + '<div class="staff-needs-fix-card__actions">'
-        + '<button type="button" class="nhsuk-button" onclick="startAddFromEsrNeedsFix(' + jsAttrString(item.id) + ')">Add manually</button>'
+        + '<button type="button" class="nhsuk-button" data-needs-fix-add="' + escapeHtml(item.id) + '">Add manually</button>'
         + '</div>'
         + '</div>'
         + '</div>';
