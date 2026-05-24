@@ -14,12 +14,15 @@ def _app_base_url() -> str:
     return (os.environ.get("BASE_URL") or "https://docpass.co.uk").rstrip("/")
 
 
-def hr_delivery_email(account_email: Optional[str] = None) -> str:
-    """Pilot override: send all HR notifications to one inbox when HR_EMAIL_OVERRIDE is set."""
-    override = (os.environ.get("HR_EMAIL_OVERRIDE") or "").strip()
-    if override:
-        return override
-    return (account_email or "").strip()
+def hr_delivery_email(hr_user: dict) -> str:
+    """Resolve where to send HR notification email for one user."""
+    custom = (hr_user.get("hr_notification_email") or "").strip()
+    if custom:
+        return custom
+    env_override = (os.environ.get("HR_EMAIL_OVERRIDE") or "").strip()
+    if env_override:
+        return env_override
+    return (hr_user.get("email") or "").strip()
 
 
 def _inbox_url() -> str:
@@ -148,7 +151,7 @@ def send_daily_digests(*, skip_if_empty: bool = True) -> int:
             continue
         subject, text_body, html_body = _format_digest_bodies(hr_user, stats)
         if send_email(
-            to=hr_delivery_email(hr_user["email"]),
+            to=hr_delivery_email(hr_user),
             subject=subject,
             text_body=text_body,
             html_body=html_body,
@@ -186,7 +189,7 @@ def notify_new_share_for_hr(
             session_id=int(session_id),
         )
         if send_email(
-            to=hr_delivery_email(hr_user["email"]),
+            to=hr_delivery_email(hr_user),
             subject=subject,
             text_body=text_body,
             html_body=html_body,

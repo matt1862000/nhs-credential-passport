@@ -129,7 +129,11 @@
           <hr style="border:none; border-top:1px solid var(--nhsuk-border); margin:1.25rem 0;">
           <h2 id="email-notifications" style="font-size:1.125rem; font-weight:700; margin:0 0 0.35rem 0;">Email notifications</h2>
           <p class="nhsuk-body-s" style="color:var(--nhsuk-secondary-text); margin:0 0 0.75rem 0;">Get verification inbox and message alerts by email so you do not have to check DocPass every day.</p>
-          <p class="profile-hint profile-email-meta">Emails are sent to <strong id="prefEmail">—</strong></p>
+          <div class="nhsuk-form-group">
+            <label class="nhsuk-label" for="hrNotificationEmail">Send notifications to</label>
+            <input class="nhsuk-input" type="email" id="hrNotificationEmail" name="hr_notification_email" autocomplete="email" maxlength="254" placeholder="e.g. you@nhs.net">
+            <span class="profile-hint" id="hrLoginEmailHint">DocPass login email: —</span>
+          </div>
           <p class="profile-hint profile-email-meta" id="inboxSnapshot" aria-live="polite"></p>
           <p class="profile-hint" id="hrEmailLoadError" style="color:var(--nhsuk-error);"></p>
           <div class="profile-check-group">
@@ -370,7 +374,15 @@
           var r = await fetch('/api/hr/email-preferences', { credentials: 'include' });
           if (!r.ok) throw new Error('Could not load email preferences');
           var data = await r.json();
-          document.getElementById('prefEmail').textContent = data.email || '—';
+          var notifInp = document.getElementById('hrNotificationEmail');
+          var loginHint = document.getElementById('hrLoginEmailHint');
+          if (notifInp) {
+            notifInp.value = data.notification_email || '';
+          }
+          if (loginHint) {
+            loginHint.textContent = 'DocPass login email: ' + (data.login_email || '—') +
+              (data.notification_email ? '' : ' — leave blank above to use your login email.');
+          }
           document.getElementById('chkDigest').checked = !!data.digest_enabled;
           document.getElementById('chkInstant').checked = !!data.instant_enabled;
           var s = data.inbox_summary || {};
@@ -384,6 +396,7 @@
       }
 
       async function saveHrEmailPrefs() {
+        var notifInp = document.getElementById('hrNotificationEmail');
         var r = await fetch('/api/hr/email-preferences', {
           method: 'PUT',
           credentials: 'include',
@@ -391,6 +404,7 @@
           body: JSON.stringify({
             digest_enabled: document.getElementById('chkDigest').checked,
             instant_enabled: document.getElementById('chkInstant').checked,
+            notification_email: notifInp ? String(notifInp.value || '').trim() : '',
           }),
         });
         if (!r.ok) {

@@ -2241,6 +2241,8 @@ def _ensure_users_hr_email_columns(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE users ADD COLUMN hr_email_instant_enabled INTEGER NOT NULL DEFAULT 1"
         )
+    if "hr_notification_email" not in cols:
+        conn.execute("ALTER TABLE users ADD COLUMN hr_notification_email TEXT")
 
 
 def _ensure_users_nhs_work_email_column(conn: sqlite3.Connection) -> None:
@@ -2702,6 +2704,9 @@ def _user_public_dict(row: sqlite3.Row, include_password_hash: bool = False) -> 
         "hr_email_instant_enabled": bool(row["hr_email_instant_enabled"])
         if "hr_email_instant_enabled" in keys and row["hr_email_instant_enabled"] is not None
         else True,
+        "hr_notification_email": row["hr_notification_email"]
+        if "hr_notification_email" in keys
+        else None,
     }
     if include_password_hash:
         out["password_hash"] = row["password_hash"]
@@ -2739,7 +2744,7 @@ def user_get_by_id(user_id: int):
             """SELECT id, email, premium, gmc_number, display_name, current_trust,
                       personal_email, must_change_password, onboarding_completed,
                       hr_welcome_message_template, hr_email_digest_enabled,
-                      hr_email_instant_enabled
+                      hr_email_instant_enabled, hr_notification_email
                FROM users WHERE id = ?""",
             (user_id,),
         ).fetchone()
@@ -4016,7 +4021,16 @@ def _hr_user_row_to_dict(row: sqlite3.Row) -> dict:
         "current_trust": row["current_trust"],
         "hr_email_digest_enabled": bool(row["hr_email_digest_enabled"]),
         "hr_email_instant_enabled": bool(row["hr_email_instant_enabled"]),
+        "hr_notification_email": row["hr_notification_email"],
     }
+
+
+def hr_effective_notification_email(user: dict) -> str:
+    """Delivery address for HR digests/alerts: custom notification email, else login email."""
+    custom = (user.get("hr_notification_email") or "").strip()
+    if custom:
+        return custom
+    return (user.get("email") or "").strip()
 
 
 def hr_premium_users_list() -> list[dict]:
@@ -4029,7 +4043,8 @@ def hr_premium_users_list() -> list[dict]:
         rows = conn.execute(
             """
             SELECT id, email, display_name, current_trust,
-                   hr_email_digest_enabled, hr_email_instant_enabled
+                   hr_email_digest_enabled, hr_email_instant_enabled,
+                   hr_notification_email
             FROM users
             WHERE premium = 1 AND TRIM(COALESCE(current_trust, '')) != ''
             ORDER BY current_trust COLLATE NOCASE, email COLLATE NOCASE
@@ -4093,7 +4108,9 @@ def hr_email_prefs_get(user_id: int) -> Optional[dict]:
     return {
         "digest_enabled": bool(u.get("hr_email_digest_enabled", True)),
         "instant_enabled": bool(u.get("hr_email_instant_enabled", True)),
-        "email": u.get("email"),
+        "login_email": u.get("email"),
+        "notification_email": (u.get("hr_notification_email") or "").strip() or None,
+        "email": hr_effective_notification_email(u),
     }
 
 
@@ -4102,20 +4119,26 @@ def hr_email_prefs_set(
     *,
     digest_enabled: Optional[bool] = None,
     instant_enabled: Optional[bool] = None,
+    notification_email: Optional[str] = None,
+    set_notification_email: bool = False,
 ) -> Optional[dict]:
     u = user_get_by_id(int(user_id))
     if not u or not user_is_premium(u):
         return None
     digest = 1 if (digest_enabled if digest_enabled is not None else u.get("hr_email_digest_enabled", True)) else 0
     instant = 1 if (instant_enabled if instant_enabled is not None else u.get("hr_email_instant_enabled", True)) else 0
+    sets = ["hr_email_digest_enabled = ?", "hr_email_instant_enabled = ?"]
+    params: list = [digest, instant]
+    if set_notification_email:
+        norm = (notification_email or "").strip().lower()
+        sets.append("hr_notification_email = ?")
+        params.append(norm or None)
+    params.append(int(user_id))
     with sqlite3.connect(DB_PATH) as conn:
         _ensure_users_hr_email_columns(conn)
         conn.execute(
-            """
-            UPDATE users SET hr_email_digest_enabled = ?, hr_email_instant_enabled = ?
-            WHERE id = ?
-            """,
-            (digest, instant, int(user_id)),
+            f"UPDATE users SET {', '.join(sets)} WHERE id = ?",
+            params,
         )
         conn.commit()
     return hr_email_prefs_get(int(user_id))

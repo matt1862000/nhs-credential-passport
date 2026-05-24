@@ -1163,11 +1163,7 @@ def hr_email_preferences_get(request: Request):
     if not prefs:
         raise HTTPException(status_code=400, detail="HR account required")
     summary = db.hr_inbox_activity_summary((hr.get("current_trust") or "").strip())
-    return {
-        **prefs,
-        "email": hr_email.hr_delivery_email(prefs.get("email")),
-        "inbox_summary": summary,
-    }
+    return {**prefs, "inbox_summary": summary}
 
 
 @router.put("/hr/email-preferences")
@@ -1185,10 +1181,20 @@ async def hr_email_preferences_put(request: Request):
         raise HTTPException(status_code=400, detail="digest_enabled must be a boolean")
     if instant is not None and not isinstance(instant, bool):
         raise HTTPException(status_code=400, detail="instant_enabled must be a boolean")
+    set_notification_email = "notification_email" in body
+    notification_email = body.get("notification_email")
+    if set_notification_email:
+        if notification_email is not None and not isinstance(notification_email, str):
+            raise HTTPException(status_code=400, detail="notification_email must be a string")
+        norm = (notification_email or "").strip().lower()
+        if norm and (len(norm) > 254 or not EMAIL_RE.match(norm)):
+            raise HTTPException(status_code=400, detail="Enter a valid email address")
     prefs = db.hr_email_prefs_set(
         int(hr["id"]),
         digest_enabled=digest if isinstance(digest, bool) else None,
         instant_enabled=instant if isinstance(instant, bool) else None,
+        notification_email=notification_email if isinstance(notification_email, str) else None,
+        set_notification_email=set_notification_email,
     )
     if not prefs:
         raise HTTPException(status_code=400, detail="HR account required")
