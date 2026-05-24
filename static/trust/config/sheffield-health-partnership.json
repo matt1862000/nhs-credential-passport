@@ -203,6 +203,11 @@
     "label": "ESR Compliance & Competency (Sheffield SHSC / 457)",
     "assign_all_rows_to_signed_in_user": true,
     "person_columns_are_audit_only": true,
+    "esr_vpd_codes": ["457"],
+    "esr_org_prefixes": ["457"],
+    "esr_vpd_to_ods": {
+      "457": "TAH"
+    },
     "notes": [
       "In this export, Last Updated By shows who last updated the record in ESR (often a trainer or admin), not the learner.",
       "If you exported View My Compliance, every row is your training — DocPass assigns them to your profile.",

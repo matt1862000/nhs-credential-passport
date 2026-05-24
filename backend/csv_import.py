@@ -5,9 +5,12 @@ Parse completion CSV for bulk issue. Supports canonical headers and common alias
 import csv
 import io
 import re
-from dataclasses import dataclass
+from collections import Counter
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 from typing import Optional
+
+from . import trust_packs
 
 # Rows filtered when an explicit learner/person column names someone else.
 SKIP_OTHER_PERSON = "SKIP:other_person"
@@ -312,6 +315,7 @@ class ImportProfileContext:
     current_trust: str = ""
     personal_scope: bool = True  # when True, scope import to signed-in user
     esr_import_config: Optional[dict] = None  # trust pack esr_import section
+    esr_vpd_to_ods: Optional[dict] = None  # ESR VPD code -> NHS ODS from detected pack
 
 
 # Human labels for column-mapping UI (canonical field -> label).
@@ -452,6 +456,213 @@ def _build_col_map(
     return col_map, None
 
 
+def _esr_org_prefix_from_competency(raw: str) -> Optional[str]:
+    """First segment of pipe-delimited competency cell when it looks like an ESR org code."""
+    t = (raw or "").strip().strip('"').strip()
+    if not t or "|" not in t:
+        return None
+    first = t.split("|", 1)[0].strip().upper()
+    if not first or first in {"NHS", "CSTF", "LOCAL", "CORE", "MANDATORY", "DEMO"}:
+        return None
+    if re.match(r"^[A-Z0-9]{2,6}$", first):
+        return first
+    return None
+
+
+def detect_esr_employer_from_csv(
+    text: str,
+    header_cells: list[str],
+    col_map: dict[int, str],
+    *,
+    profile: Optional[ImportProfileContext] = None,
+) -> dict:
+    """Infer employer trust from dominant VPD / competency org prefix values in the CSV."""
+    vpd_idx = next((i for i, c in col_map.items() if c == "esr_vpd"), None)
+    comp_idx = next((i for i, c in col_map.items() if c == "esr_competency_name"), None)
+    vpd_counts: Counter[str] = Counter()
+    prefix_counts: Counter[str] = Counter()
+    sample_rows = 0
+
+    stream = io.StringIO(text)
+    reader = csv.reader(stream)
+    next(reader, None)
+    for cells in reader:
+        if all(not (c or "").strip() for c in cells):
+            continue
+        sample_rows += 1
+        if sample_rows > 500:
+            break
+        if vpd_idx is not None and vpd_idx < len(cells):
+            vpd = (cells[vpd_idx] or "").strip()
+            if vpd:
+                vpd_counts[vpd.upper()] += 1
+        if comp_idx is not None and comp_idx < len(cells):
+            pfx = _esr_org_prefix_from_competency(cells[comp_idx])
+            if pfx:
+                prefix_counts[pfx] += 1
+
+    dominant_vpd = vpd_counts.most_common(1)[0][0] if vpd_counts else None
+    dominant_prefix = prefix_counts.most_common(1)[0][0] if prefix_counts else None
+
+    matched_pack_id: Optional[str] = None
+    match_source: Optional[str] = None
+    if dominant_vpd:
+        matched_pack_id = trust_packs.pack_id_for_esr_vpd(dominant_vpd)
+        if matched_pack_id:
+            match_source = "vpd"
+    if not matched_pack_id and dominant_prefix:
+        matched_pack_id = trust_packs.pack_id_for_esr_org_prefix(dominant_prefix)
+        if matched_pack_id:
+            match_source = "org_prefix"
+
+    summary = trust_packs.pack_summary(matched_pack_id) if matched_pack_id else {}
+    profile_pack_id = (
+        trust_packs.pack_id_for_trust_name(profile.current_trust) if profile else None
+    )
+    profile_trust = (profile.current_trust or "").strip() if profile else ""
+
+    return {
+        "dominant_vpd": dominant_vpd,
+        "dominant_org_prefix": dominant_prefix,
+        "sample_rows": sample_rows,
+        "matched_pack_id": matched_pack_id,
+        "trust_display_name": summary.get("trust_display_name"),
+        "nhs_ods": summary.get("nhs_ods"),
+        "match_source": match_source,
+        "profile_pack_id": profile_pack_id,
+        "profile_trust_name": profile_trust or None,
+        "profile_trust_mismatch": bool(
+            matched_pack_id and profile_pack_id and matched_pack_id != profile_pack_id
+        ),
+    }
+
+
+def _effective_esr_import_config(
+    profile: Optional[ImportProfileContext],
+    detected: dict,
+) -> Optional[dict]:
+    """Prefer CSV-detected trust pack import rules when we recognise the employer."""
+    detected_pack = detected.get("matched_pack_id")
+    if detected_pack:
+        cfg = trust_packs.esr_import_config_for_pack_id(str(detected_pack))
+        if cfg:
+            return cfg
+    if profile and profile.esr_import_config:
+        return profile.esr_import_config
+    return None
+
+
+def _enrich_profile_for_csv(
+    profile: Optional[ImportProfileContext],
+    detected: dict,
+) -> Optional[ImportProfileContext]:
+    cfg = _effective_esr_import_config(profile, detected)
+    if not profile and not cfg:
+        return profile
+    vpd_map = None
+    if isinstance(cfg, dict):
+        raw_map = cfg.get("esr_vpd_to_ods")
+        if isinstance(raw_map, dict):
+            vpd_map = {str(k).strip().upper(): str(v).strip().upper() for k, v in raw_map.items() if k and v}
+    trust_name = (profile.current_trust if profile else "") or ""
+    if not trust_name.strip() and detected.get("trust_display_name"):
+        trust_name = str(detected["trust_display_name"])
+    if not profile:
+        return ImportProfileContext(
+            current_trust=trust_name,
+            esr_import_config=cfg,
+            esr_vpd_to_ods=vpd_map,
+            personal_scope=True,
+        )
+    return replace(
+        profile,
+        current_trust=trust_name or profile.current_trust,
+        esr_import_config=cfg,
+        esr_vpd_to_ods=vpd_map,
+    )
+
+
+def _employer_detection_notes(detected: dict) -> list[str]:
+    notes: list[str] = []
+    if not detected.get("matched_pack_id"):
+        if detected.get("dominant_vpd") or detected.get("dominant_org_prefix"):
+            bits = []
+            if detected.get("dominant_vpd"):
+                bits.append(f"VPD {detected['dominant_vpd']}")
+            if detected.get("dominant_org_prefix"):
+                bits.append(f"prefix {detected['dominant_org_prefix']}")
+            notes.append(
+                "Employer codes in this CSV (" + ", ".join(bits) + ") are not mapped to a known trust pack yet."
+            )
+        return notes
+    label = detected.get("trust_display_name") or detected.get("matched_pack_id")
+    src_bits = []
+    if detected.get("dominant_vpd"):
+        src_bits.append(f"VPD {detected['dominant_vpd']}")
+    if detected.get("dominant_org_prefix"):
+        src_bits.append(f"competency prefix {detected['dominant_org_prefix']}")
+    src = f" ({', '.join(src_bits)})" if src_bits else ""
+    notes.append(f"Employer detected from CSV: {label}{src}.")
+    if detected.get("profile_trust_mismatch"):
+        notes.append(
+            f"Your profile trust is “{detected.get('profile_trust_name')}”, but this export looks like "
+            f"“{label}”. Import rules follow the CSV employer."
+        )
+    return notes
+
+
+def _prepare_csv_import(
+    text: str,
+    profile: Optional[ImportProfileContext],
+    *,
+    column_mapping: Optional[dict[str, str]] = None,
+) -> tuple[
+    Optional[ImportProfileContext],
+    list[str],
+    dict[int, str],
+    Optional[str],
+    dict,
+]:
+    """Parse headers, detect CSV employer, and return enriched profile + column map."""
+    stream = io.StringIO(text)
+    reader = csv.reader(stream)
+    try:
+        header_cells = next(reader)
+    except StopIteration:
+        return profile, [], {}, "empty file", {}
+
+    trust_extra = _extra_aliases_from_config(
+        profile.esr_import_config if profile else None
+    )
+    col_map, dup_err = _build_col_map(
+        header_cells,
+        column_mapping=column_mapping,
+        trust_extra=trust_extra,
+    )
+    if dup_err:
+        return profile, header_cells, {}, dup_err, {}
+
+    detected = detect_esr_employer_from_csv(
+        text, header_cells, col_map, profile=profile
+    )
+    enriched = _enrich_profile_for_csv(profile, detected)
+    new_extra = _extra_aliases_from_config(
+        enriched.esr_import_config if enriched else None
+    )
+    if new_extra != trust_extra:
+        col_map, dup_err = _build_col_map(
+            header_cells,
+            column_mapping=column_mapping,
+            trust_extra=new_extra,
+        )
+        if dup_err:
+            return enriched, header_cells, {}, dup_err, detected
+        detected = detect_esr_employer_from_csv(
+            text, header_cells, col_map, profile=enriched
+        )
+    return enriched, header_cells, col_map, None, detected
+
+
 def _esr_missing_required(present: set[str]) -> list[str]:
     missing: list[str] = []
     if not (present & ESR_EXPIRY_CANONICAL):
@@ -468,16 +679,17 @@ def analyze_csv_import(
     profile: Optional[ImportProfileContext] = None,
 ) -> dict:
     """Inspect headers and suggest column mapping before import."""
-    trust_cfg = (profile.esr_import_config if profile else None) or {}
-    trust_extra = _extra_aliases_from_config(trust_cfg)
     if len(text.encode("utf-8")) > MAX_CSV_BYTES:
         return {"fatal_error": "file too large"}
-    stream = io.StringIO(text)
-    reader = csv.reader(stream)
-    try:
-        header_cells = next(reader)
-    except StopIteration:
-        return {"fatal_error": "empty file"}
+
+    enriched, header_cells, col_map, dup_err, detected = _prepare_csv_import(
+        text, profile
+    )
+    if dup_err:
+        return {"fatal_error": dup_err}
+
+    trust_cfg = (enriched.esr_import_config if enriched else None) or {}
+    trust_extra = _extra_aliases_from_config(trust_cfg)
     headers = [(h or "").strip() for h in header_cells if (h or "").strip()]
     columns: list[dict] = []
     for h in headers:
@@ -490,9 +702,6 @@ def analyze_csv_import(
                 "confidence": confidence,
             }
         )
-    col_map, dup_err = _build_col_map(header_cells, trust_extra=trust_extra)
-    if dup_err:
-        return {"fatal_error": dup_err}
     winning_by_header: dict[str, str] = {}
     for idx, canonical in col_map.items():
         raw = (header_cells[idx] or "").strip()
@@ -513,6 +722,7 @@ def analyze_csv_import(
     present = set(col_map.values())
     is_esr = _detect_esr_layout(present)
     notes: list[str] = []
+    notes.extend(_employer_detection_notes(detected))
     if isinstance(trust_cfg.get("notes"), list):
         notes.extend(str(n) for n in trust_cfg["notes"] if n)
     elif trust_cfg.get("notes"):
@@ -534,6 +744,7 @@ def analyze_csv_import(
         }
         if trust_cfg
         else None,
+        "detected_employer": detected,
         "columns": columns,
         "notes": notes,
         "missing_required": _esr_missing_required(present) if is_esr else [],
@@ -763,6 +974,11 @@ def _row_to_record(
         )
         expiry_s = g("expiry_date") or g("next_review_date")
         ods = g("issuing_trust_ods_code") or g("esr_vpd") or ""
+        ods_key = ods.strip().upper()
+        if profile and profile.esr_vpd_to_ods:
+            mapped_ods = profile.esr_vpd_to_ods.get(ods_key)
+            if mapped_ods:
+                ods = mapped_ods
         trust_name = g("issuing_trust_name") or ""
         if profile and not trust_name.strip():
             trust_name = (profile.current_trust or "").strip()
@@ -882,23 +1098,18 @@ def parse_completion_csv(
     if len(text.encode("utf-8")) > MAX_CSV_BYTES:
         return [], "file too large"
 
-    stream = io.StringIO(text)
-    reader = csv.reader(stream)
-    try:
-        header_cells = next(reader)
-    except StopIteration:
-        return [], "empty file"
-
-    trust_extra = _extra_aliases_from_config(
-        profile.esr_import_config if profile else None
-    )
-    col_map, dup_err = _build_col_map(
-        header_cells,
-        column_mapping=column_mapping,
-        trust_extra=trust_extra,
+    profile, header_cells, col_map, dup_err, _detected = _prepare_csv_import(
+        text, profile, column_mapping=column_mapping
     )
     if dup_err:
         return [], dup_err
+
+    stream = io.StringIO(text)
+    reader = csv.reader(stream)
+    try:
+        next(reader)
+    except StopIteration:
+        return [], "empty file"
 
     present = set(col_map.values())
     is_esr_layout = _detect_esr_layout(present)

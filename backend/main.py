@@ -249,7 +249,8 @@ async def api_import_csv_analyze(
     if result.get("fatal_error"):
         return CsvImportAnalyzeResponse(fatal_error=result["fatal_error"])
     return CsvImportAnalyzeResponse(**{k: result[k] for k in (
-        "headers", "esr_layout", "trust_format", "columns", "notes", "missing_required", "detected_mapping"
+        "headers", "esr_layout", "trust_format", "detected_employer",
+        "columns", "notes", "missing_required", "detected_mapping",
     ) if k in result})
 
 

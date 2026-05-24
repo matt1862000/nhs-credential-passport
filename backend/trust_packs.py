@@ -114,11 +114,76 @@ def esr_import_config_for_trust(trust_name: str) -> Optional[dict[str, Any]]:
     pack_id = pack_id_for_trust_name(trust_name)
     if not pack_id:
         return None
+    return esr_import_config_for_pack_id(pack_id)
+
+
+def esr_import_config_for_pack_id(pack_id: str) -> Optional[dict[str, Any]]:
     pack = load_trust_pack(pack_id)
     if not pack:
         return None
     cfg = pack.get("esr_import")
     return cfg if isinstance(cfg, dict) else None
+
+
+def all_pack_ids() -> list[str]:
+    return sorted(set(ODS_TO_PACK_ID.values()))
+
+
+def pack_id_for_esr_vpd(vpd: str) -> Optional[str]:
+    key = (vpd or "").strip().upper()
+    if not key:
+        return None
+    for pack_id in all_pack_ids():
+        cfg = esr_import_config_for_pack_id(pack_id) or {}
+        codes = {str(c).strip().upper() for c in (cfg.get("esr_vpd_codes") or []) if c}
+        if key in codes:
+            return pack_id
+    return None
+
+
+def pack_id_for_esr_org_prefix(prefix: str) -> Optional[str]:
+    key = (prefix or "").strip().upper()
+    if not key or key in {"NHS", "CSTF", "LOCAL", "CORE", "MANDATORY", "DEMO"}:
+        return None
+    for pack_id in all_pack_ids():
+        cfg = esr_import_config_for_pack_id(pack_id) or {}
+        prefixes = {str(p).strip().upper() for p in (cfg.get("esr_org_prefixes") or []) if p}
+        if key in prefixes:
+            return pack_id
+    return None
+
+
+def pack_summary(pack_id: str) -> Optional[dict[str, Any]]:
+    pack = load_trust_pack(pack_id)
+    if not pack:
+        return None
+    ods = (pack.get("ods") or "").strip().upper() or None
+    for code, pid in ODS_TO_PACK_ID.items():
+        if pid == pack_id and not ods:
+            ods = code
+            break
+    return {
+        "pack_id": pack_id,
+        "trust_display_name": (pack.get("display_name") or "").strip() or None,
+        "nhs_ods": ods,
+    }
+
+
+def ods_for_esr_vpd(vpd: str, *, pack_id: Optional[str] = None) -> Optional[str]:
+    key = (vpd or "").strip().upper()
+    if not key:
+        return None
+    pack_ids = [pack_id] if pack_id else all_pack_ids()
+    for pid in pack_ids:
+        if not pid:
+            continue
+        cfg = esr_import_config_for_pack_id(pid) or {}
+        mapping = cfg.get("esr_vpd_to_ods") or {}
+        if isinstance(mapping, dict):
+            mapped = mapping.get(key) or mapping.get(key.lower())
+            if mapped:
+                return str(mapped).strip().upper()
+    return None
 
 
 def _title_case_trust_name(name: str) -> str:

@@ -456,6 +456,9 @@
       margin: 0 0 0.75rem 0; padding: 0.65rem 0.85rem; background: #e8f4fd;
       border-left: 4px solid var(--nhsuk-link); font-size: 0.875rem;
     }
+    .esr-map-trust--warn {
+      background: #fff8e8; border-left-color: #856404;
+    }
     .esr-map-notes { margin: 0 0 0.85rem 0; padding-left: 1.1rem; font-size: 0.875rem; color: var(--nhsuk-secondary-text); }
     .esr-map-notes li { margin: 0.25rem 0; }
     .esr-map-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; margin-top: 0.5rem; }
@@ -1564,8 +1567,24 @@
       });
 
       var html = '';
+      var emp = data.detected_employer || {};
+      if (emp.trust_display_name || emp.dominant_vpd) {
+        var empCls = 'esr-map-trust' + (emp.profile_trust_mismatch ? ' esr-map-trust--warn' : '');
+        var empLine = '<strong>Employer from CSV:</strong> ' + escapeHtml(emp.trust_display_name || 'Unknown trust');
+        var empMeta = [];
+        if (emp.dominant_vpd) empMeta.push('VPD ' + escapeHtml(String(emp.dominant_vpd)));
+        if (emp.dominant_org_prefix && emp.dominant_org_prefix !== emp.dominant_vpd) {
+          empMeta.push('prefix ' + escapeHtml(String(emp.dominant_org_prefix)));
+        }
+        if (emp.nhs_ods) empMeta.push('ODS ' + escapeHtml(String(emp.nhs_ods)));
+        if (empMeta.length) empLine += ' (' + empMeta.join(' · ') + ')';
+        if (emp.profile_trust_mismatch && emp.profile_trust_name) {
+          empLine += '. <span style="font-weight:600;">Profile trust differs</span> — import rules follow the CSV employer.';
+        }
+        html += '<p class="' + empCls + '">' + empLine + '</p>';
+      }
       if (data.trust_format && data.trust_format.label) {
-        html += '<p class="esr-map-trust"><strong>Detected format:</strong> ' + escapeHtml(data.trust_format.label) + '</p>';
+        html += '<p class="esr-map-trust"><strong>Import format:</strong> ' + escapeHtml(data.trust_format.label) + '</p>';
       }
 
       var summaryCls = 'esr-map-summary';

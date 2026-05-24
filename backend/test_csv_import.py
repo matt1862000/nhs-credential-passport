@@ -101,6 +101,49 @@ class CsvImportEsrTests(unittest.TestCase):
         self.assertIsNone(fatal)
         self.assertEqual(len([p for p in parsed if p.record]), 1)
 
+    def test_detect_employer_from_vpd_without_profile_pack(self):
+        csv_text = (
+            "Competency Name,Expiry Date,Date Last Awarded,Title,VPD\n"
+            '"457|LOCAL|Clinical Risk|","30-Nov-2028","2025/12/02 00:00:00",'
+            '"457 Clinical Risk","457"\n'
+        )
+        profile = ImportProfileContext(
+            display_name="Talukdar, Dr Raihan",
+            staff_identifier="7014665",
+            current_trust="",
+        )
+        result = analyze_csv_import(csv_text, profile=profile)
+        self.assertIsNone(result.get("fatal_error"))
+        emp = result.get("detected_employer") or {}
+        self.assertEqual(emp.get("dominant_vpd"), "457")
+        self.assertEqual(emp.get("matched_pack_id"), "sheffield-health-partnership")
+        self.assertEqual(emp.get("match_source"), "vpd")
+        self.assertIn("Employer detected from CSV", " ".join(result.get("notes") or []))
+        parsed, fatal = parse_completion_csv(csv_text, profile=profile)
+        self.assertIsNone(fatal)
+        valid = [p for p in parsed if p.record]
+        self.assertEqual(len(valid), 1)
+        self.assertEqual(valid[0].record.issuing_trust_ods_code, "TAH")
+
+    def test_detect_employer_mismatch_uses_csv_pack(self):
+        csv_text = (
+            "Competency Name,Expiry Date,Date Last Awarded,Title,VPD\n"
+            '"457|LOCAL|Clinical Risk|","30-Nov-2028","2025/12/02 00:00:00",'
+            '"457 Clinical Risk","457"\n'
+        )
+        profile = ImportProfileContext(
+            display_name="Talukdar, Dr Raihan",
+            staff_identifier="7014665",
+            current_trust="Rotherham Doncaster and South Humber NHS Foundation Trust",
+            esr_import_config={"label": "Wrong pack"},
+        )
+        result = analyze_csv_import(csv_text, profile=profile)
+        emp = result.get("detected_employer") or {}
+        self.assertTrue(emp.get("profile_trust_mismatch"))
+        self.assertEqual(emp.get("matched_pack_id"), "sheffield-health-partnership")
+        self.assertIn("Import rules follow the CSV employer", " ".join(result.get("notes") or []))
+        self.assertIn("Sheffield SHSC", (result.get("trust_format") or {}).get("label", ""))
+
 
 if __name__ == "__main__":
     unittest.main()

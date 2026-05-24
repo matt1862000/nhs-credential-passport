@@ -101,11 +101,25 @@ class CsvImportColumnMapping(BaseModel):
     confidence: str = "unmapped"
 
 
+class CsvImportDetectedEmployer(BaseModel):
+    dominant_vpd: Optional[str] = None
+    dominant_org_prefix: Optional[str] = None
+    sample_rows: int = 0
+    matched_pack_id: Optional[str] = None
+    trust_display_name: Optional[str] = None
+    nhs_ods: Optional[str] = None
+    match_source: Optional[str] = None
+    profile_pack_id: Optional[str] = None
+    profile_trust_name: Optional[str] = None
+    profile_trust_mismatch: bool = False
+
+
 class CsvImportAnalyzeResponse(BaseModel):
     fatal_error: Optional[str] = None
     headers: list[str] = []
     esr_layout: bool = False
     trust_format: Optional[dict] = None
+    detected_employer: Optional[CsvImportDetectedEmployer] = None
     columns: list[CsvImportColumnMapping] = []
     notes: list[str] = []
     missing_required: list[str] = []
