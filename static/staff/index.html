@@ -590,7 +590,7 @@
               <option value="hr-verified">Verified by HR</option>
               <option value="hr-pending">Pending verification</option>
               <option value="hr-declined">Declined</option>
-              <option value="hr-not-shared">Not yet shared with HR</option>
+              <option value="hr-not-shared">Awaiting send to HR</option>
             </optgroup>
           </select>
         </div>
@@ -1364,12 +1364,7 @@
     async function verifyAllWithHr() {
       if (!canRequestHrVerification()) return;
       var list = getStored().filter(function (c) { return c && c.credential_id && !c.revoked; });
-      var ids = list.filter(function (c) {
-        if (hasRenewalReplacement(list, c)) return false;
-        var v = (verifiedMap && verifiedMap[String(c.credential_id).trim()]) || null;
-        var st = v && v.status ? String(v.status).toUpperCase().trim() : '';
-        return !(v && v.shared && (st === 'VERIFIED' || st === 'PENDING'));
-      }).map(function (c) { return c.credential_id; });
+      var ids = list.filter(function (c) { return isAwaitingHrShare(c, list); }).map(function (c) { return c.credential_id; });
       if (!ids.length) {
         alert('No training records left to send to HR.');
         return;
@@ -2027,6 +2022,29 @@
       });
     }
 
+    /** Same rules as auto-send: skip superseded rows and duplicate copies already sent. */
+    function isAwaitingHrShare(c, list) {
+      list = list || getStored();
+      if (!c || !c.credential_id || c.revoked) return false;
+      if (hasRenewalReplacement(list, c)) return false;
+      var module = (c.module_name || '').trim().toLowerCase();
+      var exp = String(c.expiry_date || '');
+      if (module && exp) {
+        var dupSent = list.some(function (other) {
+          if (other.credential_id === c.credential_id || other.revoked) return false;
+          if ((other.module_name || '').trim().toLowerCase() !== module) return false;
+          if (String(other.expiry_date || '') !== exp) return false;
+          var ov = (verifiedMap && verifiedMap[String(other.credential_id).trim()]) || null;
+          var ost = ov && ov.status ? String(ov.status).toUpperCase().trim() : '';
+          return !!(ov && ov.shared && (ost === 'VERIFIED' || ost === 'PENDING'));
+        });
+        if (dupSent) return false;
+      }
+      var v = (verifiedMap && verifiedMap[String(c.credential_id).trim()]) || null;
+      var st = v && v.status ? String(v.status).toUpperCase().trim() : '';
+      return !(v && v.shared && (st === 'VERIFIED' || st === 'PENDING'));
+    }
+
     function getFilteredList() {
       const list = getStored();
       const statusFilter = (document.getElementById('filterStatus') || {}).value || '';
@@ -2039,7 +2057,7 @@
             if (statusFilter === 'hr-verified'    && !(v && v.shared && st === 'VERIFIED'))  return false;
             if (statusFilter === 'hr-pending'     && !(v && v.shared && st === 'PENDING'))   return false;
             if (statusFilter === 'hr-declined'    && !(v && v.shared && st === 'DECLINED'))  return false;
-            if (statusFilter === 'hr-not-shared'  && (v && v.shared))                        return false;
+            if (statusFilter === 'hr-not-shared'  && !isAwaitingHrShare(c, list))            return false;
           } else {
             const status = c.revoked ? 'revoked' : statusClass(c.expiry_date, false);
             if (status !== statusFilter) return false;
@@ -2268,10 +2286,7 @@
       return (ids || []).filter(function (id) {
         if (!id) return false;
         var c = list.find(function (x) { return x.credential_id === id; });
-        if (c && hasRenewalReplacement(list, c)) return false;
-        var v = (verifiedMap && verifiedMap[String(id).trim()]) || null;
-        var st = v && v.status ? String(v.status).toUpperCase().trim() : '';
-        return !(v && v.shared && (st === 'VERIFIED' || st === 'PENDING'));
+        return c && isAwaitingHrShare(c, list);
       });
     }
 
@@ -2507,12 +2522,7 @@
 
     function updateVerifyAllHrControls() {
       var list = getStored().filter(function (c) { return c && c.credential_id && !c.revoked; });
-      var unverified = list.filter(function (c) {
-        if (hasRenewalReplacement(list, c)) return false;
-        var v = (verifiedMap && verifiedMap[String(c.credential_id).trim()]) || null;
-        var st = v && v.status ? String(v.status).toUpperCase().trim() : '';
-        return !(v && v.shared && (st === 'VERIFIED' || st === 'PENDING'));
-      });
+      var unverified = list.filter(function (c) { return isAwaitingHrShare(c, list); });
       var count = unverified.length;
       var ok = isProfileComplete();
       var btnList = document.getElementById('btnVerifyAllHrList');

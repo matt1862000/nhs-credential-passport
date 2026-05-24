@@ -23,6 +23,7 @@ from .rate_limit import limiter
 from . import crypto
 from . import db
 from .credential_service import (
+    completion_dedupe_key,
     issue_credentials,
     verify_credential,
     revoke_credential,
@@ -275,6 +276,7 @@ def _csv_import_issue_stream(
     )
     credentials_out: list[IssuedCredentialInfo] = []
     skipped_dups = 0
+    batch_keys = set(existing_keys)
     for idx, p in enumerate(valid):
         yield _ndjson_progress_line(
             "import",
@@ -284,17 +286,17 @@ def _csv_import_issue_stream(
         )
         rec = p.record
         assert rec is not None
-        row_keys = wallet_dedupe_keys(db.user_wallet_get(uid))
         results, sub_skip = issue_credentials(
             [rec],
             base,
             include_pdf=include_pdf and total <= 1,
-            skip_duplicate_keys=row_keys,
+            skip_duplicate_keys=batch_keys,
         )
         skipped_dups += sub_skip
         r0 = results[0] if results else None
         if r0 is None:
             continue
+        batch_keys.add(completion_dedupe_key(rec))
         credentials_out.append(
             IssuedCredentialInfo(
                 credential_id=r0["credential_id"],
