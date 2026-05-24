@@ -239,12 +239,15 @@
               : '';
             return '<li class="' + cls + '">' + esc(credLabel(c)) + ' — ' + esc(when) + esc(extra) + '</li>';
           }).join('') + '</ul>';
-          var q = encodeURIComponent(item.email || item.gmc_number || item.display_name || '');
+          var openHref = item.user_id != null && item.user_id !== ''
+            ? '/static/hr/search.html?doctor=' + encodeURIComponent(String(item.user_id))
+              + (item.display_name ? '&name=' + encodeURIComponent(item.display_name) : '')
+            : '/static/hr/search.html?q=' + encodeURIComponent(item.email || item.gmc_number || item.display_name || '');
           return (
             '<tr><td><span class="hr-doctor-name">' + esc(doctorLabel(item)) + '</span>'
             + '<div class="hr-doctor-meta">' + esc(item.email || '') + (item.gmc_number ? ' · GMC ' + esc(item.gmc_number) : '') + '</div></td>'
             + '<td>' + credHtml + '</td>'
-            + '<td class="hr-open-wrap"><a class="hr-open-btn hr-open-btn--small" href="/static/hr/search.html?q=' + q + '">Open</a></td></tr>'
+            + '<td class="hr-open-wrap"><a class="hr-open-btn hr-open-btn--small" href="' + openHref + '">Open</a></td></tr>'
           );
         }).join('');
       }

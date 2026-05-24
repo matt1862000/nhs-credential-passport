@@ -602,6 +602,13 @@
             </optgroup>
           </select>
         </div>
+        <div class="nhsuk-form-group">
+          <label class="nhsuk-label" for="trainingSort">Sort by</label>
+          <select class="nhsuk-select" id="trainingSort" aria-label="Sort training list">
+            <option value="name">A–Z</option>
+            <option value="expiry">Expiry date (soonest first)</option>
+          </select>
+        </div>
         <div class="nhsuk-form-group" style="align-self:flex-end;">
           <div class="nhsuk-checkboxes">
             <div class="nhsuk-checkboxes__item" style="margin-bottom:0;">
@@ -1372,11 +1379,24 @@
       });
     });
 
+    var TRAINING_SORT_LS_KEY = 'staffTrainingSort';
+
     var filterStatusEl = document.getElementById('filterStatus');
     if (filterStatusEl) filterStatusEl.addEventListener('change', renderList);
     wireTrainingSearchSuggest();
     var showSupersededEl = document.getElementById('showSuperseded');
     if (showSupersededEl) showSupersededEl.addEventListener('change', renderList);
+    var trainingSortEl = document.getElementById('trainingSort');
+    if (trainingSortEl) {
+      try {
+        var savedSort = localStorage.getItem(TRAINING_SORT_LS_KEY);
+        if (savedSort === 'expiry' || savedSort === 'name') trainingSortEl.value = savedSort;
+      } catch (eSort) { /* ignore */ }
+      trainingSortEl.addEventListener('change', function () {
+        try { localStorage.setItem(TRAINING_SORT_LS_KEY, trainingSortEl.value); } catch (eSortSave) { /* ignore */ }
+        renderList();
+      });
+    }
     function closeBulkActionsMenu() {
       var d = document.getElementById('bulkActionsMenu');
       if (d && d.open) d.open = false;
@@ -2318,6 +2338,32 @@
       return String((document.getElementById('trainingSearchInput') || {}).value || '').trim().toLowerCase();
     }
 
+    function getTrainingSortMode() {
+      var el = document.getElementById('trainingSort');
+      var mode = el ? String(el.value || '') : '';
+      return mode === 'expiry' ? 'expiry' : 'name';
+    }
+
+    function sortTrainingRecords(items) {
+      var mode = getTrainingSortMode();
+      return (items || []).slice().sort(function (a, b) {
+        if (mode === 'expiry') {
+          var ae = String(a.expiry_date || '').trim();
+          var be = String(b.expiry_date || '').trim();
+          if (!ae && !be) return 0;
+          if (!ae) return 1;
+          if (!be) return -1;
+          var byDate = ae.localeCompare(be);
+          if (byDate !== 0) return byDate;
+        }
+        return displayModuleName(a.module_name).localeCompare(
+          displayModuleName(b.module_name),
+          undefined,
+          { sensitivity: 'base' }
+        );
+      });
+    }
+
     function getFilteredList() {
       const list = getStored();
       const statusFilter = (document.getElementById('filterStatus') || {}).value || '';
@@ -2371,7 +2417,7 @@
         }
       }
 
-      const filtered = getFilteredList();
+      const filtered = sortTrainingRecords(getFilteredList());
       var searchActive = !!getTrainingSearchQuery();
       const emptyMsg = list.length === 0
         ? 'No training yet. Add one from the \"Add training\" tab.'

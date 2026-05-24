@@ -2443,7 +2443,8 @@
           });
         }
 
-        async function runDoctorSearch() {
+        async function runDoctorSearch(opts) {
+          opts = opts || {};
           var inp = document.getElementById('doctorSearchInput');
           var statusEl = document.getElementById('searchStatus');
           var resultsEl = document.getElementById('searchResultsList');
@@ -2456,6 +2457,10 @@
             var results = data.results || [];
             if (statusEl) statusEl.textContent = results.length ? '' : 'No matching clinicians found.';
             if (!results.length) { if (resultsEl) resultsEl.innerHTML = ''; return; }
+            if (results.length === 1 && opts.autoOpenSingle) {
+              await openSearchDoctorView(results[0].id, results[0].display_name || results[0].email || '');
+              return;
+            }
             if (resultsEl) {
               resultsEl.innerHTML = results.map(function (doc) {
                 var name = esc(doc.display_name || doc.email || '—');
@@ -2596,7 +2601,14 @@
           show(document.getElementById('searchView'), true);
           show(document.getElementById('searchDoctorView'), false);
           if (doctorId) {
-            await openSearchDoctorView(doctorId, 'Clinician');
+            await openSearchDoctorView(doctorId, qs().get('name') || 'Clinician');
+          } else {
+            var qParam = (qs().get('q') || '').trim();
+            if (qParam) {
+              var inp = document.getElementById('doctorSearchInput');
+              if (inp) inp.value = qParam;
+              await runDoctorSearch({ autoOpenSingle: true });
+            }
           }
           return;
         }

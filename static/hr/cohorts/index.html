@@ -1375,7 +1375,10 @@
         } else if (membersTb) {
           membersTb.innerHTML = members.map(function (m) {
             var s = m.summary || {};
-            var searchUrl = '/static/hr/search.html?q=' + encodeURIComponent(m.email || m.display_name || '');
+            var searchUrl = m.user_id != null && m.user_id !== ''
+              ? '/static/hr/search.html?doctor=' + encodeURIComponent(String(m.user_id))
+                + (m.display_name ? '&name=' + encodeURIComponent(m.display_name) : '')
+              : '/static/hr/search.html?q=' + encodeURIComponent(m.email || m.display_name || '');
             return '<tr><td>' + esc(memberDisplayLabel(m)) + '</td><td>' + esc(s.met || 0)
               + '</td><td>' + esc(s.expiring || 0) + '</td><td>' + esc(s.needs_review || 0)
               + '</td><td>' + esc(s.gap || 0)
