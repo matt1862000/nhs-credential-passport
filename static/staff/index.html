@@ -1133,9 +1133,9 @@
         step: 4,
         total: 4,
         message:
-          'Add your first training record using the <strong>Add training</strong> tab below — it is sent to HR automatically when you add it.',
-        ctaLabel: 'Add training',
-        ctaHref: '/static/staff/#add',
+          'Import existing training from <a href="/static/staff/#import">ESR</a> using the <strong>Import from ESR</strong> tab below.',
+        ctaLabel: 'Import from ESR',
+        ctaHref: '/static/staff/#import',
       });
     }
 
@@ -1699,11 +1699,13 @@
 
     function walletMatchesEsrNeedsFixModule(esrModule) {
       if (!esrModule) return false;
+      var target = normalizeEsrModuleLabel(esrModule);
+      if (!target) return false;
       var list = getStored();
       for (var i = 0; i < list.length; i++) {
         var c = list[i];
         if (!c || c.revoked) continue;
-        if (modulesLikelySame(esrModule, displayModuleName(c.module_name))) return true;
+        if (normalizeEsrModuleLabel(displayModuleName(c.module_name)) === target) return true;
       }
       return false;
     }
