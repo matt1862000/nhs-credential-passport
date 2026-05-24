@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Optional
 
-# Rows filtered as another person's training (team / trust-wide ESR export).
+# Rows filtered when an explicit learner/person column names someone else.
 SKIP_OTHER_PERSON = "SKIP:other_person"
 SKIP_TEAM_ROW_NO_STAFF = "SKIP:team_export_row_without_staff"
 
@@ -100,14 +100,18 @@ HEADER_ALIASES: dict[str, tuple[str, ...]] = {
         "competancy_name",
     ),
     "esr_person_line": (
-        "last_updated_by",
-        "last_updated",
-        "updated_by",
         "person",
         "employee",
         "learner",
+        "learner_name",
         "user_name",
         "username",
+    ),
+    # Audit metadata in many ESR exports (e.g. Sheffield) — not the learner identity.
+    "esr_last_updated_by": (
+        "last_updated_by",
+        "last_updated",
+        "updated_by",
     ),
     "esr_awarded_by": ("awarded_by", "awarded", "award_by"),
     "esr_acquired_by": ("acquired_by", "acquired"),
@@ -281,6 +285,23 @@ def _split_esr_assignment_line(raw: str) -> tuple[Optional[str], Optional[str]]:
     return None, line
 
 
+def _looks_like_esr_person_line(raw: str) -> bool:
+    """
+    True when a cell names a person/learner (not audit codes like CER/H/USR).
+    Sheffield Compliance exports put the updater in Last Updated By — that must
+    not be treated as the learner; dedicated person columns use this shape.
+    """
+    line = (raw or "").strip()
+    if not line:
+        return False
+    if "|" in line:
+        _, right = line.split("|", 1)
+        return len(right.strip()) > 2
+    if "," in line and len(line) > 5:
+        return True
+    return False
+
+
 @dataclass
 class ImportProfileContext:
     """Signed-in user profile — scopes ESR import to their training only."""
@@ -288,7 +309,7 @@ class ImportProfileContext:
     display_name: str = ""
     staff_identifier: str = ""  # GMC or ESR person number
     current_trust: str = ""
-    personal_scope: bool = True  # when True, skip other people's rows in team exports
+    personal_scope: bool = True  # when True, scope import to signed-in user
 
 
 def _normalize_gmc_digits(raw: str) -> str:
@@ -335,14 +356,17 @@ def _profile_matches_staff(
 
 
 def _extract_esr_staff_from_row(row: dict[str, str]) -> tuple[Optional[str], Optional[str]]:
-    """Try common ESR person columns in priority order."""
+    """Learner identity from explicit person columns (never Last Updated By)."""
     plain_name = (row.get("staff_full_name") or "").strip()
     plain_id = (row.get("staff_identifier") or "").strip()
     if plain_name and "|" not in plain_name:
         return plain_id or None, plain_name
 
-    for key in ("esr_person_line", "esr_awarded_by", "esr_acquired_by", "esr_measured_by"):
-        sid, sname = _split_esr_assignment_line(row.get(key, ""))
+    for key in ("esr_person_line",):
+        raw = row.get(key, "")
+        if not _looks_like_esr_person_line(raw):
+            continue
+        sid, sname = _split_esr_assignment_line(raw)
         if sname:
             return sid, sname
         if sid:
@@ -377,11 +401,13 @@ def _resolve_esr_staff(
                 return None, None, SKIP_OTHER_PERSON
             staff_identifier = profile.staff_identifier.strip() or staff_identifier
             staff_full_name = profile.display_name.strip() or staff_full_name
-        elif multi_person_export:
-            return None, None, SKIP_TEAM_ROW_NO_STAFF
         elif profile.display_name or profile.staff_identifier:
+            # Personal compliance export (e.g. Sheffield ESR): rows belong to the
+            # signed-in user even when Last Updated By shows a trainer/admin.
             staff_identifier = profile.staff_identifier.strip() or staff_identifier
             staff_full_name = profile.display_name.strip() or staff_full_name
+        elif multi_person_export:
+            return None, None, SKIP_TEAM_ROW_NO_STAFF
         else:
             return None, None, "missing staff (no person column and profile incomplete)"
 
@@ -657,12 +683,13 @@ def parse_completion_csv(
             present & {"date_last_awarded", "date_start", "certification_date", "completion_date"}
         ):
             return [], "ESR export: need a completion column (e.g. Date Last Awarded or Date Start)"
-        if not profile and "esr_person_line" not in present and not (
+        if not profile and not (
             {"staff_full_name", "staff_identifier"} <= present
+            or "esr_person_line" in present
         ):
             return [], (
-                "ESR export: missing a person column (e.g. Last Updated By) — "
-                "sign in so we can match rows to your profile, or include staff name columns"
+                "ESR export: sign in so rows can be matched to your profile, "
+                "or include staff_full_name / staff_identifier columns"
             )
     else:
         required = set(HEADER_ALIASES.keys()) - {
@@ -686,9 +713,10 @@ def parse_completion_csv(
         if not required.issubset(present):
             return [], "missing required columns: " + ", ".join(sorted(required - present))
 
-    # Pre-scan ESR rows to detect team-wide exports (multiple staff in one file).
+    # Team-wide roster CSVs name multiple learners in staff_full_name; personal
+    # ESR compliance exports often only have audit columns (Last Updated By).
     multi_person_export = False
-    if is_esr_layout:
+    if is_esr_layout and ("staff_full_name" in present or "esr_person_line" in present):
         preview_rows: list[dict[str, str]] = []
         stream2 = io.StringIO(text)
         reader2 = csv.reader(stream2)
@@ -740,8 +768,8 @@ def parse_completion_csv(
         )
         if err and err.startswith("SKIP:"):
             msg = {
-                SKIP_OTHER_PERSON: "not your training (another person in this export)",
-                SKIP_TEAM_ROW_NO_STAFF: "no person on this row (team export — use View My Compliance)",
+                SKIP_OTHER_PERSON: "not your training (learner column shows someone else)",
+                SKIP_TEAM_ROW_NO_STAFF: "no learner on this row (add staff name columns or sign in)",
             }.get(err, err.replace("SKIP:", "").replace("_", " "))
             out.append(
                 ParsedCsvRow(row_number=file_row_num, record=None, error=msg, skipped=True)
