@@ -95,6 +95,7 @@ def init_db():
         _ensure_visibility_tables(conn)
         _ensure_mandatory_topics_table(conn)
         _ensure_messaging_tables(conn)
+        _ensure_expiry_reminder_sent_table(conn)
         _ensure_hr_attestations_table(conn)
         _ensure_users_provision_columns(conn)
         _ensure_hr_cohorts_tables(conn)
@@ -928,6 +929,116 @@ def _ensure_message_attachments_table(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_msg_attach_message ON message_attachments(message_id)"
     )
+
+
+def _ensure_expiry_reminder_sent_table(conn: sqlite3.Connection) -> None:
+    """Track automatic in-app expiry reminders so clinicians are not nudged repeatedly."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS expiry_reminder_sent (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            hr_trust TEXT NOT NULL,
+            doctor_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            credential_id TEXT NOT NULL,
+            reminder_stage TEXT NOT NULL,
+            module_name TEXT,
+            sent_at TEXT NOT NULL,
+            UNIQUE(doctor_user_id, credential_id, reminder_stage)
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_expiry_reminder_trust ON expiry_reminder_sent(hr_trust, sent_at DESC)"
+    )
+
+
+def expiry_reminder_was_sent(doctor_user_id: int, credential_id: str, stage: str) -> bool:
+    cid = (credential_id or "").strip()
+    st = (stage or "").strip()
+    if not cid or not st:
+        return False
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_expiry_reminder_sent_table(conn)
+        row = conn.execute(
+            """
+            SELECT 1 FROM expiry_reminder_sent
+            WHERE doctor_user_id = ? AND credential_id = ? AND reminder_stage = ?
+            LIMIT 1
+            """,
+            (int(doctor_user_id), cid, st),
+        ).fetchone()
+    return bool(row)
+
+
+def expiry_reminder_mark_sent(
+    *,
+    hr_trust: str,
+    doctor_user_id: int,
+    credential_id: str,
+    stage: str,
+    module_name: Optional[str] = None,
+) -> None:
+    now = datetime.utcnow().isoformat()
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_expiry_reminder_sent_table(conn)
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO expiry_reminder_sent
+                (hr_trust, doctor_user_id, credential_id, reminder_stage, module_name, sent_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                (hr_trust or "").strip(),
+                int(doctor_user_id),
+                (credential_id or "").strip(),
+                (stage or "").strip(),
+                (module_name or "").strip() or None,
+                now,
+            ),
+        )
+        conn.commit()
+
+
+def trust_expiry_reminders_enabled(trust: str) -> bool:
+    """True when at least one premium HR user at the trust has automatic reminders on."""
+    users = hr_premium_users_for_trust(trust)
+    if not users:
+        return False
+    return any(u.get("hr_expiry_reminders_enabled", True) for u in users)
+
+
+def hr_message_sender_for_trust(trust: str) -> Optional[dict]:
+    """Premium HR account used as sender for automated trust messages."""
+    users = hr_premium_users_for_trust(trust)
+    for u in users:
+        if u.get("hr_expiry_reminders_enabled", True):
+            return u
+    return users[0] if users else None
+
+
+def clinicians_at_trust(trust: str) -> list[dict]:
+    """Non-premium users whose current_trust matches (case-insensitive)."""
+    trust_key = (trust or "").strip().lower()
+    if not trust_key:
+        return []
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT id, email, display_name, gmc_number
+            FROM users
+            WHERE premium = 0 AND LOWER(TRIM(COALESCE(current_trust, ''))) = ?
+            ORDER BY display_name COLLATE NOCASE, email COLLATE NOCASE
+            """,
+            (trust_key,),
+        ).fetchall()
+    return [
+        {
+            "id": int(r["id"]),
+            "email": r["email"],
+            "display_name": r["display_name"],
+            "gmc_number": r["gmc_number"],
+        }
+        for r in rows
+    ]
 
 
 # ── Messaging helpers ────────────────────────────────────────────────────────
@@ -2259,6 +2370,10 @@ def _ensure_users_hr_email_columns(conn: sqlite3.Connection) -> None:
         )
     if "hr_notification_email" not in cols:
         conn.execute("ALTER TABLE users ADD COLUMN hr_notification_email TEXT")
+    if "hr_expiry_reminders_enabled" not in cols:
+        conn.execute(
+            "ALTER TABLE users ADD COLUMN hr_expiry_reminders_enabled INTEGER NOT NULL DEFAULT 1"
+        )
 
 
 def _ensure_users_nhs_work_email_column(conn: sqlite3.Connection) -> None:
@@ -2723,6 +2838,9 @@ def _user_public_dict(row: sqlite3.Row, include_password_hash: bool = False) -> 
         "hr_notification_email": row["hr_notification_email"]
         if "hr_notification_email" in keys
         else None,
+        "hr_expiry_reminders_enabled": bool(row["hr_expiry_reminders_enabled"])
+        if "hr_expiry_reminders_enabled" in keys and row["hr_expiry_reminders_enabled"] is not None
+        else True,
     }
     if include_password_hash:
         out["password_hash"] = row["password_hash"]
@@ -2760,7 +2878,8 @@ def user_get_by_id(user_id: int):
             """SELECT id, email, premium, gmc_number, display_name, current_trust,
                       personal_email, must_change_password, onboarding_completed,
                       hr_welcome_message_template, hr_email_digest_enabled,
-                      hr_email_instant_enabled, hr_notification_email
+                      hr_email_instant_enabled, hr_notification_email,
+                      hr_expiry_reminders_enabled
                FROM users WHERE id = ?""",
             (user_id,),
         ).fetchone()
@@ -4099,6 +4218,7 @@ def verifier_link_bundle_payload(link_row: dict) -> Optional[dict]:
 
 
 def _hr_user_row_to_dict(row: sqlite3.Row) -> dict:
+    keys = row.keys()
     return {
         "id": int(row["id"]),
         "email": row["email"],
@@ -4107,6 +4227,9 @@ def _hr_user_row_to_dict(row: sqlite3.Row) -> dict:
         "hr_email_digest_enabled": bool(row["hr_email_digest_enabled"]),
         "hr_email_instant_enabled": bool(row["hr_email_instant_enabled"]),
         "hr_notification_email": row["hr_notification_email"],
+        "hr_expiry_reminders_enabled": bool(row["hr_expiry_reminders_enabled"])
+        if "hr_expiry_reminders_enabled" in keys and row["hr_expiry_reminders_enabled"] is not None
+        else True,
     }
 
 
@@ -4129,7 +4252,7 @@ def hr_premium_users_list() -> list[dict]:
             """
             SELECT id, email, display_name, current_trust,
                    hr_email_digest_enabled, hr_email_instant_enabled,
-                   hr_notification_email
+                   hr_notification_email, hr_expiry_reminders_enabled
             FROM users
             WHERE premium = 1 AND TRIM(COALESCE(current_trust, '')) != ''
             ORDER BY current_trust COLLATE NOCASE, email COLLATE NOCASE
@@ -4193,6 +4316,7 @@ def hr_email_prefs_get(user_id: int) -> Optional[dict]:
     return {
         "digest_enabled": bool(u.get("hr_email_digest_enabled", True)),
         "instant_enabled": bool(u.get("hr_email_instant_enabled", True)),
+        "expiry_reminders_enabled": bool(u.get("hr_expiry_reminders_enabled", True)),
         "login_email": u.get("email"),
         "notification_email": (u.get("hr_notification_email") or "").strip() or None,
         "email": hr_effective_notification_email(u),
@@ -4204,6 +4328,7 @@ def hr_email_prefs_set(
     *,
     digest_enabled: Optional[bool] = None,
     instant_enabled: Optional[bool] = None,
+    expiry_reminders_enabled: Optional[bool] = None,
     notification_email: Optional[str] = None,
     set_notification_email: bool = False,
 ) -> Optional[dict]:
@@ -4212,8 +4337,17 @@ def hr_email_prefs_set(
         return None
     digest = 1 if (digest_enabled if digest_enabled is not None else u.get("hr_email_digest_enabled", True)) else 0
     instant = 1 if (instant_enabled if instant_enabled is not None else u.get("hr_email_instant_enabled", True)) else 0
-    sets = ["hr_email_digest_enabled = ?", "hr_email_instant_enabled = ?"]
-    params: list = [digest, instant]
+    expiry = 1 if (
+        expiry_reminders_enabled
+        if expiry_reminders_enabled is not None
+        else u.get("hr_expiry_reminders_enabled", True)
+    ) else 0
+    sets = [
+        "hr_email_digest_enabled = ?",
+        "hr_email_instant_enabled = ?",
+        "hr_expiry_reminders_enabled = ?",
+    ]
+    params: list = [digest, instant, expiry]
     if set_notification_email:
         norm = (notification_email or "").strip().lower()
         sets.append("hr_notification_email = ?")

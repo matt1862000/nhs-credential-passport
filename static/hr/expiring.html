@@ -9,7 +9,14 @@
   <style>
     .exp-wrap { max-width: 56rem; }
     .exp-filters { display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-end; margin-bottom: 1.25rem; }
-    .exp-filters .nhsuk-form-group { margin-bottom: 0; }
+    .exp-filters .nhsuk-form-group { margin-bottom: 0; min-width: 12rem; }
+    .exp-auto-banner {
+      background: #e8f1fb;
+      border-left: 4px solid var(--nhsuk-brand-colour);
+      padding: 0.85rem 1rem;
+      margin-bottom: 1.25rem;
+      font-size: 0.9375rem;
+    }
     .exp-cred-list { margin: 0; padding: 0; list-style: none; font-size: 0.875rem; }
     .exp-cred-list li { margin: 0.25rem 0; }
     .exp-cred-list .expired { color: var(--nhsuk-error); font-weight: 600; }
@@ -44,13 +51,25 @@
     <h1 class="nhsuk-page-heading">Expiring training</h1>
     <p class="nhsuk-lead">Clinicians at your trust with wallet records expiring or already expired within the window you choose.</p>
 
+    <div class="exp-auto-banner" id="expAutoBanner" hidden>
+      <strong>Automatic reminders are on.</strong>
+      Clinicians receive in-app messages from your trust when training hits 30 days, 7 days, and expiry — no HR action needed.
+      Turn off in <a href="/static/profile/#email-notifications">Profile → email notifications</a>.
+    </div>
+
     <div class="exp-filters">
       <div class="nhsuk-form-group">
         <label class="nhsuk-label" for="filterWindow">Expiry window</label>
         <select class="nhsuk-select" id="filterWindow">
           <option value="7">Next 7 days</option>
-          <option value="30">Next 30 days</option>
-          <option value="90" selected>Next 90 days</option>
+          <option value="30" selected>Next 30 days</option>
+          <option value="90">Next 90 days</option>
+        </select>
+      </div>
+      <div class="nhsuk-form-group">
+        <label class="nhsuk-label" for="filterTraining">Training (optional)</label>
+        <select class="nhsuk-select" id="filterTraining">
+          <option value="">All training</option>
         </select>
       </div>
       <div class="nhsuk-form-group">
@@ -81,6 +100,7 @@
   <script src="/static/shared/nav-account.js?v=20260529-4"></script>
   <script>
     (function () {
+      var _trainingOptions = [];
       function esc(s) {
         var d = document.createElement('div');
         d.textContent = s == null ? '' : String(s);
@@ -91,15 +111,53 @@
           ? item.display_name.trim()
           : (item.email || 'Clinician');
       }
+      function collectTrainingNames(items) {
+        var seen = {};
+        var names = [];
+        (items || []).forEach(function (item) {
+          (item.expiring_credentials || []).forEach(function (c) {
+            var n = (c.module_name || '').trim();
+            if (!n || seen[n]) return;
+            seen[n] = true;
+            names.push(n);
+          });
+        });
+        names.sort(function (a, b) { return a.localeCompare(b); });
+        return names;
+      }
+      function syncTrainingFilter(items, keepValue) {
+        var sel = document.getElementById('filterTraining');
+        if (!sel) return;
+        var prev = keepValue != null ? keepValue : sel.value;
+        var names = collectTrainingNames(items);
+        _trainingOptions = names;
+        sel.innerHTML = '<option value="">All training</option>'
+          + names.map(function (n) {
+            return '<option value="' + esc(n) + '">' + esc(n) + '</option>';
+          }).join('');
+        if (prev && names.indexOf(prev) >= 0) sel.value = prev;
+      }
       function renderItems(data) {
         var tbody = document.getElementById('expTbody');
         var summary = document.getElementById('expSummary');
+        var banner = document.getElementById('expAutoBanner');
         var items = (data && data.items) ? data.items : [];
-        var windowDays = Number(data.window_days || 90);
+        var windowDays = Number(data.window_days || 30);
+        var training = document.getElementById('filterTraining').value || '';
+        if (banner) banner.hidden = data.auto_reminders_enabled === false;
+        if (training) {
+          items = items.map(function (item) {
+            var creds = (item.expiring_credentials || []).filter(function (c) {
+              return (c.module_name || '').toLowerCase().indexOf(training.toLowerCase()) >= 0;
+            });
+            return creds.length ? Object.assign({}, item, { expiring_credentials: creds }) : null;
+          }).filter(Boolean);
+        }
+        var filterNote = training ? ' matching “' + training + '”' : '';
         if (summary) {
           summary.textContent = items.length
-            ? items.length + ' clinician' + (items.length === 1 ? '' : 's') + ' with training expiring within ' + windowDays + ' days (or already expired).'
-            : 'No clinicians with expiring training in this window.';
+            ? items.length + ' clinician' + (items.length === 1 ? '' : 's') + ' with training expiring within ' + windowDays + ' days' + filterNote + ' (or already expired).'
+            : 'No clinicians with expiring training for these filters.';
         }
         if (!items.length) {
           tbody.innerHTML = '<tr><td colspan="3" class="hr-muted">Nothing to show for these filters.</td></tr>';
@@ -142,22 +200,36 @@
             }).join('');
         } catch (e) { /* keep default */ }
       }
-      async function loadReport() {
+      async function loadReport(opts) {
+        opts = opts || {};
         var tbody = document.getElementById('expTbody');
         tbody.innerHTML = '<tr><td colspan="3">Loading…</td></tr>';
-        var windowDays = document.getElementById('filterWindow').value || '90';
+        var windowDays = document.getElementById('filterWindow').value || '30';
         var cohortId = document.getElementById('filterCohort').value || '';
+        var trainingSel = document.getElementById('filterTraining');
+        var trainingVal = trainingSel ? trainingSel.value : '';
         var url = '/api/hr/compliance/expiring?window_days=' + encodeURIComponent(windowDays);
         if (cohortId) url += '&cohort_id=' + encodeURIComponent(cohortId);
+        if (trainingVal && !opts.refreshTrainingList) {
+          url += '&module_query=' + encodeURIComponent(trainingVal);
+        }
         var data = await fetch(url, { credentials: 'include' }).then(function (r) {
           if (!r.ok) throw new Error('Could not load report');
           return r.json();
         });
+        if (opts.refreshTrainingList) {
+          syncTrainingFilter(data.items, trainingVal);
+        }
         renderItems(data);
       }
-      document.getElementById('btnRefresh').addEventListener('click', function () { void loadReport(); });
-      document.getElementById('filterWindow').addEventListener('change', function () { void loadReport(); });
+      document.getElementById('btnRefresh').addEventListener('click', function () {
+        void loadReport({ refreshTrainingList: true });
+      });
+      document.getElementById('filterWindow').addEventListener('change', function () {
+        void loadReport({ refreshTrainingList: true });
+      });
       document.getElementById('filterCohort').addEventListener('change', function () { void loadReport(); });
+      document.getElementById('filterTraining').addEventListener('change', function () { void loadReport(); });
       document.getElementById('btnSignOut').addEventListener('click', async function () {
         await NHSAuth.signOut();
         window.location.replace('/');
@@ -171,7 +243,7 @@
         }
         if (window.NHSNavAccount) void NHSNavAccount.refresh();
         await loadCohorts();
-        await loadReport();
+        await loadReport({ refreshTrainingList: true });
       })();
     })();
   </script>

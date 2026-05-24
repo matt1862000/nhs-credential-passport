@@ -513,11 +513,19 @@ def trust_expiring_report(
     *,
     window_days: int = 90,
     cohort_id: Optional[int] = None,
+    module_query: Optional[str] = None,
 ) -> dict:
     """Doctors at trust with credentials expiring within window (from wallet)."""
     trust = (hr_trust or "").strip()
+    mq = (module_query or "").strip().lower() or None
     if not trust:
-        return {"trust": None, "items": [], "window_days": window_days, "cohort_id": cohort_id}
+        return {
+            "trust": None,
+            "items": [],
+            "window_days": window_days,
+            "cohort_id": cohort_id,
+            "module_query": module_query,
+        }
     member_ids: Optional[set[int]] = None
     if cohort_id is not None:
         if not db.cohort_get(int(cohort_id), trust):
@@ -543,6 +551,10 @@ def trust_expiring_report(
             c
             for c in (snap.get("expiring_credentials") or [])
             if _credential_in_expiry_window(c, window_days)
+            and (
+                not mq
+                or mq in ((c.get("module_name") or "").lower())
+            )
         ]
         if not exp:
             continue
@@ -560,6 +572,8 @@ def trust_expiring_report(
         "trust": trust,
         "window_days": window_days,
         "cohort_id": cohort_id,
+        "module_query": module_query,
         "items": items,
         "doctor_count": len(items),
+        "auto_reminders_enabled": db.trust_expiry_reminders_enabled(trust),
     }

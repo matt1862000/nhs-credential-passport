@@ -1214,10 +1214,13 @@ async def hr_email_preferences_put(request: Request):
         raise HTTPException(status_code=400, detail="Expected a JSON object")
     digest = body.get("digest_enabled")
     instant = body.get("instant_enabled")
+    expiry_reminders = body.get("expiry_reminders_enabled")
     if digest is not None and not isinstance(digest, bool):
         raise HTTPException(status_code=400, detail="digest_enabled must be a boolean")
     if instant is not None and not isinstance(instant, bool):
         raise HTTPException(status_code=400, detail="instant_enabled must be a boolean")
+    if expiry_reminders is not None and not isinstance(expiry_reminders, bool):
+        raise HTTPException(status_code=400, detail="expiry_reminders_enabled must be a boolean")
     set_notification_email = "notification_email" in body
     notification_email = body.get("notification_email")
     if set_notification_email:
@@ -1230,6 +1233,7 @@ async def hr_email_preferences_put(request: Request):
         int(hr["id"]),
         digest_enabled=digest if isinstance(digest, bool) else None,
         instant_enabled=instant if isinstance(instant, bool) else None,
+        expiry_reminders_enabled=expiry_reminders if isinstance(expiry_reminders, bool) else None,
         notification_email=notification_email if isinstance(notification_email, str) else None,
         set_notification_email=set_notification_email,
     )
@@ -2456,11 +2460,15 @@ def hr_compliance_expiring(
     request: Request,
     window_days: int = 90,
     cohort_id: Optional[int] = None,
+    module_query: Optional[str] = None,
 ):
     hr = require_premium_user(request)
     trust = _hr_trust_required(hr)
     return compliance_snapshot.trust_expiring_report(
-        trust, window_days=window_days, cohort_id=cohort_id
+        trust,
+        window_days=window_days,
+        cohort_id=cohort_id,
+        module_query=module_query,
     )
 
 
@@ -4003,3 +4011,27 @@ async def hr_cohorts_message(
     return _hr_broadcast_to_doctors(
         int(hr["id"]), trust, doctor_ids, text, attachments=attachments or None
     )
+
+
+@router.post("/internal/cron/hr-jobs")
+async def internal_cron_hr_jobs(request: Request):
+    """
+    Scheduled HR jobs: daily email digests + automatic training expiry in-app reminders.
+    Requires header X-Cron-Secret matching env CRON_SECRET.
+    """
+    secret = (os.environ.get("CRON_SECRET") or "").strip()
+    if not secret:
+        raise HTTPException(status_code=503, detail="CRON_SECRET is not configured")
+    provided = (request.headers.get("X-Cron-Secret") or "").strip()
+    if provided != secret:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    from . import hr_expiry_reminders
+
+    digest_sent = hr_email.send_daily_digests()
+    expiry_stats = hr_expiry_reminders.send_automatic_expiry_reminders()
+    return {
+        "ok": True,
+        "digest_emails_sent": digest_sent,
+        "expiry_reminders": expiry_stats,
+    }
