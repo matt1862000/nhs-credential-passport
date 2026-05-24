@@ -49,6 +49,60 @@ def _trust_label(hr_user: dict) -> str:
     return (hr_user.get("current_trust") or "").strip() or "your trust"
 
 
+def _clinician_label(session: dict) -> str:
+    name = (session.get("doctor_name") or "").strip()
+    gmc = (session.get("doctor_gmc") or "").strip()
+    email = (session.get("doctor_email") or "").strip()
+    if name and gmc:
+        return f"{name} (GMC {gmc})"
+    if name:
+        return name
+    if email:
+        return email
+    return "A clinician"
+
+
+def _pending_share_items(session: dict) -> list[dict]:
+    out = []
+    for it in session.get("items") or []:
+        if (it.get("status") or "").upper() == "PENDING":
+            out.append(it)
+    return out
+
+
+def _module_label(it: dict) -> str:
+    name = (it.get("module_name") or "").strip()
+    if name:
+        expiry = (it.get("expiry_date") or "").strip()
+        if expiry:
+            return f"{name} (expires {expiry})"
+        return name
+    cid = (it.get("credential_id") or "").strip()
+    if len(cid) > 20:
+        return f"{cid[:20]}…"
+    return cid or "Training record"
+
+
+def _format_record_lines(items: list[dict], *, max_listed: int = 20) -> tuple[str, str]:
+    """Return (text_block, html_block) listing training records."""
+    if not items:
+        return "", ""
+    listed = items[:max_listed]
+    extra = len(items) - len(listed)
+    text_lines = [f"• {_module_label(it)}" for it in listed]
+    if extra > 0:
+        text_lines.append(f"• … and {extra} more record(s)")
+    text_block = "Training records for verification:\n" + "\n".join(text_lines)
+
+    html_items = "".join(
+        f"<li>{html.escape(_module_label(it))}</li>" for it in listed
+    )
+    if extra > 0:
+        html_items += f"<li>… and {extra} more record(s)</li>"
+    html_block = f"<p><strong>Training records for verification:</strong></p><ul>{html_items}</ul>"
+    return text_block, html_block
+
+
 def _format_digest_bodies(hr_user: dict, stats: dict) -> tuple[str, str, str]:
     """Return (subject, text_body, html_body)."""
     trust = _trust_label(hr_user)
@@ -104,16 +158,28 @@ def _format_instant_bodies(
     *,
     pending_items: int,
     session_id: int,
+    session: Optional[dict] = None,
 ) -> tuple[str, str, str]:
     trust = _trust_label(hr_user)
     inbox = f"{_inbox_url()}?session={int(session_id)}"
     prefs = _prefs_url()
-    subject = f"DocPass: new training shared for verification ({pending_items} record(s))"
-    text_body = "\n".join(
+    session = session or {}
+    clinician = _clinician_label(session)
+    pending = _pending_share_items(session) if session else []
+    if not pending and pending_items > 0:
+        pending = session.get("items") or []
+    record_text, record_html = _format_record_lines(pending)
+
+    subject = f"DocPass: {clinician} shared {pending_items} training record(s) for verification"
+    text_parts = [
+        f"Hello {_hr_recipient_name(hr_user)},",
+        "",
+        f"{clinician} has shared {pending_items} training record(s) for HR verification at {trust}.",
+    ]
+    if record_text:
+        text_parts.extend(["", record_text])
+    text_parts.extend(
         [
-            f"Hello {_hr_recipient_name(hr_user)},",
-            "",
-            f"A clinician has shared {pending_items} training record(s) for HR verification at {trust}.",
             "",
             f"Review now: {inbox}",
             "",
@@ -122,10 +188,13 @@ def _format_instant_bodies(
             "— DocPass",
         ]
     )
+    text_body = "\n".join(text_parts)
+
     html_body = f"""<!DOCTYPE html>
 <html><body style="font-family: Arial, sans-serif; line-height: 1.5; color: #212b32;">
 <p>Hello {html.escape(_hr_recipient_name(hr_user))},</p>
-<p>A clinician has shared <strong>{pending_items}</strong> training record(s) for HR verification at {html.escape(trust)}.</p>
+<p><strong>{html.escape(clinician)}</strong> has shared <strong>{pending_items}</strong> training record(s) for HR verification at {html.escape(trust)}.</p>
+{record_html}
 <p><a href="{html.escape(inbox)}">Review in DocPass</a></p>
 <p style="font-size: 0.875rem; color: #4c6272;">
   <a href="{html.escape(prefs)}">Email notification preferences</a>
@@ -179,6 +248,8 @@ def notify_new_share_for_hr(
     if not trust:
         return 0
 
+    session = db.share_session_get(int(session_id))
+
     sent = 0
     for hr_user in db.hr_premium_users_for_trust(trust):
         if not hr_user.get("hr_email_instant_enabled", True):
@@ -187,6 +258,7 @@ def notify_new_share_for_hr(
             hr_user,
             pending_items=int(pending_items),
             session_id=int(session_id),
+            session=session,
         )
         if send_email(
             to=hr_delivery_email(hr_user),
