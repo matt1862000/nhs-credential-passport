@@ -104,13 +104,17 @@
     .nhs-gs__step--active .nhs-gs__text {
       font-weight: 600;
     }
-    .nhs-gs__step:not(.nhs-gs__step--active) .nhs-gs__text a {
-      color: inherit;
-      text-decoration: none;
-      font-weight: inherit;
-    }
-    .nhs-gs__step--active .nhs-gs__text a {
+    .nhs-gs__step:not(.nhs-gs__step--done) .nhs-gs__text a {
+      color: #005eb8;
+      font-weight: 600;
       text-decoration: underline;
+    }
+    .nhs-gs__step:not(.nhs-gs__step--done) .nhs-gs__text a:hover {
+      color: #003087;
+    }
+    .nhs-gs__step--done .nhs-gs__text a {
+      color: #4c6272;
+      text-decoration: line-through;
     }
     /* What's next section */
     .nhs-gs-next {
