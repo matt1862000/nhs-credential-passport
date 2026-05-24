@@ -703,6 +703,7 @@
       </div>
       <form id="addForm">
         <input type="hidden" id="addRenewFromId" value="">
+        <input type="hidden" id="addFromEsrNeedsFixId" value="">
         <div class="nhsuk-form-group"><label class="nhsuk-label" for="staff_full_name">Your full name</label><input class="nhsuk-input" id="staff_full_name" type="text" name="staff_full_name" required placeholder="Jane Smith" autocomplete="name"></div>
         <div class="nhsuk-form-group"><label class="nhsuk-label" for="staff_identifier">GMC number</label><input class="nhsuk-input" id="staff_identifier" type="text" name="staff_identifier" inputmode="numeric" required placeholder="1234567" maxlength="11" autocomplete="off"></div>
         <div class="nhsuk-form-group"><label class="nhsuk-label" for="moduleSelect">Module</label><select class="nhsuk-select" name="module_code" id="moduleSelect"></select></div>
@@ -1679,19 +1680,48 @@
       });
     }
 
+    function modulesLikelySame(a, b) {
+      var left = normalizeEsrModuleLabel(a);
+      var right = normalizeEsrModuleLabel(b);
+      if (!left || !right) return false;
+      if (left === right) return true;
+      if (left.indexOf(right) >= 0 || right.indexOf(left) >= 0) return true;
+      var prefixLen = 16;
+      if (left.length >= prefixLen && right.length >= prefixLen && left.slice(0, prefixLen) === right.slice(0, prefixLen)) {
+        return true;
+      }
+      var tokensLeft = left.split(/\s+/).filter(function (t) { return t.length >= 4; });
+      var tokensRight = right.split(/\s+/).filter(function (t) { return t.length >= 4; });
+      var shared = tokensLeft.filter(function (t) { return tokensRight.indexOf(t) >= 0; });
+      if (shared.length >= 2) return true;
+      return shared.some(function (t) { return t.length >= 8; });
+    }
+
     function walletMatchesEsrNeedsFixModule(esrModule) {
-      var target = normalizeEsrModuleLabel(esrModule);
-      if (!target) return false;
+      if (!esrModule) return false;
       var list = getStored();
       for (var i = 0; i < list.length; i++) {
         var c = list[i];
         if (!c || c.revoked) continue;
-        var name = normalizeEsrModuleLabel(displayModuleName(c.module_name));
-        if (!name) continue;
-        if (name === target) return true;
-        if (name.indexOf(target) >= 0 || target.indexOf(name) >= 0) return true;
+        if (modulesLikelySame(esrModule, displayModuleName(c.module_name))) return true;
       }
       return false;
+    }
+
+    function resolveEsrNeedsFixAfterAdd(addedModuleName) {
+      var pendingEl = document.getElementById('addFromEsrNeedsFixId');
+      var pendingId = pendingEl ? String(pendingEl.value || '').trim() : '';
+      var state = loadEsrNeedsFixState();
+      var next = (state.items || []).filter(function (item) {
+        if (pendingId && item.id === pendingId) return false;
+        if (addedModuleName && modulesLikelySame(item.module, addedModuleName)) return false;
+        return true;
+      });
+      if (pendingEl) pendingEl.value = '';
+      if (next.length !== state.items.length) {
+        saveEsrNeedsFixState({ items: next, panelDismissed: state.panelDismissed });
+        renderEsrNeedsFixUi();
+      }
     }
 
     function pruneEsrNeedsFixItems() {
@@ -1805,6 +1835,8 @@
     window.startAddFromEsrNeedsFix = function (itemId) {
       var item = findEsrNeedsFixItem(itemId);
       if (!item) return;
+      var pendingEl = document.getElementById('addFromEsrNeedsFixId');
+      if (pendingEl) pendingEl.value = item.id;
       var addTab = document.getElementById('tab-add');
       if (addTab) addTab.click();
       setTimeout(function () {
@@ -3294,13 +3326,13 @@
         if (renewFrom) entry.supersedes_credential_id = renewFrom;
         list.push(entry);
         setStored(list);
+        resolveEsrNeedsFixAfterAdd(module_name);
         clearRenewal();
         e.target.reset();
         lastAutoExpiryFromCompletion = '';
         syncCustomModuleTitleField();
         lastAutoOdsSuggested = { name: '', ods: '' };
         void applyProfileToAddForm();
-        pruneEsrNeedsFixItems();
         var shareResult = await autoShareCredentialsWithHr([issued.credential_id], { skipRender: true });
         if (shareResult.error) {
           alert('Training added, but could not send to HR automatically: ' + shareResult.error);
