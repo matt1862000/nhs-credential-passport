@@ -226,7 +226,9 @@
     .hr-search-box-wrap { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: flex-start; margin-bottom: 0.75rem; }
     .hr-search-box-wrap input { flex: 1; min-width: 18rem; }
     .hr-search-box-wrap .nhs-ac-wrap.hr-doctor-search-ac { flex: 1; min-width: 18rem; max-width: none; }
-    .hr-search-box-wrap .nhs-ac-wrap.hr-doctor-search-ac .nhsuk-input { width: 100%; max-width: none; }
+    .hr-search-box-wrap .nhs-ac-wrap.hr-doctor-search-ac .nhsuk-input { width: 100%; max-width: none; box-sizing: border-box; line-height: 1.25; -webkit-appearance: none; appearance: none; }
+    #groupsCard .hr-cohort-group-search .hr-search-box-wrap { margin-bottom: 0; }
+    .hr-cohort-group-search-hint { margin: 0 0 1.25rem 0; }
     .hr-search-results { margin-top: 0.5rem; }
     .hr-search-result-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem 1rem; padding: 0.75rem 0; border-bottom: 1px solid var(--nhsuk-border); }
     .hr-search-result-row:last-child { border-bottom: none; }

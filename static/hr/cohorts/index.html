@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#005eb8">
   <title>All Groups &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
-  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260524-1">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260525-2">
   <link rel="stylesheet" href="/static/shared/training-add-form.css?v=20260526-2">
   <link rel="stylesheet" href="/static/shared/messages-compose.css?v=20260528-1">
 </head>
@@ -102,12 +102,14 @@
             <h2>Your groups</h2>
             <button type="button" class="nhsuk-button hr-btn-small" id="btnShowCreate">Create group</button>
           </div>
-          <div class="nhsuk-form-group" style="margin-bottom:1rem;">
+          <div class="hr-cohort-group-search" style="margin-bottom:1rem;">
             <label class="nhsuk-label" for="cohortSearchInput">Search for a group</label>
-            <span class="nhsuk-hint">Type a group name and choose from the suggestions to open it.</span>
-            <div class="nhs-ac-wrap hr-doctor-search-ac" id="cohortSearchAcWrap">
-              <input class="nhsuk-input" type="search" id="cohortSearchInput" placeholder="Group name…" autocomplete="off" spellcheck="false" aria-label="Search for a group" role="combobox" aria-autocomplete="list" aria-controls="cohortSearchSuggestList" aria-expanded="false">
-              <ul id="cohortSearchSuggestList" class="nhs-suggest-list" role="listbox" hidden aria-label="Matching groups"></ul>
+            <p class="hr-muted hr-cohort-group-search-hint">Type a group name and choose from the suggestions to open it.</p>
+            <div class="hr-search-box-wrap">
+              <div class="nhs-ac-wrap hr-doctor-search-ac" id="cohortSearchAcWrap">
+                <input class="nhsuk-input" type="search" id="cohortSearchInput" placeholder="Group name…" autocomplete="off" spellcheck="false" aria-label="Search for a group" role="combobox" aria-autocomplete="list" aria-controls="cohortSearchSuggestList" aria-expanded="false">
+                <ul id="cohortSearchSuggestList" class="nhs-suggest-list" role="listbox" hidden aria-label="Matching groups"></ul>
+              </div>
             </div>
           </div>
           <div id="cohortList" aria-live="polite"></div>
