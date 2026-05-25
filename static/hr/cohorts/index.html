@@ -472,7 +472,7 @@
         </div>
 
         <div id="panelCohortMembers" class="hr-bulk-panel hr-cohort-panel" role="tabpanel" aria-labelledby="tabCohortMembers" hidden>
-          <p class="hr-cohort-legend">Select doctors for bulk actions, or click a name to edit details. <strong>Remove from group</strong> keeps their DocPass account; <strong>Delete account</strong> removes them entirely.</p>
+          <p class="hr-cohort-legend" id="membersPanelLegend">Select doctors for bulk actions, or click a name to edit details. <strong>Remove from group</strong> keeps their DocPass account; <strong>Delete account</strong> removes them entirely.</p>
           <div id="detailMembersSection">
             <div class="hr-members-bulk-bar" id="membersBulkBar" hidden>
               <span class="hr-muted" id="membersBulkCount" aria-live="polite">0 selected</span>
@@ -1696,6 +1696,26 @@
         _memberRemoveSelected = null;
       }
 
+      function activeCohortIsDefault() {
+        return !!(_activeCohortMeta && isDefaultCohort(_activeCohortMeta));
+      }
+
+      function syncMembersTabUI() {
+        var isDefault = activeCohortIsDefault();
+        var legend = document.getElementById('membersPanelLegend');
+        var btnSelected = document.getElementById('btnMembersRemoveSelected');
+        var btnAll = document.getElementById('btnMembersRemoveAll');
+        var btnMemberRemove = document.getElementById('btnMemberRemove');
+        if (legend) {
+          legend.textContent = isDefault
+            ? 'Everyone at your trust who belongs to any group. Open a specific group to remove someone from that group only. Use Delete account to remove someone entirely.'
+            : 'Select doctors for bulk actions, or click a name to edit details. Remove from group keeps their DocPass account; Delete account removes them entirely.';
+        }
+        if (btnSelected) btnSelected.hidden = isDefault;
+        if (btnAll) btnAll.hidden = isDefault;
+        if (btnMemberRemove) btnMemberRemove.hidden = isDefault;
+      }
+
       function syncMembersBulkBar() {
         var bar = document.getElementById('membersBulkBar');
         var countEl = document.getElementById('membersBulkCount');
@@ -1719,7 +1739,7 @@
             : 'Remove selected from group';
         }
         if (btnAll) {
-          btnAll.hidden = nMembers === 0;
+          btnAll.hidden = nMembers === 0 || activeCohortIsDefault();
           btnAll.textContent = 'Remove all from group (' + nMembers + ')';
         }
         if (btnDeleteSelected) {
@@ -1728,6 +1748,8 @@
             ? ('Delete selected accounts (' + nSelected + ')')
             : 'Delete selected accounts';
         }
+        if (btnSelected) btnSelected.hidden = activeCohortIsDefault();
+        syncMembersTabUI();
         if (selectAll && nMembers > 0) {
           selectAll.indeterminate = nSelected > 0 && nSelected < nMembers;
           selectAll.checked = nSelected > 0 && nSelected === nMembers;
@@ -1969,6 +1991,8 @@
         var err = document.getElementById('memberEditError');
         if (err) { err.hidden = true; err.textContent = ''; }
         document.getElementById('memberEditModal').hidden = false;
+        var btnMemberRemove = document.getElementById('btnMemberRemove');
+        if (btnMemberRemove) btnMemberRemove.hidden = activeCohortIsDefault();
         document.getElementById('memberEditName').focus();
       }
 
@@ -2158,6 +2182,7 @@
         }
         if (isMembers) {
           renderMembersTable();
+          syncMembersTabUI();
         }
         if (isCreate) {
           var createStatus = document.getElementById('createStatus');

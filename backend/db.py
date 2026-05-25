@@ -34,6 +34,34 @@ _COHORT_ACTIVE_MEMBER_COUNT_SQL = """
  INNER JOIN users u ON u.id = m.user_id
  WHERE m.cohort_id = c.id)
 """
+
+
+def _default_cohort_name_sql_predicate(column: str) -> str:
+    names = [DEFAULT_COHORT_NAME, *LEGACY_DEFAULT_COHORT_NAMES]
+    parts = " OR ".join(
+        f"LOWER(TRIM({column})) = LOWER({repr(n)})" for n in names
+    )
+    return f"({parts})"
+
+
+# All Doctors counts every distinct doctor across all trust groups.
+_COHORT_MEMBER_COUNT_SQL = f"""
+CASE
+  WHEN {_default_cohort_name_sql_predicate("c.name")} THEN (
+    SELECT COUNT(DISTINCT m.user_id)
+    FROM hr_cohort_members m
+    INNER JOIN hr_cohorts c2 ON c2.id = m.cohort_id
+    INNER JOIN users u ON u.id = m.user_id
+    WHERE LOWER(TRIM(c2.hr_trust)) = LOWER(TRIM(c.hr_trust))
+  )
+  ELSE (
+    SELECT COUNT(*)
+    FROM hr_cohort_members m
+    INNER JOIN users u ON u.id = m.user_id
+    WHERE m.cohort_id = c.id
+  )
+END
+"""
 _LEGACY_SHEFFIELD_PARTNERSHIP_TRUST_LABELS = (
     "Sheffield Health and Social Care NHS Foundation Trust",
 )
@@ -114,6 +142,7 @@ def init_db():
         _migrate_normalize_conversation_trust_labels(conn)
         _backfill_onboarding_completed(conn)
         _cleanup_orphan_cohort_members(conn)
+        _backfill_all_doctors_membership(conn)
         conn.execute("PRAGMA journal_mode=WAL")
         conn.commit()
 
@@ -397,7 +426,7 @@ def hr_cohort_search_by_name(hr_trust: str, q: str, limit: int = 10) -> list[dic
         rows = conn.execute(
             """
             SELECT c.id, c.name,
-                   """ + _COHORT_ACTIVE_MEMBER_COUNT_SQL.strip() + """ AS member_count
+                   """ + _COHORT_MEMBER_COUNT_SQL.strip() + """ AS member_count
             FROM hr_cohorts c
             WHERE LOWER(TRIM(c.hr_trust)) = LOWER(TRIM(?))
               AND LOWER(c.name) LIKE ?
@@ -3457,7 +3486,7 @@ def cohort_get_by_name(hr_trust: str, name: str) -> Optional[dict]:
             """
             SELECT c.id, c.hr_trust, c.name, c.created_at, c.created_by_user_id,
                    c.welcome_message_template,
-                   """ + _COHORT_ACTIVE_MEMBER_COUNT_SQL.strip() + """ AS member_count
+                   """ + _COHORT_MEMBER_COUNT_SQL.strip() + """ AS member_count
             FROM hr_cohorts c
             WHERE LOWER(TRIM(c.hr_trust)) = LOWER(TRIM(?))
               AND LOWER(TRIM(c.name)) = LOWER(TRIM(?))
@@ -3599,7 +3628,7 @@ def cohort_list_for_trust(hr_trust: str) -> list[dict]:
             """
             SELECT c.id, c.hr_trust, c.name, c.created_at, c.created_by_user_id,
                    c.welcome_message_template,
-                   """ + _COHORT_ACTIVE_MEMBER_COUNT_SQL.strip() + """ AS member_count
+                   """ + _COHORT_MEMBER_COUNT_SQL.strip() + """ AS member_count
             FROM hr_cohorts c
             WHERE LOWER(TRIM(c.hr_trust)) = LOWER(TRIM(?))
             ORDER BY CASE
@@ -3703,7 +3732,7 @@ def cohort_get_by_id(cohort_id: int) -> Optional[dict]:
             """
             SELECT c.id, c.hr_trust, c.name, c.created_at, c.created_by_user_id,
                    c.welcome_message_template,
-                   """ + _COHORT_ACTIVE_MEMBER_COUNT_SQL.strip() + """ AS member_count
+                   """ + _COHORT_MEMBER_COUNT_SQL.strip() + """ AS member_count
             FROM hr_cohorts c
             WHERE c.id = ?
             """,
@@ -3722,7 +3751,7 @@ def cohort_get(cohort_id: int, hr_trust: str) -> Optional[dict]:
             """
             SELECT c.id, c.hr_trust, c.name, c.created_at, c.created_by_user_id,
                    c.welcome_message_template,
-                   """ + _COHORT_ACTIVE_MEMBER_COUNT_SQL.strip() + """ AS member_count
+                   """ + _COHORT_MEMBER_COUNT_SQL.strip() + """ AS member_count
             FROM hr_cohorts c
             WHERE c.id = ? AND LOWER(TRIM(c.hr_trust)) = LOWER(TRIM(?))
             """,
@@ -3731,6 +3760,75 @@ def cohort_get(cohort_id: int, hr_trust: str) -> Optional[dict]:
     if not row:
         return None
     return _cohort_row_dict(row)
+
+
+def _backfill_all_doctors_membership(conn: sqlite3.Connection) -> None:
+    """Ensure All Doctors includes every doctor who belongs to any trust cohort."""
+    _ensure_hr_cohorts_tables(conn)
+    default_dc = _default_cohort_name_sql_predicate("dc.name")
+    non_default_c = _default_cohort_name_sql_predicate("c.name")
+    conn.execute(
+        f"""
+        INSERT OR IGNORE INTO hr_cohort_members
+          (cohort_id, user_id, added_at, welcome_pending, welcome_sent_at)
+        SELECT dc.id, m.user_id, MIN(m.added_at), 0, MAX(m.welcome_sent_at)
+        FROM hr_cohort_members m
+        JOIN hr_cohorts c ON c.id = m.cohort_id
+        JOIN hr_cohorts dc ON LOWER(TRIM(dc.hr_trust)) = LOWER(TRIM(c.hr_trust))
+                          AND {default_dc}
+        WHERE NOT {non_default_c}
+        GROUP BY dc.id, m.user_id
+        """
+    )
+
+
+def _ensure_user_in_default_cohort(
+    hr_trust: str, user_id: int, hr_user_id: int, *, welcome_pending: bool = False
+) -> None:
+    """Keep All Doctors in sync when doctors are added to custom groups."""
+    default_id = _default_cohort_id_for_trust(hr_trust, hr_user_id)
+    cohort_add_member(default_id, int(user_id), welcome_pending=welcome_pending)
+
+
+def _cohort_members_list_all_doctors(hr_trust: str) -> list[dict]:
+    """All distinct doctors across every group for this trust."""
+    hr_trust = (hr_trust or "").strip()
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_hr_cohorts_tables(conn)
+        _ensure_users_provision_columns(conn)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT u.id, u.email, u.display_name, u.gmc_number, u.current_trust,
+                   u.must_change_password, u.provisioned_by_hr,
+                   MIN(m.added_at) AS added_at,
+                   MAX(COALESCE(m.welcome_pending, 0)) AS welcome_pending,
+                   MAX(m.welcome_sent_at) AS welcome_sent_at
+            FROM hr_cohort_members m
+            JOIN hr_cohorts c ON c.id = m.cohort_id
+            JOIN users u ON u.id = m.user_id
+            WHERE LOWER(TRIM(c.hr_trust)) = LOWER(TRIM(?))
+            GROUP BY u.id
+            ORDER BY u.display_name, u.email
+            """,
+            (hr_trust,),
+        ).fetchall()
+    return [
+        {
+            "user_id": int(r["id"]),
+            "email": r["email"],
+            "personal_email": r["email"],
+            "display_name": r["display_name"],
+            "gmc_number": r["gmc_number"],
+            "current_trust": r["current_trust"],
+            "must_change_password": bool(r["must_change_password"]),
+            "provisioned_by_hr": r["provisioned_by_hr"],
+            "added_at": r["added_at"],
+            "welcome_pending": bool(r["welcome_pending"]),
+            "welcome_sent_at": r["welcome_sent_at"],
+        }
+        for r in rows
+    ]
 
 
 def cohort_delete(cohort_id: int, hr_trust: str) -> bool:
@@ -3751,8 +3849,11 @@ def cohort_delete(cohort_id: int, hr_trust: str) -> bool:
 
 
 def cohort_members_list(cohort_id: int, hr_trust: str) -> list[dict]:
-    if not cohort_get(cohort_id, hr_trust):
+    cohort = cohort_get(cohort_id, hr_trust)
+    if not cohort:
         return []
+    if is_default_cohort_name(cohort.get("name")):
+        return _cohort_members_list_all_doctors(hr_trust)
     with sqlite3.connect(DB_PATH) as conn:
         _ensure_hr_cohorts_tables(conn)
         _ensure_users_provision_columns(conn)
@@ -4166,6 +4267,11 @@ def cohort_add_single_member(
             default_trust=default_trust,
         )
         cohort_add_member(cohort_id, uid, welcome_pending=queue_welcome)
+        cohort_row = cohort_get_by_id(cohort_id)
+        if cohort_row and not is_default_cohort_name(cohort_row.get("name")):
+            _ensure_user_in_default_cohort(
+                cohort_row["hr_trust"], uid, hr_user_id, welcome_pending=False
+            )
         row_out = {
             "email": personal,
             "status": "existing",
@@ -4185,6 +4291,11 @@ def cohort_add_single_member(
             gmc_number=str(gmc_raw or ""),
         )
         cohort_add_member(cohort_id, uid, welcome_pending=queue_welcome)
+        cohort_row = cohort_get_by_id(cohort_id)
+        if cohort_row and not is_default_cohort_name(cohort_row.get("name")):
+            _ensure_user_in_default_cohort(
+                cohort_row["hr_trust"], uid, hr_user_id, welcome_pending=False
+            )
         row_out = {
             "email": personal,
             "status": "created",
@@ -4206,6 +4317,11 @@ def cohort_add_single_member(
                 default_trust=default_trust,
             )
             cohort_add_member(cohort_id, uid, welcome_pending=queue_welcome)
+            cohort_row = cohort_get_by_id(cohort_id)
+            if cohort_row and not is_default_cohort_name(cohort_row.get("name")):
+                _ensure_user_in_default_cohort(
+                    cohort_row["hr_trust"], uid, hr_user_id, welcome_pending=False
+                )
             row_out = {
                 "email": personal,
                 "status": "existing",
