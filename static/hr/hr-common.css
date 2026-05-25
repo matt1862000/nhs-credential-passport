@@ -216,7 +216,8 @@
     }
     .hr-cert-pdf-page {
       display: block;
-      width: 100%;
+      max-width: 100%;
+      width: auto;
       height: auto;
       margin: 0 auto 0.5rem auto;
       background: #fff;

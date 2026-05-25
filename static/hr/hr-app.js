@@ -1070,18 +1070,23 @@
                 chain = chain.then(function () {
                   if (container.dataset.renderToken !== String(renderToken)) return;
                   return pdf.getPage(n).then(function (page) {
+                    var outputScale = window.devicePixelRatio || 1;
                     var baseViewport = page.getViewport({ scale: 1 });
                     var maxWidth = container.clientWidth || 720;
-                    var scale = Math.min(1.5, maxWidth / baseViewport.width);
-                    var viewport = page.getViewport({ scale: scale });
+                    var displayScale = Math.min(2, maxWidth / baseViewport.width);
+                    var viewport = page.getViewport({ scale: displayScale });
                     var canvas = document.createElement('canvas');
                     canvas.className = 'hr-cert-pdf-page';
-                    canvas.width = viewport.width;
-                    canvas.height = viewport.height;
+                    canvas.width = Math.floor(viewport.width * outputScale);
+                    canvas.height = Math.floor(viewport.height * outputScale);
+                    canvas.style.width = Math.floor(viewport.width) + 'px';
+                    canvas.style.height = Math.floor(viewport.height) + 'px';
                     container.appendChild(canvas);
+                    var transform = outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : null;
                     return page.render({
                       canvasContext: canvas.getContext('2d'),
                       viewport: viewport,
+                      transform: transform,
                     }).promise;
                   });
                 });
