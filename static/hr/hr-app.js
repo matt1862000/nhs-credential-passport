@@ -86,12 +86,13 @@
             var it = row.item;
             var t = row.topic;
             var credId = String(it.credential_id || '');
-            var moduleName = esc(it.module_name || credId || 'Training record');
+            var sidVal = it.session_id != null ? String(it.session_id) : '';
+            var moduleCell = moduleEvidenceLinkHtml(it, sidVal, payload);
             var topicName = esc(t.topic_name || 'Mandatory requirement');
             var reason = t.reason ? '<p class="hr-mandatory-fit-section__reason">' + esc(t.reason) + '</p>' : '';
             return (
               '<tr>' +
-              '<td>' + moduleName + '</td>' +
+              '<td>' + moduleCell + '</td>' +
               '<td>' + evidenceStatusPill(it) + '</td>' +
               '<td>' + topicName + reason + '</td>' +
               '<td>' +
@@ -1005,6 +1006,28 @@
         return base;
       }
 
+      function itemHasViewableEvidence(it, sid, payload) {
+        if (!it) return false;
+        var sidVal = sid != null && sid !== '' ? String(sid) : (it.session_id != null ? String(it.session_id) : '');
+        var resolved = resolveHrEvidenceItem(payload, it.credential_id, sidVal);
+        return !!(resolved && resolved.certificate_base64 && String(resolved.certificate_base64).trim());
+      }
+
+      function moduleEvidenceLinkHtml(it, sid, payload) {
+        var label = esc(it.module_name || it.credential_id || '—');
+        var sidVal = sid != null && sid !== '' ? String(sid) : (it.session_id != null ? String(it.session_id) : '');
+        if (!itemHasViewableEvidence(it, sidVal, payload)) return label;
+        return (
+          '<a href="#" class="hr-module-name-btn" data-view-cert="1" data-cid="' +
+          esc(String(it.credential_id || '')) +
+          '" data-sid="' +
+          esc(sidVal) +
+          '" title="View evidence for this record">' +
+          label +
+          '</a>'
+        );
+      }
+
       var _pdfJsLoadPromise = null;
 
       function ensurePdfJsLoaded() {
@@ -1269,15 +1292,6 @@
         var tbody = document.getElementById('itemsTbody');
         var s = payload;
         var merged = fixedSessionId == null || fixedSessionId === '';
-        var fallbackAnyCert = '';
-        var fallbackAnyFilename = '';
-        var fallbackAnyItem = (s.items || []).find(function (x) {
-          return x && x.certificate_base64 && String(x.certificate_base64).trim();
-        });
-        if (fallbackAnyItem) {
-          fallbackAnyCert = String(fallbackAnyItem.certificate_base64 || '').trim();
-          fallbackAnyFilename = String(fallbackAnyItem.certificate_filename || 'evidence');
-        }
         var portfolioSession = String(s.share_kind || '').toLowerCase() === 'portfolio';
         var anyPortfolioMerged = false;
         if (merged) {
@@ -1412,19 +1426,6 @@
               esc(String(it.verified_by_trust_name)) +
               '</div>'
             : '';
-          var rowCert = (it.certificate_base64 && String(it.certificate_base64).trim()) ? String(it.certificate_base64).trim() : '';
-          var fallbackSameSubmissionCert = '';
-          if (!rowCert && it.session_id != null) {
-            var fallbackItem = (s.items || []).find(function (x) {
-              return String(x.session_id) === String(it.session_id) &&
-                x.certificate_base64 &&
-                String(x.certificate_base64).trim();
-            });
-            if (fallbackItem && fallbackItem.certificate_base64) {
-              fallbackSameSubmissionCert = String(fallbackItem.certificate_base64).trim();
-            }
-          }
-          var hasCert = !!(rowCert || fallbackSameSubmissionCert || fallbackAnyCert);
           var modLabel = esc(it.module_name || it.credential_id || '—');
           var actionable = showSelectCol && isItemActionable(it, merged, portfolioSession);
           var selectCell = showSelectCol
@@ -1440,15 +1441,7 @@
                 : '') +
               '</td>'
             : '';
-          var modCell = hasCert
-            ? '<button type="button" class="hr-module-name-btn" data-view-cert="1" data-cid="' +
-              esc(it.credential_id) +
-              '" data-sid="' +
-              esc(sidForApi) +
-              '" title="View evidence uploaded with this record">' +
-              modLabel +
-              '</button>'
-            : modLabel;
+          var modCell = moduleEvidenceLinkHtml(it, sidForApi, s);
           parts.push(
             '<tr>' +
               selectCell +
@@ -1493,7 +1486,7 @@
         if (!sessionView) return;
         var actionInFlight = false;
         sessionView.onclick = async function (e) {
-          var viewCert = e.target && e.target.closest('button[data-view-cert="1"]');
+          var viewCert = e.target && e.target.closest('[data-view-cert="1"]');
           if (viewCert) {
             e.preventDefault();
             var cid = viewCert.getAttribute('data-cid');
@@ -2367,8 +2360,9 @@
               }
               return;
             }
-            var btn = e.target && e.target.closest('button[data-view-docs-cid]');
+            var btn = e.target && e.target.closest('[data-view-docs-cid]');
             if (!btn) return;
+            e.preventDefault();
             var cid = btn.getAttribute('data-view-docs-cid');
             var it = searchDoctorItemsCache.find(function (x) { return String(x.credential_id) === String(cid); });
             if (it && it.certificate_base64) openHrCertModal(it);
@@ -2811,7 +2805,14 @@
             }
             if (tbody) {
               tbody.innerHTML = items.map(function (it) {
-                var name = esc(it.module_name || it.credential_id || '—');
+                var namePlain = esc(it.module_name || it.credential_id || '—');
+                var nameCell = it.certificate_base64
+                  ? ('<a href="#" class="hr-module-name-btn" data-view-docs-cid="' +
+                    esc(String(it.credential_id || '')) +
+                    '" title="View evidence for this record">' +
+                    namePlain +
+                    '</a>')
+                  : namePlain;
                 var expiry = it.expiry_date ? esc(String(it.expiry_date).slice(0, 10)) : '—';
                 var issuer = it.issuing_trust_name ? '<div style="font-size:0.8125rem;color:var(--nhsuk-secondary-text);">Issuing: ' + esc(it.issuing_trust_name) + '</div>' : '';
                 var verifiedAt = it.verified_by_trust_name ? '<div style="font-size:0.8125rem;color:var(--nhsuk-secondary-text);">HR verified at: ' + esc(it.verified_by_trust_name) + '</div>' : '';
@@ -2829,7 +2830,7 @@
                   );
                 return (
                   '<tr>' +
-                  '<td>' + name + issuer + '</td>' +
+                  '<td>' + nameCell + issuer + '</td>' +
                   '<td>' + expiry + '</td>' +
                   '<td><span class="hr-pill hr-pill--verified">Verified</span>' + verifiedAt + '</td>' +
                   '<td>' + evCell + ' ' + actionCell + '</td>' +
