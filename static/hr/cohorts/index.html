@@ -188,7 +188,7 @@
             <div id="addStepRoster" class="cohort-wizard-step-panel" hidden>
               <div class="nhsuk-form-group" id="addTargetCohortGroup">
                 <label class="nhsuk-label" for="addTargetCohortSelect">Add to group</label>
-                <span class="nhsuk-hint nhsuk-hint--secondary" id="addTargetCohortHint">Defaults to All Doctors, or an existing group if this doctor is already a member.</span>
+                <span class="nhsuk-hint nhsuk-hint--secondary" id="addTargetCohortHint">Defaults to the group you have open. If a doctor is already in another group, that group is selected instead.</span>
                 <select class="nhsuk-select" id="addTargetCohortSelect" aria-describedby="addTargetCohortHint"></select>
               </div>
               <p class="cohort-wizard-roster-title" id="addRosterTitle">Add doctors</p>
@@ -2203,11 +2203,18 @@
         }
       }
 
+      function defaultAddTargetCohortId() {
+        if (_activeCohortId != null && cohortById(_activeCohortId)) {
+          return Number(_activeCohortId);
+        }
+        var def = defaultCohortFromCache();
+        return def ? Number(def.id) : null;
+      }
+
       function getAddTargetCohortId() {
         var sel = document.getElementById('addTargetCohortSelect');
         if (sel && sel.value) return Number(sel.value);
-        var def = defaultCohortFromCache();
-        return def ? Number(def.id) : null;
+        return defaultAddTargetCohortId();
       }
 
       function setAddTargetCohortId(cohortId) {
@@ -2228,6 +2235,8 @@
         if (sel && sel.selectedIndex >= 0) {
           return sel.options[sel.selectedIndex].textContent.replace(/\s*\(default\)\s*$/, '').trim();
         }
+        var active = _activeCohortId != null ? cohortById(_activeCohortId) : null;
+        if (active && active.name) return active.name;
         var def = defaultCohortFromCache();
         return def ? def.name : addCohortDisplayName();
       }
@@ -2242,8 +2251,8 @@
       function resetAddTargetCohortUI() {
         _addTargetCohortTouched = false;
         populateAddTargetCohortSelect();
-        var def = defaultCohortFromCache();
-        if (def) setAddTargetCohortId(def.id);
+        var targetId = defaultAddTargetCohortId();
+        if (targetId != null) setAddTargetCohortId(targetId);
         updateAddCohortNamePreviews();
       }
 
@@ -2253,7 +2262,9 @@
           var data = await apiJson(
             '/api/hr/cohorts/suggest-target?email=' + encodeURIComponent(String(email).trim().toLowerCase())
           );
-          if (data && data.cohort_id != null) setAddTargetCohortId(data.cohort_id);
+          if (data && data.reason === 'existing_membership' && data.cohort_id != null) {
+            setAddTargetCohortId(data.cohort_id);
+          }
         } catch (e) {
           /* keep current selection */
         }
@@ -2270,19 +2281,18 @@
             body: JSON.stringify({ emails: uniq }),
           });
           var suggestions = (data && data.suggestions) ? data.suggestions : {};
-          var ids = [];
+          var customIds = [];
           uniq.forEach(function (email) {
             var s = suggestions[email];
-            if (s && s.cohort_id != null) ids.push(Number(s.cohort_id));
+            if (s && s.reason === 'existing_membership' && s.cohort_id != null) {
+              customIds.push(Number(s.cohort_id));
+            }
           });
-          if (!ids.length) return;
-          var first = ids[0];
-          if (ids.every(function (id) { return id === first; })) {
+          if (!customIds.length) return;
+          var first = customIds[0];
+          if (customIds.every(function (id) { return id === first; })) {
             setAddTargetCohortId(first);
-            return;
           }
-          var def = defaultCohortFromCache();
-          if (def) setAddTargetCohortId(def.id);
         } catch (e) {
           /* keep current selection */
         }
@@ -2877,6 +2887,7 @@
             if (detail) detail.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
           });
         }
+        if (_addWizardStep === 2) resetAddTargetCohortUI();
         syncCohortsPageHead();
       }
 
