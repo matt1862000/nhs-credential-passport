@@ -1053,6 +1053,20 @@
         return _pdfJsLoadPromise;
       }
 
+      function pdfPreviewTargetWidth(container) {
+        var panel = container && container.closest('.hr-modal__panel');
+        if (panel && panel.clientWidth > 240) {
+          return Math.max(320, panel.clientWidth - 56);
+        }
+        return Math.min(860, Math.max(320, Math.floor(window.innerWidth * 0.9) - 56));
+      }
+
+      function afterModalLayout(fn) {
+        requestAnimationFrame(function () {
+          requestAnimationFrame(fn);
+        });
+      }
+
       function renderHrPdfCanvasPreview(container, bytes, renderToken) {
         if (!container) return Promise.resolve();
         container.dataset.renderToken = String(renderToken);
@@ -1070,24 +1084,33 @@
                 chain = chain.then(function () {
                   if (container.dataset.renderToken !== String(renderToken)) return;
                   return pdf.getPage(n).then(function (page) {
-                    var outputScale = window.devicePixelRatio || 1;
-                    var baseViewport = page.getViewport({ scale: 1 });
-                    var maxWidth = container.clientWidth || 720;
-                    var displayScale = Math.min(2, maxWidth / baseViewport.width);
-                    var viewport = page.getViewport({ scale: displayScale });
-                    var canvas = document.createElement('canvas');
-                    canvas.className = 'hr-cert-pdf-page';
-                    canvas.width = Math.floor(viewport.width * outputScale);
-                    canvas.height = Math.floor(viewport.height * outputScale);
-                    canvas.style.width = Math.floor(viewport.width) + 'px';
-                    canvas.style.height = Math.floor(viewport.height) + 'px';
-                    container.appendChild(canvas);
-                    var transform = outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : null;
-                    return page.render({
-                      canvasContext: canvas.getContext('2d'),
-                      viewport: viewport,
-                      transform: transform,
-                    }).promise;
+                    return new Promise(function (resolve) {
+                      afterModalLayout(function () {
+                        if (container.dataset.renderToken !== String(renderToken)) {
+                          resolve();
+                          return;
+                        }
+                        var outputScale = window.devicePixelRatio || 1;
+                        var baseViewport = page.getViewport({ scale: 1 });
+                        var maxWidth = pdfPreviewTargetWidth(container);
+                        var displayScale = maxWidth / baseViewport.width;
+                        if (displayScale > 2.5) displayScale = 2.5;
+                        var viewport = page.getViewport({ scale: displayScale });
+                        var canvas = document.createElement('canvas');
+                        canvas.className = 'hr-cert-pdf-page';
+                        canvas.width = Math.floor(viewport.width * outputScale);
+                        canvas.height = Math.floor(viewport.height * outputScale);
+                        canvas.style.width = Math.floor(viewport.width) + 'px';
+                        canvas.style.height = Math.floor(viewport.height) + 'px';
+                        container.appendChild(canvas);
+                        var transform = outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : null;
+                        page.render({
+                          canvasContext: canvas.getContext('2d'),
+                          viewport: viewport,
+                          transform: transform,
+                        }).promise.then(resolve, resolve);
+                      });
+                    });
                   });
                 });
               })(pageNum);
@@ -1142,8 +1165,11 @@
         if (title) title.textContent = name;
         var fn = String(it.certificate_filename || 'evidence');
         var mime = evidenceMimeFromBytes(new Uint8Array(0), fn);
-        if (!renderHrCertificatePreview(body, it.certificate_base64, mime, fn)) return;
         modal.hidden = false;
+        if (!renderHrCertificatePreview(body, it.certificate_base64, mime, fn)) {
+          modal.hidden = true;
+          return;
+        }
       }
 
       function closeHrAddTrainingModal() {
