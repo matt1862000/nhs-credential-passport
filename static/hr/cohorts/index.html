@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#005eb8">
   <title>All Groups &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
-  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260525-13">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260525-14">
   <link rel="stylesheet" href="/static/shared/training-add-form.css?v=20260526-2">
   <link rel="stylesheet" href="/static/shared/messages-compose.css?v=20260528-1">
 </head>
@@ -133,25 +133,6 @@
                 <div id="detailCohortList"></div>
               </div>
             </div>
-            <div id="cohortBrowseMembersBlock" class="hr-cohort-members-block">
-              <div class="hr-cohort-members-head hr-cohort-fold-head" id="cohortMembersSearchHead" hidden>
-                <span class="hr-cohort-fold-title" id="detailMembersBlockTitle">Members</span>
-                <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnBackListFromMembers">All Groups</button>
-              </div>
-              <p class="hr-cohort-legend">Click a name to edit details or remove someone from this group. Status shows sign-in and whether their welcome message has been sent.</p>
-              <div id="detailMembersSection">
-                <div class="hr-table-wrap">
-                  <table class="hr-table" aria-label="Group members">
-                    <thead><tr><th>Name</th><th>Personal email</th><th>GMC</th><th>Status</th></tr></thead>
-                    <tbody id="membersTbody"></tbody>
-                  </table>
-                </div>
-              </div>
-              <div id="cohortWelcomePendingBanner" class="cohort-welcome-pending-banner" hidden role="region" aria-label="Pending welcome messages">
-                <p class="cohort-welcome-pending-banner__text" id="cohortWelcomePendingText"></p>
-                <button type="button" class="nhsuk-button" id="btnOpenWelcomeReviewPending">Review and send welcome</button>
-              </div>
-            </div>
           </div>
         </section>
       </div>
@@ -160,7 +141,10 @@
         <div class="hr-cohort-detail-top">
           <div class="hr-inbox-head hr-cohort-detail-head">
             <h2 id="detailTitle">Group</h2>
-            <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small cohort-delete-btn" id="btnDeleteCohort">Delete group</button>
+            <div class="hr-cohort-detail-head-actions">
+              <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnBackListSearch" hidden>All Groups</button>
+              <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small cohort-delete-btn" id="btnDeleteCohort">Delete group</button>
+            </div>
           </div>
           <p class="hr-cohort-stats" id="detailMeta" aria-live="polite"></p>
         </div>
@@ -168,9 +152,10 @@
         <h3 class="hr-cohort-actions-title">Actions</h3>
         <div class="hr-segment" role="tablist" aria-label="Group actions">
           <button type="button" class="active" id="tabCohortAdd" role="tab" aria-selected="true" aria-controls="panelCohortAdd" data-tab="add">Add doctors</button>
-          <button type="button" id="tabCohortCreate" role="tab" aria-selected="false" aria-controls="panelCohortCreate" data-tab="create">Add group</button>
           <button type="button" id="tabCohortMessage" role="tab" aria-selected="false" aria-controls="panelCohortMessage" data-tab="message">Message group</button>
           <button type="button" id="tabCohortCompliance" role="tab" aria-selected="false" aria-controls="panelCohortCompliance" data-tab="compliance">Compliance</button>
+          <button type="button" id="tabCohortMembers" role="tab" aria-selected="false" aria-controls="panelCohortMembers" data-tab="members">Members</button>
+          <button type="button" id="tabCohortCreate" role="tab" aria-selected="false" aria-controls="panelCohortCreate" data-tab="create">Add group</button>
         </div>
 
         <div id="panelCohortAdd" class="hr-bulk-panel hr-cohort-panel" role="tabpanel" aria-labelledby="tabCohortAdd">
@@ -473,6 +458,22 @@
             </table>
           </div>
           <p id="cohortCompStatus" class="hr-muted" role="status" aria-live="polite"></p>
+        </div>
+
+        <div id="panelCohortMembers" class="hr-bulk-panel hr-cohort-panel" role="tabpanel" aria-labelledby="tabCohortMembers" hidden>
+          <p class="hr-cohort-legend">Click a name to edit details or remove someone from this group. Status shows sign-in and whether their welcome message has been sent.</p>
+          <div id="detailMembersSection">
+            <div class="hr-table-wrap">
+              <table class="hr-table" aria-label="Group members">
+                <thead><tr><th>Name</th><th>Personal email</th><th>GMC</th><th>Status</th></tr></thead>
+                <tbody id="membersTbody"></tbody>
+              </table>
+            </div>
+          </div>
+          <div id="cohortWelcomePendingBanner" class="cohort-welcome-pending-banner" hidden role="region" aria-label="Pending welcome messages">
+            <p class="cohort-welcome-pending-banner__text" id="cohortWelcomePendingText"></p>
+            <button type="button" class="nhsuk-button" id="btnOpenWelcomeReviewPending">Review and send welcome</button>
+          </div>
         </div>
       </div>
     </div>
@@ -1723,13 +1724,9 @@
         }).join('');
       }
 
-      function syncDetailMembersHeading() {
-        var titleEl = document.getElementById('detailMembersBlockTitle');
-        if (!titleEl) return;
-        var name = (_activeCohortMeta && _activeCohortMeta.name)
-          || (document.getElementById('detailTitle') && document.getElementById('detailTitle').textContent)
-          || 'Group';
-        titleEl.textContent = String(name).trim() + ' Members';
+      function updateDetailBottomSections() {
+        renderMembersTable();
+        renderDetailCohortList();
       }
 
       function cohortWelcomePendingCount() {
@@ -1738,43 +1735,25 @@
         }).length;
       }
 
-      function isCohortBrowseVisible() {
-        var wrap = document.getElementById('cohortBrowseWrap');
-        return !!(wrap && !wrap.hidden);
-      }
-
-      function autoExpandGroupsSection() {
-        if (_cohortDetailFoldSetters.groups) {
-          _cohortDetailFoldSetters.groups(true);
-        }
-      }
-
       function collapseGroupsSection() {
         if (_cohortDetailFoldSetters.groups) {
           _cohortDetailFoldSetters.groups(false);
         }
       }
 
-      function maybeAutoExpandGroupsForBanner() {
-        if (!isCohortBrowseVisible() || !_cohortDetailFoldSetters.groups) return;
+      function maybeSwitchToMembersTabForBanner() {
         var banner = document.getElementById('cohortWelcomePendingBanner');
         if (banner && !banner.hidden) {
-          autoExpandGroupsSection();
+          setCohortTab('members');
         }
       }
 
       function finalizeGroupsFoldForOpen(browseOnly) {
+        collapseGroupsSection();
         var hasBanner = cohortWelcomePendingCount() > 0;
         if (browseOnly || hasBanner) {
-          autoExpandGroupsSection();
-          maybeAutoExpandGroupsForBanner();
-          requestAnimationFrame(function () {
-            autoExpandGroupsSection();
-            maybeAutoExpandGroupsForBanner();
-          });
-          return;
+          setCohortTab('members');
         }
-        collapseGroupsSection();
       }
 
       function renderDetailCohortList() {
@@ -1785,12 +1764,6 @@
           return;
         }
         el.innerHTML = buildCohortListRowsHtml(_cohortsCache, _activeCohortId);
-      }
-
-      function updateDetailBottomSections() {
-        renderMembersTable();
-        renderDetailCohortList();
-        syncDetailMembersHeading();
       }
 
       function closeMemberModal() {
@@ -1914,7 +1887,7 @@
       function loadStoredCohortTab() {
         try {
           var v = localStorage.getItem(LS_COHORT_TAB);
-          if (v === 'add' || v === 'compliance' || v === 'message' || v === 'create') return v;
+          if (v === 'add' || v === 'compliance' || v === 'message' || v === 'create' || v === 'members') return v;
         } catch (e) { /* ignore */ }
         return 'add';
       }
@@ -1959,14 +1932,17 @@
         var isAdd = tab === 'add';
         var isComp = tab === 'compliance';
         var isCreate = tab === 'create';
+        var isMembers = tab === 'members';
         var tabMsg = document.getElementById('tabCohortMessage');
         var tabAdd = document.getElementById('tabCohortAdd');
         var tabComp = document.getElementById('tabCohortCompliance');
         var tabCreate = document.getElementById('tabCohortCreate');
+        var tabMembers = document.getElementById('tabCohortMembers');
         var panelMsg = document.getElementById('panelCohortMessage');
         var panelAdd = document.getElementById('panelCohortAdd');
         var panelComp = document.getElementById('panelCohortCompliance');
         var panelCreate = document.getElementById('panelCohortCreate');
+        var panelMembers = document.getElementById('panelCohortMembers');
         if (tabMsg) {
           tabMsg.classList.toggle('active', isMsg);
           tabMsg.setAttribute('aria-selected', isMsg ? 'true' : 'false');
@@ -1983,13 +1959,21 @@
           tabCreate.classList.toggle('active', isCreate);
           tabCreate.setAttribute('aria-selected', isCreate ? 'true' : 'false');
         }
+        if (tabMembers) {
+          tabMembers.classList.toggle('active', isMembers);
+          tabMembers.setAttribute('aria-selected', isMembers ? 'true' : 'false');
+        }
         show(panelMsg, isMsg);
         show(panelAdd, isAdd);
         show(panelComp, isComp);
         show(panelCreate, isCreate);
+        show(panelMembers, isMembers);
         if (isAdd) {
           updateAddCohortNamePreviews();
           resetAddWizard();
+        }
+        if (isMembers) {
+          renderMembersTable();
         }
         if (isCreate) {
           var createStatus = document.getElementById('createStatus');
@@ -2074,7 +2058,7 @@
               + ' a welcome message ready to review and send.';
           }
         }
-        maybeAutoExpandGroupsForBanner();
+        maybeSwitchToMembersTabForBanner();
 
         var btn = document.getElementById('btnSendCohort');
         if (btn) btn.textContent = n ? ('Send to ' + n + ' doctor' + (n === 1 ? '' : 's')) : 'Send message';
@@ -2462,21 +2446,12 @@
         }
       }
 
-      function syncBrowseLayout() {
-        var browseWrap = document.getElementById('cohortBrowseWrap');
+      function syncCohortOpenLayout() {
         var detailEl = document.getElementById('detailView');
-        var groupsListBlock = document.getElementById('cohortBrowseGroupsListBlock');
-        var groupsFoldHead = document.getElementById('cohortGroupsFoldHead');
-        var membersSearchHead = document.getElementById('cohortMembersSearchHead');
-        var membersBlock = document.getElementById('cohortBrowseMembersBlock');
-        var backOnGroups = document.getElementById('btnBackList');
-        var searchBrowse = _activeCohortId != null && cohortsUrlSearchMode()
-          && detailEl && detailEl.hidden && browseWrap && !browseWrap.hidden;
-        if (groupsListBlock) groupsListBlock.hidden = searchBrowse;
-        if (groupsFoldHead) groupsFoldHead.hidden = searchBrowse;
-        if (membersSearchHead) membersSearchHead.hidden = !searchBrowse;
-        if (membersBlock) membersBlock.classList.toggle('hr-cohort-members-block--search', searchBrowse);
-        if (backOnGroups) backOnGroups.hidden = searchBrowse;
+        var btnBackSearch = document.getElementById('btnBackListSearch');
+        var searchGroupOpen = _activeCohortId != null && cohortsUrlSearchMode()
+          && detailEl && !detailEl.hidden;
+        if (btnBackSearch) btnBackSearch.hidden = !searchGroupOpen;
       }
 
       function showList() {
@@ -2514,7 +2489,10 @@
         }
         updateDetailBottomSections();
         updateAddCohortNamePreviews();
-        setCohortTab(opts.forceTab || loadStoredCohortTab());
+        var needsFullDetail = !!(opts.forceTab || opts.preserveAddViz);
+        var browseOnly = cohortsUrlSearchMode() && !needsFullDetail;
+        var openTab = opts.forceTab || (browseOnly ? 'members' : loadStoredCohortTab());
+        setCohortTab(openTab);
         void refreshCohortPendingVerifyBanner();
         var recipList = document.getElementById('recipientList');
         var recipToggle = document.getElementById('btnToggleRecipients');
@@ -2541,24 +2519,23 @@
         if (exportBtn) {
           exportBtn.href = '/api/hr/cohorts/' + encodeURIComponent(String(id)) + '/compliance-export';
         }
-        var needsFullDetail = !!(opts.forceTab || opts.preserveAddViz);
-        var browseOnly = cohortsUrlSearchMode() && !needsFullDetail;
         if (browseOnly) {
           show(document.getElementById('listView'), true);
-          show(document.getElementById('detailView'), false);
+          show(document.getElementById('detailView'), true);
+          show(document.getElementById('cohortBrowseWrap'), false);
         } else {
           show(document.getElementById('listView'), false);
           show(document.getElementById('detailView'), true);
+          show(document.getElementById('cohortBrowseWrap'), true);
         }
-        show(document.getElementById('cohortBrowseWrap'), true);
-        syncBrowseLayout();
+        syncCohortOpenLayout();
         updateCohortActionUI();
         finalizeGroupsFoldForOpen(browseOnly);
         if (browseOnly) {
           renderCohortList(_cohortsCache);
           requestAnimationFrame(function () {
-            var wrap = document.getElementById('cohortBrowseWrap');
-            if (wrap) wrap.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            var detail = document.getElementById('detailView');
+            if (detail) detail.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
           });
         }
         syncCohortsPageHead();
@@ -2984,8 +2961,8 @@
       wireCohortDetailFold('groups', 'btnToggleGroupsSection', 'detailGroupsPanel');
 
       document.getElementById('btnBackList').addEventListener('click', showList);
-      var btnBackListFromMembers = document.getElementById('btnBackListFromMembers');
-      if (btnBackListFromMembers) btnBackListFromMembers.addEventListener('click', showList);
+      var btnBackListSearch = document.getElementById('btnBackListSearch');
+      if (btnBackListSearch) btnBackListSearch.addEventListener('click', showList);
       document.getElementById('btnDeleteCohort').addEventListener('click', function () {
         if (_activeCohortId != null) deleteCohort(_activeCohortId);
       });
