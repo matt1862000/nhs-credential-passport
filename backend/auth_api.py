@@ -91,7 +91,7 @@ def _auth_me_payload(u: dict) -> dict:
         or None
         if db.user_is_premium(u)
         else None,
-        "hr_auto_send_welcome": bool(u.get("hr_auto_send_welcome"))
+        "hr_auto_send_welcome": bool(u.get("hr_auto_send_welcome", True))
         if db.user_is_premium(u)
         else None,
         "hr_email_digest_enabled": bool(u.get("hr_email_digest_enabled", True))

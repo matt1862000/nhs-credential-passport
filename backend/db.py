@@ -143,6 +143,7 @@ def init_db():
         _backfill_onboarding_completed(conn)
         _cleanup_orphan_cohort_members(conn)
         _backfill_all_doctors_membership(conn)
+        _migrate_hr_welcome_auto_default(conn)
         conn.execute("PRAGMA journal_mode=WAL")
         conn.commit()
 
@@ -2647,12 +2648,30 @@ def _ensure_users_hr_welcome_template_column(conn: sqlite3.Connection) -> None:
 
 
 def _ensure_users_hr_auto_send_welcome_column(conn: sqlite3.Connection) -> None:
-    """HR accounts: skip welcome review modal and send default message when adding doctors."""
+    """HR accounts: send welcome automatically when adding doctors (review modal is opt-in)."""
     cols = [row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()]
     if "hr_auto_send_welcome" not in cols:
         conn.execute(
-            "ALTER TABLE users ADD COLUMN hr_auto_send_welcome INTEGER NOT NULL DEFAULT 0"
+            "ALTER TABLE users ADD COLUMN hr_auto_send_welcome INTEGER NOT NULL DEFAULT 1"
         )
+
+
+def _migrate_hr_welcome_auto_default(conn: sqlite3.Connection) -> None:
+    """One-time: default existing HR accounts to automatic welcome (review is opt-in in Profile)."""
+    _ensure_users_hr_auto_send_welcome_column(conn)
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS app_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+        """
+    )
+    key = "hr_welcome_auto_default_v1"
+    if conn.execute("SELECT 1 FROM app_settings WHERE key = ?", (key,)).fetchone():
+        return
+    conn.execute("UPDATE users SET hr_auto_send_welcome = 1 WHERE premium = 1")
+    conn.execute("INSERT INTO app_settings (key, value) VALUES (?, ?)", (key, "1"))
 
 
 def _ensure_users_hr_email_columns(conn: sqlite3.Connection) -> None:
@@ -3129,7 +3148,7 @@ def _user_public_dict(row: sqlite3.Row, include_password_hash: bool = False) -> 
         else None,
         "hr_auto_send_welcome": bool(row["hr_auto_send_welcome"])
         if "hr_auto_send_welcome" in keys and row["hr_auto_send_welcome"] is not None
-        else False,
+        else True,
         "hr_email_digest_enabled": bool(row["hr_email_digest_enabled"])
         if "hr_email_digest_enabled" in keys and row["hr_email_digest_enabled"] is not None
         else True,
