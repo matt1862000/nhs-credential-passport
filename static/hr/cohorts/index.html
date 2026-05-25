@@ -2018,7 +2018,7 @@
         renderMembersTable();
         updateCohortActionUI();
         updateAddCohortNamePreviews();
-        setCohortTab(loadStoredCohortTab());
+        setCohortTab(opts.forceTab || loadStoredCohortTab());
         void refreshCohortPendingVerifyBanner();
         var recipList = document.getElementById('recipientList');
         var recipToggle = document.getElementById('btnToggleRecipients');
@@ -2046,6 +2046,37 @@
         var exportBtn = document.getElementById('btnComplianceExport');
         if (exportBtn) {
           exportBtn.href = '/api/hr/cohorts/' + encodeURIComponent(String(id)) + '/compliance-export';
+        }
+        if (opts.scrollToAdd) {
+          scrollToAddDoctorsPanel();
+        }
+      }
+
+      function cohortDeepLinkAction() {
+        var h = (window.location.hash || '').replace(/^#/, '').trim().toLowerCase();
+        if (h === 'add' || h === 'onboard') return 'add';
+        return null;
+      }
+
+      function scrollToAddDoctorsPanel() {
+        function run() {
+          var el = document.getElementById('panelCohortAdd') || document.querySelector('.hr-cohort-actions-title');
+          if (!el) return;
+          el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+        requestAnimationFrame(function () {
+          requestAnimationFrame(run);
+        });
+      }
+
+      async function maybeOpenAddDoctorsDeepLink() {
+        if (cohortDeepLinkAction() !== 'add') return;
+        var cohort = defaultCohortFromCache();
+        if (!cohort) return;
+        try {
+          await openCohort(cohort.id, { forceTab: 'add', scrollToAdd: true });
+        } catch (e) {
+          console.error('add doctors deep link', e);
         }
       }
 
@@ -2719,6 +2750,7 @@
           console.error('cohorts page init', bootErr);
         }
         await loadCohorts();
+        await maybeOpenAddDoctorsDeepLink();
       })();
     })();
   </script>
