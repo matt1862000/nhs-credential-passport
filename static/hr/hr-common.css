@@ -454,8 +454,17 @@
       color: #9b1c1c;
       border: 2px solid var(--nhsuk-error);
       box-shadow: none;
+      font-weight: 700;
     }
-    .cohort-delete-btn:hover {
+    .cohort-delete-btn:disabled,
+    .cohort-delete-btn[disabled] {
+      background: #fff;
+      color: #9b1c1c;
+      border: 2px solid var(--nhsuk-error);
+      opacity: 1;
+      cursor: not-allowed;
+    }
+    .cohort-delete-btn:hover:not(:disabled) {
       background: #fef2f2;
       color: #7f1616;
       border-color: #9b1c1c;
