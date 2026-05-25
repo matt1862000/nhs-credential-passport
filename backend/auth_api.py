@@ -3519,8 +3519,10 @@ def _parse_cohort_members(body: dict) -> list[dict]:
     return [{"personal_email": e} for e in emails]
 
 
-def _validate_cohort_members(members: list[dict]) -> None:
+def _validate_cohort_members(members: list[dict], *, allow_empty: bool = False) -> None:
     if not members:
+        if allow_empty:
+            return
         raise HTTPException(status_code=400, detail="At least one personal email address is required")
     if len(members) > MAX_HR_COHORT_LINES:
         raise HTTPException(
@@ -3838,7 +3840,7 @@ async def hr_cohorts_create(request: Request):
             detail='A default "All Doctors" cohort already exists. Open it to add doctors.',
         )
     members = _parse_cohort_members(body)
-    _validate_cohort_members(members)
+    _validate_cohort_members(members, allow_empty=True)
     stream = bool(body.get("stream"))
     reserved = _cohort_reserved_emails()
 
