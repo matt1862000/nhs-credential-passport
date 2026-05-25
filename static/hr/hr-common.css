@@ -240,6 +240,35 @@
       padding-right: 0.85rem;
     }
     .hr-search-result-row--active .hr-search-result-name { color: var(--nhsuk-link); }
+    .hr-cohort-group-tree { border-bottom: 1px solid var(--nhsuk-border); }
+    .hr-cohort-group-tree:last-child { border-bottom: none; }
+    .hr-cohort-group-parent { border-bottom: none !important; }
+    .hr-cohort-group-parent-main {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.45rem;
+      flex: 1;
+      min-width: 0;
+    }
+    .hr-cohort-nested-toggle {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: none;
+      border: none;
+      padding: 0.15rem 0 0;
+      margin: 0;
+      cursor: pointer;
+      color: var(--nhsuk-text);
+      flex-shrink: 0;
+    }
+    .hr-cohort-nested-toggle:focus-visible { outline: 3px solid #ffbf47; outline-offset: 2px; border-radius: 2px; }
+    .hr-cohort-nested-toggle[aria-expanded="false"] .hr-cohort-fold-chevron {
+      transform: rotate(-45deg);
+      margin-top: 0.15rem;
+    }
+    .hr-cohort-nested-groups[hidden] { display: none !important; }
+    .hr-search-result-row--nested { padding-left: 1.25rem; }
     .hr-search-result-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; justify-content: flex-end; }
     .hr-search-result-name { font-weight: 700; color: var(--nhsuk-text); }
     .hr-search-result-meta { font-size: 0.8125rem; color: var(--nhsuk-secondary-text); margin-top: 0.2rem; }

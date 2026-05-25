@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#005eb8">
   <title>All Groups &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
-  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260525-14">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260525-15">
   <link rel="stylesheet" href="/static/shared/training-add-form.css?v=20260526-2">
   <link rel="stylesheet" href="/static/shared/messages-compose.css?v=20260528-1">
 </head>
@@ -640,6 +640,7 @@
       var _activeCohortMeta = null;
       var _cohortListFilter = '';
       var _cohortSearchWired = false;
+      var _nestedGroupsExpanded = false;
       var SYSTEM_WELCOME_DEFAULT = 'Welcome {name} to {trust}. Please reply if you have any queries or concerns.';
 
       function isReservedDefaultCohortName(name) {
@@ -1705,23 +1706,92 @@
 
       var _cohortDetailFoldSetters = {};
 
-      function buildCohortListRowsHtml(cohorts, activeCohortId) {
+      function splitCohortsDefaultAndCustom(cohorts) {
+        var defaultCohort = null;
+        var custom = [];
+        (cohorts || []).forEach(function (c) {
+          if (isDefaultCohort(c)) defaultCohort = c;
+          else custom.push(c);
+        });
+        return { defaultCohort: defaultCohort, custom: custom };
+      }
+
+      function nestedGroupsShouldExpand(custom, activeCohortId) {
+        if (_nestedGroupsExpanded) return true;
+        if (activeCohortId == null || !custom.length) return false;
+        return custom.some(function (c) { return Number(c.id) === Number(activeCohortId); });
+      }
+
+      function buildCohortListRowHtml(c, activeCohortId, opts) {
+        opts = opts || {};
+        var isDefault = isDefaultCohort(c);
+        var isActive = activeCohortId != null && Number(c.id) === Number(activeCohortId);
+        var meta = esc(String(c.member_count != null ? c.member_count : 0)) + ' member' + (c.member_count === 1 ? '' : 's');
+        if (isDefault) meta += ' · Default group';
+        var nestedClass = opts.nested ? ' hr-search-result-row--nested' : '';
+        return (
+          '<div class="hr-search-result-row' + nestedClass + (isActive ? ' hr-search-result-row--active' : '') + '" data-cohort-id="' + c.id + '">' +
+            '<div><div class="hr-search-result-name">' + esc(c.name) + '</div>' +
+            '<div class="hr-search-result-meta">' + meta + '</div></div>' +
+            '<div class="hr-search-result-actions">' +
+              '<button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" data-cohort-open="' + c.id + '">Open</button>' +
+              (isDefault ? '' : '<button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small cohort-delete-btn" data-cohort-delete="' + c.id + '">Delete</button>') +
+            '</div>' +
+          '</div>'
+        );
+      }
+
+      function buildCohortListRowsHtml(cohorts, activeCohortId, opts) {
         return cohorts.map(function (c) {
-          var isDefault = isDefaultCohort(c);
-          var isActive = activeCohortId != null && Number(c.id) === Number(activeCohortId);
-          var meta = esc(String(c.member_count != null ? c.member_count : 0)) + ' member' + (c.member_count === 1 ? '' : 's');
-          if (isDefault) meta += ' · Default group';
-          return (
-            '<div class="hr-search-result-row' + (isActive ? ' hr-search-result-row--active' : '') + '" data-cohort-id="' + c.id + '">' +
-              '<div><div class="hr-search-result-name">' + esc(c.name) + '</div>' +
-              '<div class="hr-search-result-meta">' + meta + '</div></div>' +
-              '<div class="hr-search-result-actions">' +
-                '<button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" data-cohort-open="' + c.id + '">Open</button>' +
-                (isDefault ? '' : '<button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small cohort-delete-btn" data-cohort-delete="' + c.id + '">Delete</button>') +
-              '</div>' +
-            '</div>'
-          );
+          return buildCohortListRowHtml(c, activeCohortId, opts);
         }).join('');
+      }
+
+      function buildGroupedCohortListHtml(cohorts, activeCohortId, options) {
+        options = options || {};
+        if (options.flat) {
+          return buildCohortListRowsHtml(cohorts, activeCohortId);
+        }
+        var split = splitCohortsDefaultAndCustom(cohorts);
+        var defaultCohort = split.defaultCohort;
+        var custom = split.custom;
+        if (!defaultCohort) {
+          return buildCohortListRowsHtml(cohorts, activeCohortId);
+        }
+        if (!custom.length) {
+          return buildCohortListRowHtml(defaultCohort, activeCohortId);
+        }
+        var expanded = nestedGroupsShouldExpand(custom, activeCohortId);
+        var isActive = activeCohortId != null && Number(defaultCohort.id) === Number(activeCohortId);
+        var meta = esc(String(defaultCohort.member_count != null ? defaultCohort.member_count : 0))
+          + ' member' + (defaultCohort.member_count === 1 ? '' : 's') + ' · Default group';
+        var html = (
+          '<div class="hr-cohort-group-tree">' +
+            '<div class="hr-search-result-row hr-cohort-group-parent' + (isActive ? ' hr-search-result-row--active' : '') + '" data-cohort-id="' + defaultCohort.id + '">' +
+              '<div class="hr-cohort-group-parent-main">' +
+                '<button type="button" class="hr-cohort-nested-toggle" data-nested-groups-toggle aria-expanded="' + (expanded ? 'true' : 'false') + '" aria-label="Show or hide your other groups">' +
+                  '<span class="hr-cohort-fold-chevron" aria-hidden="true"></span>' +
+                '</button>' +
+                '<div>' +
+                  '<div class="hr-search-result-name">' + esc(defaultCohort.name) + '</div>' +
+                  '<div class="hr-search-result-meta">' + meta + '</div>' +
+                '</div>' +
+              '</div>' +
+              '<div class="hr-search-result-actions">' +
+                '<button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" data-cohort-open="' + defaultCohort.id + '">Open</button>' +
+              '</div>' +
+            '</div>' +
+            '<div class="hr-cohort-nested-groups"' + (expanded ? '' : ' hidden') + '>' +
+              buildCohortListRowsHtml(custom, activeCohortId, { nested: true }) +
+            '</div>' +
+          '</div>'
+        );
+        return html;
+      }
+
+      function rerenderCohortLists() {
+        renderCohortList(_cohortsCache);
+        if (_activeCohortId != null) renderDetailCohortList();
       }
 
       function updateDetailBottomSections() {
@@ -1763,7 +1833,7 @@
           el.innerHTML = detailCohortEmptyHtml();
           return;
         }
-        el.innerHTML = buildCohortListRowsHtml(_cohortsCache, _activeCohortId);
+        el.innerHTML = buildGroupedCohortListHtml(_cohortsCache, _activeCohortId);
       }
 
       function closeMemberModal() {
@@ -2361,9 +2431,12 @@
           if (_activeCohortId != null) renderDetailCohortList();
           return;
         }
-        el.innerHTML = filtered.map(function (c) {
-          return buildCohortListRowsHtml([c], _activeCohortId);
-        }).join('');
+        var q = String(_cohortListFilter || '').trim();
+        if (!q) {
+          el.innerHTML = buildGroupedCohortListHtml(filtered, _activeCohortId);
+        } else {
+          el.innerHTML = buildCohortListRowsHtml(filtered, _activeCohortId);
+        }
         if (_activeCohortId != null) renderDetailCohortList();
       }
 
@@ -2467,6 +2540,7 @@
         syncCohortsPageHead();
         _activeCohortId = null;
         _activeCohortMeta = null;
+        _nestedGroupsExpanded = false;
         clearProvisionResult(document.getElementById('addProvisionResult'));
         if (_cohortsCache.length) renderCohortList(_cohortsCache);
         loadCohorts();
@@ -2922,6 +2996,17 @@
       });
 
       function handleCohortListClick(e) {
+        var nestedToggle = e.target.closest('[data-nested-groups-toggle]');
+        if (nestedToggle) {
+          e.preventDefault();
+          var tree = nestedToggle.closest('.hr-cohort-group-tree');
+          var panel = tree ? tree.querySelector('.hr-cohort-nested-groups') : null;
+          var expanded = nestedToggle.getAttribute('aria-expanded') !== 'true';
+          nestedToggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+          if (panel) panel.hidden = !expanded;
+          _nestedGroupsExpanded = expanded;
+          return;
+        }
         var delBtn = e.target.closest('[data-cohort-delete]');
         if (delBtn) {
           e.preventDefault();
