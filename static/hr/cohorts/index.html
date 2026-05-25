@@ -100,6 +100,7 @@
         <div class="hr-card" id="groupsCard">
           <div class="hr-inbox-head">
             <h2>Your groups</h2>
+            <a class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnAllGroupsLink" href="/static/hr/cohorts/" hidden>All Groups</a>
             <button type="button" class="nhsuk-button hr-btn-small" id="btnShowCreate">Create group</button>
           </div>
           <div class="hr-cohort-group-search" style="margin-bottom:1rem;">
@@ -2690,6 +2691,10 @@
         } else {
           document.title = 'All Groups \u2014 DocPass';
         }
+        var btnCreate = document.getElementById('btnShowCreate');
+        var btnAllGroups = document.getElementById('btnAllGroupsLink');
+        if (btnCreate) btnCreate.hidden = searchMode;
+        if (btnAllGroups) btnAllGroups.hidden = !searchMode;
       }
       window.syncCohortsPageHead = syncCohortsPageHead;
 
