@@ -188,8 +188,13 @@
             <div id="addStepRoster" class="cohort-wizard-step-panel" hidden>
               <div class="nhsuk-form-group" id="addTargetCohortGroup">
                 <label class="nhsuk-label" for="addTargetCohortSelect">Add to group</label>
-                <span class="nhsuk-hint nhsuk-hint--secondary" id="addTargetCohortHint">Defaults to the group you have open. If a doctor is already in another group, that group is selected instead.</span>
-                <select class="nhsuk-select" id="addTargetCohortSelect" aria-describedby="addTargetCohortHint"></select>
+                <span class="nhsuk-hint nhsuk-hint--secondary" id="addTargetCohortHint">Defaults to the group you have open. If a doctor is already in another group, that group is selected instead. Choose <strong>New group</strong> to create a group and add doctors to it in one step.</span>
+                <select class="nhsuk-select" id="addTargetCohortSelect" aria-describedby="addTargetCohortHint addNewCohortNameError"></select>
+                <div class="nhsuk-form-group" id="addNewCohortNameWrap" hidden style="margin-top:0.75rem;margin-bottom:0;">
+                  <label class="nhsuk-label" for="addNewCohortNameInput">New group name</label>
+                  <input class="nhsuk-input" type="text" id="addNewCohortNameInput" maxlength="200" autocomplete="off" spellcheck="false" placeholder="e.g. February 2027">
+                  <p class="cohort-email-error" id="addNewCohortNameError" hidden role="alert"></p>
+                </div>
               </div>
               <p class="cohort-wizard-roster-title" id="addRosterTitle">Add doctors</p>
               <div class="nhsuk-form-group" id="addEmailsGroup">
@@ -654,6 +659,7 @@
       var _cohortSearchWired = false;
       var _nestedGroupsExpanded = false;
       var SYSTEM_WELCOME_DEFAULT = 'Welcome {name} to {trust}. Please reply if you have any queries or concerns.';
+      var ADD_TARGET_NEW_GROUP = '__new__';
 
       function isReservedDefaultCohortName(name) {
         var n = String(name || '').trim().toLowerCase();
@@ -2191,9 +2197,46 @@
           var label = c.name || ('Group ' + c.id);
           if (isDefaultCohort(c)) label += ' (default)';
           return '<option value="' + esc(String(c.id)) + '">' + esc(label) + '</option>';
-        }).join('');
-        if (prev && cohorts.some(function (c) { return String(c.id) === prev; })) {
+        }).join('') + (
+          '<option value="' + ADD_TARGET_NEW_GROUP + '">New group</option>'
+        );
+        if (prev === ADD_TARGET_NEW_GROUP) {
+          sel.value = ADD_TARGET_NEW_GROUP;
+        } else if (prev && cohorts.some(function (c) { return String(c.id) === prev; })) {
           sel.value = prev;
+        }
+      }
+
+      function isAddTargetNewGroupSelected() {
+        var sel = document.getElementById('addTargetCohortSelect');
+        return !!(sel && sel.value === ADD_TARGET_NEW_GROUP);
+      }
+
+      function addNewCohortNameValue() {
+        var inp = document.getElementById('addNewCohortNameInput');
+        return inp ? String(inp.value || '').trim() : '';
+      }
+
+      function setAddNewCohortNameError(msg) {
+        var err = document.getElementById('addNewCohortNameError');
+        var wrap = document.getElementById('addNewCohortNameWrap');
+        if (err) {
+          err.textContent = msg || '';
+          err.hidden = !msg;
+        }
+        if (wrap) wrap.classList.toggle('nhsuk-form-group--error', !!msg);
+      }
+
+      function syncAddNewCohortNameField() {
+        var wrap = document.getElementById('addNewCohortNameWrap');
+        var inp = document.getElementById('addNewCohortNameInput');
+        var isNew = isAddTargetNewGroupSelected();
+        show(wrap, isNew);
+        if (!isNew) {
+          setAddNewCohortNameError('');
+          if (inp) inp.value = '';
+        } else if (inp) {
+          inp.focus();
         }
       }
 
@@ -2206,6 +2249,7 @@
       }
 
       function getAddTargetCohortId() {
+        if (isAddTargetNewGroupSelected()) return null;
         var sel = document.getElementById('addTargetCohortSelect');
         if (sel && sel.value) return Number(sel.value);
         return defaultAddTargetCohortId();
@@ -2225,6 +2269,9 @@
       }
 
       function addTargetCohortDisplayName() {
+        if (isAddTargetNewGroupSelected()) {
+          return addNewCohortNameValue() || 'new group';
+        }
         var sel = document.getElementById('addTargetCohortSelect');
         if (sel && sel.selectedIndex >= 0) {
           return sel.options[sel.selectedIndex].textContent.replace(/\s*\(default\)\s*$/, '').trim();
@@ -2247,6 +2294,8 @@
         populateAddTargetCohortSelect();
         var targetId = defaultAddTargetCohortId();
         if (targetId != null) setAddTargetCohortId(targetId);
+        syncAddNewCohortNameField();
+        setAddNewCohortNameError('');
         updateAddCohortNamePreviews();
       }
 
@@ -3582,8 +3631,9 @@
 
       document.getElementById('formAddMembers').addEventListener('submit', async function (e) {
         e.preventDefault();
+        var creatingNewGroup = isAddTargetNewGroupSelected();
         var targetCohortId = getAddTargetCohortId();
-        if (!targetCohortId) return;
+        if (!creatingNewGroup && !targetCohortId) return;
         if (_addWizardStep !== 2) {
           setAddWizardStep(1);
           return;
@@ -3627,21 +3677,59 @@
         }
         var uploadErrHide = document.getElementById('addUploadError');
         if (uploadErrHide) uploadErrHide.hidden = true;
+        if (creatingNewGroup) {
+          var newGroupName = addNewCohortNameValue();
+          if (!newGroupName) {
+            setAddNewCohortNameError('Enter a name for the new group.');
+            setAddWizardStep(2);
+            document.getElementById('addNewCohortNameInput').focus();
+            return;
+          }
+          if (isReservedDefaultCohortName(newGroupName)) {
+            setAddNewCohortNameError('“All Doctors” is reserved for the default group. Choose a different name.');
+            setAddWizardStep(2);
+            document.getElementById('addNewCohortNameInput').focus();
+            return;
+          }
+          setAddNewCohortNameError('');
+        }
         show(st, false);
         clearProvisionResult(vizEl);
-        if (viz()) viz().showLoading(vizEl, 'Adding doctors to group…');
+        if (viz()) {
+          viz().showLoading(
+            vizEl,
+            creatingNewGroup ? 'Creating group and adding doctors…' : 'Adding doctors to group…'
+          );
+        }
         if (submitBtn) submitBtn.disabled = true;
         try {
-          var data = await apiJsonWithProgress(
-            '/api/hr/cohorts/' + targetCohortId + '/members',
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ members: members }),
-            },
-            vizEl
-          );
-          if (viz()) viz().cohortProvision(vizEl, data, {});
+          var data;
+          if (creatingNewGroup) {
+            data = await apiJsonWithProgress(
+              '/api/hr/cohorts',
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: addNewCohortNameValue(), members: members }),
+              },
+              vizEl
+            );
+            if (data.cohort) upsertCohortInCache(data.cohort);
+            await loadCohorts({ showLoading: false });
+            targetCohortId = data.cohort && data.cohort.id != null ? Number(data.cohort.id) : null;
+            if (!targetCohortId) throw new Error('Group was not created');
+          } else {
+            data = await apiJsonWithProgress(
+              '/api/hr/cohorts/' + targetCohortId + '/members',
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ members: members }),
+              },
+              vizEl
+            );
+          }
+          if (viz()) viz().cohortProvision(vizEl, data, creatingNewGroup ? { createdGroup: addNewCohortNameValue() } : {});
           if (data.cohort) _activeCohortMeta = data.cohort;
           if (_addEmailRoster) _addEmailRoster.clear();
           resetAddWizard();
@@ -3724,6 +3812,14 @@
         if (addTargetSel) {
           addTargetSel.addEventListener('change', function () {
             _addTargetCohortTouched = true;
+            syncAddNewCohortNameField();
+            updateAddCohortNamePreviews();
+          });
+        }
+        var addNewCohortNameInp = document.getElementById('addNewCohortNameInput');
+        if (addNewCohortNameInp) {
+          addNewCohortNameInp.addEventListener('input', function () {
+            setAddNewCohortNameError('');
             updateAddCohortNamePreviews();
           });
         }
