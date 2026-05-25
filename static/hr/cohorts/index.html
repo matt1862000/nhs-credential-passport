@@ -1757,6 +1757,18 @@
         }
       }
 
+      function collapseMembersSection() {
+        if (_cohortDetailFoldSetters.members) {
+          _cohortDetailFoldSetters.members(false);
+        }
+      }
+
+      function collapseGroupsSection() {
+        if (_cohortDetailFoldSetters.groups) {
+          _cohortDetailFoldSetters.groups(false);
+        }
+      }
+
       function maybeAutoExpandMembersForBanner() {
         if (!isCohortBrowseVisible() || !_cohortDetailFoldSetters.members) return;
         var banner = document.getElementById('cohortWelcomePendingBanner');
@@ -1766,16 +1778,27 @@
       }
 
       function finalizeMembersFoldForOpen(browseOnly) {
-        autoExpandMembersSection();
-        if (browseOnly || cohortWelcomePendingCount() > 0) {
-          maybeAutoExpandMembersForBanner();
-        }
-        requestAnimationFrame(function () {
+        var hasBanner = cohortWelcomePendingCount() > 0;
+        if (browseOnly) {
           autoExpandMembersSection();
-          if (browseOnly || cohortWelcomePendingCount() > 0) {
+          maybeAutoExpandMembersForBanner();
+          requestAnimationFrame(function () {
+            autoExpandMembersSection();
             maybeAutoExpandMembersForBanner();
-          }
-        });
+          });
+          return;
+        }
+        collapseGroupsSection();
+        if (hasBanner) {
+          autoExpandMembersSection();
+          maybeAutoExpandMembersForBanner();
+          requestAnimationFrame(function () {
+            autoExpandMembersSection();
+            maybeAutoExpandMembersForBanner();
+          });
+        } else {
+          collapseMembersSection();
+        }
       }
 
       function renderDetailCohortList() {
