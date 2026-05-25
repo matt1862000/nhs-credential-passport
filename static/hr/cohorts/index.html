@@ -1348,8 +1348,17 @@
         return { defaultCohort: defaultCohort, custom: custom };
       }
 
+      function expandNestedGroupsUnderAllDoctors() {
+        _nestedGroupsExpanded = true;
+        if (_activeCohortId != null) renderDetailCohortList();
+      }
+
       function nestedGroupsShouldExpand(custom, activeCohortId) {
         if (_nestedGroupsExpanded) return true;
+        var groupsBtn = document.getElementById('btnToggleGroupsSection');
+        if (groupsBtn && groupsBtn.getAttribute('aria-expanded') === 'true' && custom.length) {
+          return true;
+        }
         if (activeCohortId == null || !custom.length) return false;
         return custom.some(function (c) { return Number(c.id) === Number(activeCohortId); });
       }
@@ -2536,6 +2545,7 @@
           btn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
           panel.hidden = !expanded;
           try { sessionStorage.setItem(storageKey, expanded ? '1' : '0'); } catch (e) {}
+          if (sectionKey === 'groups' && expanded) expandNestedGroupsUnderAllDoctors();
         }
         try {
           var stored = sessionStorage.getItem(storageKey);
