@@ -240,9 +240,9 @@
             return '<li class="' + cls + '">' + esc(credLabel(c)) + ' — ' + esc(when) + esc(extra) + '</li>';
           }).join('') + '</ul>';
           var openHref = item.user_id != null && item.user_id !== ''
-            ? '/static/hr/search.html?doctor=' + encodeURIComponent(String(item.user_id))
+            ? '/static/hr/cohorts/?doctor=' + encodeURIComponent(String(item.user_id))
               + (item.display_name ? '&name=' + encodeURIComponent(item.display_name) : '')
-            : '/static/hr/search.html?q=' + encodeURIComponent(item.email || item.gmc_number || item.display_name || '');
+            : '/static/hr/cohorts/?q=' + encodeURIComponent(item.email || item.gmc_number || item.display_name || '');
           return (
             '<tr><td><span class="hr-doctor-name">' + esc(doctorLabel(item)) + '</span>'
             + '<div class="hr-doctor-meta">' + esc(item.email || '') + (item.gmc_number ? ' · GMC ' + esc(item.gmc_number) : '') + '</div></td>'
