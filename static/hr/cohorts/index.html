@@ -1735,6 +1735,12 @@
         titleEl.textContent = String(name).trim() + ' Members';
       }
 
+      function autoExpandMembersSection() {
+        if (_cohortDetailFoldSetters.members) {
+          _cohortDetailFoldSetters.members(true);
+        }
+      }
+
       function maybeAutoExpandMembersForBanner() {
         var banner = document.getElementById('cohortWelcomePendingBanner');
         if (banner && !banner.hidden && _cohortDetailFoldSetters.members) {
@@ -2491,6 +2497,7 @@
         if (exportBtn) {
           exportBtn.href = '/api/hr/cohorts/' + encodeURIComponent(String(id)) + '/compliance-export';
         }
+        autoExpandMembersSection();
         syncCohortsPageHead();
       }
 
