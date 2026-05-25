@@ -3864,6 +3864,33 @@ def hr_cohorts_list(request: Request):
     return {"cohorts": db.cohort_list_for_trust(trust)}
 
 
+@router.get("/hr/cohorts/suggest-target")
+def hr_cohort_suggest_target(request: Request, email: str = ""):
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    db.ensure_default_cohort(trust, int(hr["id"]))
+    return db.cohort_suggest_target_for_email(email, trust, int(hr["id"]))
+
+
+@router.post("/hr/cohorts/suggest-targets")
+async def hr_cohort_suggest_targets(request: Request):
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    db.ensure_default_cohort(trust, int(hr["id"]))
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    raw = body.get("emails")
+    if not isinstance(raw, list):
+        raise HTTPException(status_code=400, detail="emails must be a list")
+    emails = [str(x) for x in raw]
+    suggestions = db.cohort_suggest_targets_for_emails(emails, trust, int(hr["id"]))
+    return {"suggestions": suggestions}
+
+
 @router.post("/hr/cohorts")
 async def hr_cohorts_create(request: Request):
     hr = require_premium_user(request)

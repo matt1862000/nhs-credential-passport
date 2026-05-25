@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#005eb8">
   <title>All Groups &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
-  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260525-18">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260525-19">
   <link rel="stylesheet" href="/static/shared/training-add-form.css?v=20260526-2">
   <link rel="stylesheet" href="/static/shared/messages-compose.css?v=20260528-1">
 </head>
@@ -166,7 +166,7 @@
           </div>
           <form id="formAddMembers" class="hr-bulk-form" novalidate>
             <div id="addStepMethod" class="cohort-wizard-step-panel">
-              <p class="cohort-method-intro">How would you like to add doctors to <strong id="addCohortNamePreview">this group</strong>?</p>
+              <p class="cohort-method-intro">How would you like to add doctors?</p>
               <div class="cohort-method-grid" role="group" aria-label="How to add doctors">
                 <button type="button" class="cohort-method-card" data-add-method="manual">
                   <span class="cohort-method-card__icon" aria-hidden="true">
@@ -186,6 +186,11 @@
             </div>
 
             <div id="addStepRoster" class="cohort-wizard-step-panel" hidden>
+              <div class="nhsuk-form-group" id="addTargetCohortGroup">
+                <label class="nhsuk-label" for="addTargetCohortSelect">Add to group</label>
+                <span class="nhsuk-hint nhsuk-hint--secondary" id="addTargetCohortHint">Defaults to All Doctors, or an existing group if this doctor is already a member.</span>
+                <select class="nhsuk-select" id="addTargetCohortSelect" aria-describedby="addTargetCohortHint"></select>
+              </div>
               <p class="cohort-wizard-roster-title" id="addRosterTitle">Add doctors</p>
               <div class="nhsuk-form-group" id="addEmailsGroup">
                 <div id="addPanelManual" hidden>
@@ -642,6 +647,7 @@
       var _allDoctorsSearchWired = false;
       var _addWizardStep = 1;
       var _addMethod = null;
+      var _addTargetCohortTouched = false;
       var _editingMemberId = null;
       var _memberRemoveSelected = null;
       var _activeCohortMeta = null;
@@ -1519,6 +1525,9 @@
           }
           if (upsertMember(collected.member, false)) {
             clearAddForm();
+            if (typeof opts.onMemberAdded === 'function') {
+              opts.onMemberAdded(collected.member);
+            }
           }
         }
 
@@ -1596,6 +1605,9 @@
                 fileInp.value = '';
                 if (fileNameEl) fileNameEl.textContent = 'No file chosen';
                 if (out.added > 0 || out.total > 0) syncUploadPicker();
+                if (typeof opts.onRosterMerged === 'function') {
+                  opts.onRosterMerged((parsed || []).map(function (m) { return m.personal_email; }));
+                }
               })
               .catch(function (err) {
                 setRosterUploadStatus(opts.fileStatusId, err.message || 'Could not read that file.', true);
@@ -2165,16 +2177,126 @@
         return (title && title.textContent) ? title.textContent.trim() : 'this group';
       }
 
+      function sortedCohortsForSelect() {
+        var list = (_cohortsCache || []).slice();
+        list.sort(function (a, b) {
+          var aDef = isDefaultCohort(a) ? 0 : 1;
+          var bDef = isDefaultCohort(b) ? 0 : 1;
+          if (aDef !== bDef) return aDef - bDef;
+          return String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' });
+        });
+        return list;
+      }
+
+      function populateAddTargetCohortSelect() {
+        var sel = document.getElementById('addTargetCohortSelect');
+        if (!sel) return;
+        var prev = sel.value;
+        var cohorts = sortedCohortsForSelect();
+        sel.innerHTML = cohorts.map(function (c) {
+          var label = c.name || ('Group ' + c.id);
+          if (isDefaultCohort(c)) label += ' (default)';
+          return '<option value="' + esc(String(c.id)) + '">' + esc(label) + '</option>';
+        }).join('');
+        if (prev && cohorts.some(function (c) { return String(c.id) === prev; })) {
+          sel.value = prev;
+        }
+      }
+
+      function getAddTargetCohortId() {
+        var sel = document.getElementById('addTargetCohortSelect');
+        if (sel && sel.value) return Number(sel.value);
+        var def = defaultCohortFromCache();
+        return def ? Number(def.id) : null;
+      }
+
+      function setAddTargetCohortId(cohortId) {
+        var sel = document.getElementById('addTargetCohortSelect');
+        if (!sel || cohortId == null) return;
+        var val = String(cohortId);
+        for (var i = 0; i < sel.options.length; i++) {
+          if (sel.options[i].value === val) {
+            sel.value = val;
+            updateAddCohortNamePreviews();
+            return;
+          }
+        }
+      }
+
+      function addTargetCohortDisplayName() {
+        var sel = document.getElementById('addTargetCohortSelect');
+        if (sel && sel.selectedIndex >= 0) {
+          return sel.options[sel.selectedIndex].textContent.replace(/\s*\(default\)\s*$/, '').trim();
+        }
+        var def = defaultCohortFromCache();
+        return def ? def.name : addCohortDisplayName();
+      }
+
+      function updateAddSubmitLabel() {
+        var btn = document.getElementById('btnAddSubmit');
+        if (!btn) return;
+        var name = addTargetCohortDisplayName();
+        btn.textContent = 'Add to “' + name + '”';
+      }
+
+      function resetAddTargetCohortUI() {
+        _addTargetCohortTouched = false;
+        populateAddTargetCohortSelect();
+        var def = defaultCohortFromCache();
+        if (def) setAddTargetCohortId(def.id);
+        updateAddCohortNamePreviews();
+      }
+
+      async function suggestAddTargetForEmail(email) {
+        if (!email || _addTargetCohortTouched) return;
+        try {
+          var data = await apiJson(
+            '/api/hr/cohorts/suggest-target?email=' + encodeURIComponent(String(email).trim().toLowerCase())
+          );
+          if (data && data.cohort_id != null) setAddTargetCohortId(data.cohort_id);
+        } catch (e) {
+          /* keep current selection */
+        }
+      }
+
+      async function suggestAddTargetFromEmails(emails) {
+        if (_addTargetCohortTouched || !emails || !emails.length) return;
+        var uniq = emails.map(function (e) { return String(e || '').trim().toLowerCase(); }).filter(Boolean);
+        if (!uniq.length) return;
+        try {
+          var data = await apiJson('/api/hr/cohorts/suggest-targets', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ emails: uniq }),
+          });
+          var suggestions = (data && data.suggestions) ? data.suggestions : {};
+          var ids = [];
+          uniq.forEach(function (email) {
+            var s = suggestions[email];
+            if (s && s.cohort_id != null) ids.push(Number(s.cohort_id));
+          });
+          if (!ids.length) return;
+          var first = ids[0];
+          if (ids.every(function (id) { return id === first; })) {
+            setAddTargetCohortId(first);
+            return;
+          }
+          var def = defaultCohortFromCache();
+          if (def) setAddTargetCohortId(def.id);
+        } catch (e) {
+          /* keep current selection */
+        }
+      }
+
       function updateAddCohortNamePreviews() {
-        var name = addCohortDisplayName();
-        var p1 = document.getElementById('addCohortNamePreview');
+        var name = _addWizardStep === 2 ? addTargetCohortDisplayName() : addCohortDisplayName();
         var p2 = document.getElementById('addRosterTitle');
-        if (p1) p1.textContent = name;
         if (p2) {
           p2.textContent = _addMethod === 'upload'
             ? 'Upload roster for “' + name + '”'
             : 'Add doctors to “' + name + '”';
         }
+        updateAddSubmitLabel();
       }
 
       function setAddWizardStep(step) {
@@ -2193,6 +2315,7 @@
         show(document.getElementById('addPanelManual'), step === 2 && _addMethod === 'manual');
         show(document.getElementById('addPanelUpload'), step === 2 && _addMethod === 'upload');
         if (step === 2) {
+          resetAddTargetCohortUI();
           updateAddCohortNamePreviews();
           if (_addMethod === 'upload' && _addEmailRoster && _addEmailRoster.syncUploadPicker) {
             _addEmailRoster.syncUploadPicker();
@@ -2206,6 +2329,7 @@
       function resetAddWizard() {
         _addWizardStep = 1;
         _addMethod = null;
+        _addTargetCohortTouched = false;
         var uploadErr = document.getElementById('addUploadError');
         if (uploadErr) { uploadErr.hidden = true; uploadErr.textContent = ''; }
         setAddWizardStep(1);
@@ -2648,6 +2772,7 @@
           var cohorts = (data && data.cohorts) ? data.cohorts : [];
           renderCohortList(cohorts);
           if (_activeCohortMeta && isDefaultCohort(_activeCohortMeta)) renderDetailCohortList();
+          populateAddTargetCohortSelect();
         } catch (err) {
           if (seq !== _cohortsLoadSeq) return;
           if (_cohortsCache.length) {
@@ -3459,7 +3584,8 @@
 
       document.getElementById('formAddMembers').addEventListener('submit', async function (e) {
         e.preventDefault();
-        if (!_activeCohortId) return;
+        var targetCohortId = getAddTargetCohortId();
+        if (!targetCohortId) return;
         if (_addWizardStep !== 2) {
           setAddWizardStep(1);
           return;
@@ -3509,7 +3635,7 @@
         if (submitBtn) submitBtn.disabled = true;
         try {
           var data = await apiJsonWithProgress(
-            '/api/hr/cohorts/' + _activeCohortId + '/members',
+            '/api/hr/cohorts/' + targetCohortId + '/members',
             {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -3522,7 +3648,7 @@
           if (_addEmailRoster) _addEmailRoster.clear();
           resetAddWizard();
           var reviewIds = userIdsAwaitingWelcomeFromResults(data.results);
-          await openCohort(_activeCohortId, {
+          await openCohort(targetCohortId, {
             preserveAddViz: true,
             welcomeReview: reviewIds.length ? {
               userIds: reviewIds,
@@ -3589,7 +3715,20 @@
           uploadPickerId: 'addUploadPicker',
           uploadDoneId: 'addUploadDone',
           submitBtnId: 'btnAddSubmit',
+          onMemberAdded: function (m) {
+            void suggestAddTargetForEmail(m && m.personal_email);
+          },
+          onRosterMerged: function (emails) {
+            void suggestAddTargetFromEmails(emails);
+          },
         });
+        var addTargetSel = document.getElementById('addTargetCohortSelect');
+        if (addTargetSel) {
+          addTargetSel.addEventListener('change', function () {
+            _addTargetCohortTouched = true;
+            updateAddCohortNamePreviews();
+          });
+        }
         wireComposeFocus('cohortMsgBody', 'cohortMsgGroup');
         wireWelcomePreview('welcomeReviewTemplate', 'welcomeReviewEditPreview');
         if (window.NHSMessages && typeof NHSMessages.bindCompose === 'function') {

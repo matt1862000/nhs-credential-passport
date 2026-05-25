@@ -3613,6 +3613,88 @@ def cohort_list_for_trust(hr_trust: str) -> list[dict]:
     return [_cohort_row_dict(r) for r in rows]
 
 
+def _default_cohort_id_for_trust(hr_trust: str, hr_user_id: int) -> int:
+    existing = cohort_get_default_for_trust(hr_trust)
+    if existing:
+        return int(existing["id"])
+    return int(ensure_default_cohort(hr_trust, hr_user_id))
+
+
+def user_custom_cohort_memberships(user_id: int, hr_trust: str) -> list[dict]:
+    """Non-default groups the user belongs to for this trust, newest membership first."""
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_hr_cohorts_tables(conn)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT c.id, c.name, m.added_at
+            FROM hr_cohort_members m
+            JOIN hr_cohorts c ON c.id = m.cohort_id
+            WHERE m.user_id = ? AND LOWER(TRIM(c.hr_trust)) = LOWER(TRIM(?))
+            ORDER BY m.added_at DESC
+            """,
+            (int(user_id), (hr_trust or "").strip()),
+        ).fetchall()
+    out: list[dict] = []
+    for r in rows:
+        if is_default_cohort_name(r["name"]):
+            continue
+        out.append({"id": int(r["id"]), "name": r["name"], "added_at": r["added_at"]})
+    return out
+
+
+def cohort_suggest_target_for_email(
+    email: str, hr_trust: str, hr_user_id: int
+) -> dict:
+    """Suggest which group to add a doctor to (default All Doctors, or existing custom group)."""
+    default_id = _default_cohort_id_for_trust(hr_trust, hr_user_id)
+    default = cohort_get(default_id, hr_trust) or {
+        "id": default_id,
+        "name": DEFAULT_COHORT_NAME,
+    }
+    personal = (email or "").strip().lower()
+    if not personal:
+        return {
+            "cohort_id": default_id,
+            "cohort_name": default["name"],
+            "reason": "default",
+        }
+    user = user_get_by_email(personal)
+    if not user:
+        return {
+            "cohort_id": default_id,
+            "cohort_name": default["name"],
+            "reason": "default",
+        }
+    custom = user_custom_cohort_memberships(int(user["id"]), hr_trust)
+    if custom:
+        pick = custom[0]
+        return {
+            "cohort_id": int(pick["id"]),
+            "cohort_name": pick["name"],
+            "reason": "existing_membership",
+        }
+    return {
+        "cohort_id": default_id,
+        "cohort_name": default["name"],
+        "reason": "default",
+    }
+
+
+def cohort_suggest_targets_for_emails(
+    emails: list[str], hr_trust: str, hr_user_id: int
+) -> dict[str, dict]:
+    out: dict[str, dict] = {}
+    seen: set[str] = set()
+    for raw in emails or []:
+        personal = (raw or "").strip().lower()
+        if not personal or personal in seen:
+            continue
+        seen.add(personal)
+        out[personal] = cohort_suggest_target_for_email(personal, hr_trust, hr_user_id)
+    return out
+
+
 def cohort_get_by_id(cohort_id: int) -> Optional[dict]:
     with sqlite3.connect(DB_PATH) as conn:
         _ensure_hr_cohorts_tables(conn)
