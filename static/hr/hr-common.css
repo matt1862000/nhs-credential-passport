@@ -427,14 +427,8 @@
 
     /* Cohort detail — actions panels */
     .hr-cohort-detail-top { margin-bottom: 1.25rem; }
-    .hr-cohort-detail-top .hr-inbox-head { margin-bottom: 0; }
-    .hr-cohort-detail-nav {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 0.5rem;
-      align-items: center;
-      justify-content: flex-end;
-    }
+    .hr-cohort-detail-head { align-items: center; margin-bottom: 0; }
+    .hr-cohort-detail-head h2 { margin: 0; font-size: 1.25rem; }
     .cohort-delete-btn {
       background: #fff;
       color: #9b1c1c;
