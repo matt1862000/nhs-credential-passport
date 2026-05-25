@@ -1,5 +1,5 @@
 /**
- * Shared loading skeleton + animated batch result summary (ESR import, HR cohorts, bulk training).
+ * Shared loading skeleton + animated batch result summary (ESR import, HR groups, bulk training).
  */
 (function (w) {
   function escapeHtml(s) {
@@ -356,10 +356,11 @@
       );
     }
     var successHtml = '';
-    if (opts.createdCohort) {
-      successHtml = 'Cohort <strong>' + escapeHtml(opts.createdCohort) + '</strong> created.';
+    var createdGroupName = opts.createdGroup || opts.createdCohort;
+    if (createdGroupName) {
+      successHtml = 'Group <strong>' + escapeHtml(createdGroupName) + '</strong> created.';
     } else if (created || existing) {
-      successHtml = 'Doctors added to this cohort.';
+      successHtml = 'Doctors added to this group.';
     }
     var errors = results
       .filter(function (r) { return r.status === 'failed'; })

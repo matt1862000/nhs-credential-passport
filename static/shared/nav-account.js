@@ -310,7 +310,7 @@
 
     if (!conversations.length) {
       body.innerHTML = isHr
-        ? '<p class="nhsuk-topnav__msg-preview-empty">No unread messages. Open Messages to search doctors or cohorts.</p>'
+        ? '<p class="nhsuk-topnav__msg-preview-empty">No unread messages. Open Messages to search doctors or groups.</p>'
         : '<p class="nhsuk-topnav__msg-preview-empty">No conversations yet.</p>';
       return;
     }

@@ -38,7 +38,7 @@
   <main class="nhsuk-main hr-wrap" id="maincontent" role="main">
     <div id="addDoctorsPageHead">
       <h1 class="nhsuk-page-heading">Add doctors</h1>
-      <p class="nhsuk-lead">Create doctor accounts using each person&rsquo;s <strong>personal email</strong> as their login, group them into cohorts, and send the same message to everyone (each replies in their own thread).</p>
+      <p class="nhsuk-lead">Create doctor accounts using each person&rsquo;s <strong>personal email</strong> as their login, organise them into groups, and send the same message to everyone (each replies in their own thread).</p>
       <p class="hr-muted" style="margin:0 0 1rem 0;font-size:0.875rem;">HR never sees passwords here. Send login details to each person&rsquo;s personal email outside DocPass. Demo accounts use a standard initial password; doctors must change it on first sign-in.</p>
     </div>
     <div id="searchDoctorsPageHead" hidden>
@@ -99,14 +99,14 @@
         <div class="hr-card" id="groupsCard">
           <div class="hr-inbox-head">
             <h2>Your groups</h2>
-            <button type="button" class="nhsuk-button hr-btn-small" id="btnShowCreate">Create cohort</button>
+            <button type="button" class="nhsuk-button hr-btn-small" id="btnShowCreate">Create group</button>
           </div>
           <div class="nhsuk-form-group" style="margin-bottom:1rem;">
-            <label class="nhsuk-label" for="cohortSearchInput">Search for a cohort</label>
-            <span class="nhsuk-hint">Type a cohort name and choose from the suggestions to open it.</span>
+            <label class="nhsuk-label" for="cohortSearchInput">Search for a group</label>
+            <span class="nhsuk-hint">Type a group name and choose from the suggestions to open it.</span>
             <div class="nhs-ac-wrap hr-doctor-search-ac" id="cohortSearchAcWrap">
-              <input class="nhsuk-input" type="search" id="cohortSearchInput" placeholder="Cohort name…" autocomplete="off" spellcheck="false" aria-label="Search for a cohort" role="combobox" aria-autocomplete="list" aria-controls="cohortSearchSuggestList" aria-expanded="false">
-              <ul id="cohortSearchSuggestList" class="nhs-suggest-list" role="listbox" hidden aria-label="Matching cohorts"></ul>
+              <input class="nhsuk-input" type="search" id="cohortSearchInput" placeholder="Group name…" autocomplete="off" spellcheck="false" aria-label="Search for a group" role="combobox" aria-autocomplete="list" aria-controls="cohortSearchSuggestList" aria-expanded="false">
+              <ul id="cohortSearchSuggestList" class="nhs-suggest-list" role="listbox" hidden aria-label="Matching groups"></ul>
             </div>
           </div>
           <div id="cohortList" aria-live="polite"></div>
@@ -116,20 +116,20 @@
       <div id="detailView" class="hr-card" hidden>
         <div class="hr-cohort-detail-top">
           <div class="hr-cohort-detail-nav">
-            <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnBackList">&larr; All cohorts</button>
-            <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small cohort-delete-btn" id="btnDeleteCohort">Delete cohort</button>
+            <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnBackList">&larr; All groups</button>
+            <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small cohort-delete-btn" id="btnDeleteCohort">Delete group</button>
           </div>
           <div class="hr-inbox-head" style="margin-top:0.75rem;">
-            <h2 id="detailTitle" style="margin:0;">Cohort</h2>
+            <h2 id="detailTitle" style="margin:0;">Group</h2>
           </div>
           <p class="hr-cohort-stats" id="detailMeta" aria-live="polite"></p>
         </div>
 
         <h3 class="hr-cohort-actions-title">Actions</h3>
-        <div class="hr-segment" role="tablist" aria-label="Cohort actions">
+        <div class="hr-segment" role="tablist" aria-label="Group actions">
           <button type="button" class="active" id="tabCohortAdd" role="tab" aria-selected="true" aria-controls="panelCohortAdd" data-tab="add">Add doctors</button>
-          <button type="button" id="tabCohortCreate" role="tab" aria-selected="false" aria-controls="panelCohortCreate" data-tab="create">Add cohort</button>
-          <button type="button" id="tabCohortMessage" role="tab" aria-selected="false" aria-controls="panelCohortMessage" data-tab="message">Message cohort</button>
+          <button type="button" id="tabCohortCreate" role="tab" aria-selected="false" aria-controls="panelCohortCreate" data-tab="create">Add group</button>
+          <button type="button" id="tabCohortMessage" role="tab" aria-selected="false" aria-controls="panelCohortMessage" data-tab="message">Message group</button>
           <button type="button" id="tabCohortCompliance" role="tab" aria-selected="false" aria-controls="panelCohortCompliance" data-tab="compliance">Compliance</button>
         </div>
 
@@ -140,7 +140,7 @@
           </div>
           <form id="formAddMembers" class="hr-bulk-form" novalidate>
             <div id="addStepMethod" class="cohort-wizard-step-panel">
-              <p class="cohort-method-intro">How would you like to add doctors to <strong id="addCohortNamePreview">this cohort</strong>?</p>
+              <p class="cohort-method-intro">How would you like to add doctors to <strong id="addCohortNamePreview">this group</strong>?</p>
               <div class="cohort-method-grid" role="group" aria-label="How to add doctors">
                 <button type="button" class="cohort-method-card" data-add-method="manual">
                   <span class="cohort-method-card__icon" aria-hidden="true">
@@ -203,7 +203,7 @@
                     <div id="addEmailsFileViz" class="hr-provision-viz-wrap hr-provision-viz-wrap--compact" aria-live="polite"></div>
                   </div>
                   <p id="addUploadDone" class="cohort-upload-done" hidden role="status">
-                    <strong>Roster imported.</strong> Review the doctors below, then add them to the cohort.
+                    <strong>Roster imported.</strong> Review the doctors below, then add them to the group.
                   </p>
                   <p class="cohort-email-error" id="addUploadError" hidden role="alert"></p>
                 </div>
@@ -217,7 +217,7 @@
               </div>
               <div class="cohort-wizard-actions cohort-wizard-actions--split">
                 <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnAddBackMethod">Back</button>
-                <button type="submit" class="nhsuk-button cohort-roster-submit cohort-roster-submit--empty" id="btnAddSubmit" disabled>Add to cohort</button>
+                <button type="submit" class="nhsuk-button cohort-roster-submit cohort-roster-submit--empty" id="btnAddSubmit" disabled>Add to group</button>
               </div>
             </div>
           </form>
@@ -227,13 +227,13 @@
 
         <div id="panelCohortCreate" class="hr-bulk-panel hr-cohort-panel" role="tabpanel" aria-labelledby="tabCohortCreate" hidden>
           <div class="cohort-wizard-head">
-            <h2 id="createWizardTitle">Create cohort</h2>
-            <p class="cohort-wizard-step-label" id="createWizardStepLabel" aria-live="polite">Step 1 of 3 — Name your cohort</p>
+            <h2 id="createWizardTitle">Create group</h2>
+            <p class="cohort-wizard-step-label" id="createWizardStepLabel" aria-live="polite">Step 1 of 3 — Name your group</p>
           </div>
             <form id="formCreateCohort" class="hr-bulk-form" novalidate>
               <div id="createStepName" class="cohort-wizard-step-panel">
                 <div class="nhsuk-form-group" id="cohortNameGroup">
-                  <label class="nhsuk-label" for="cohortName">Cohort name</label>
+                  <label class="nhsuk-label" for="cohortName">Group name</label>
                   <span class="nhsuk-hint">Choose a name you will recognise later, for example a rotation or intake month.</span>
                   <input class="nhsuk-input" type="text" id="cohortName" required placeholder="e.g. February 2026" maxlength="120" autocomplete="off">
                   <p class="cohort-email-error" id="cohortNameError" hidden role="alert"></p>
@@ -245,7 +245,7 @@
               </div>
 
               <div id="createStepMethod" class="cohort-wizard-step-panel" hidden>
-                <p class="cohort-method-intro">How would you like to add doctors to <strong id="createCohortNamePreview">this cohort</strong>? You can skip this step and add doctors later.</p>
+                <p class="cohort-method-intro">How would you like to add doctors to <strong id="createCohortNamePreview">this group</strong>? You can skip this step and add doctors later.</p>
                 <div class="cohort-method-grid" role="group" aria-label="How to add doctors">
                   <button type="button" class="cohort-method-card" data-create-method="manual">
                     <span class="cohort-method-card__icon" aria-hidden="true">
@@ -266,7 +266,7 @@
                       <svg width="22" height="22" viewBox="0 0 24 24" focusable="false"><path fill="currentColor" d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
                     </span>
                     <span class="cohort-method-card__title">From All Doctors</span>
-                    <span class="cohort-method-card__desc">Copy doctors from your default All Doctors group into this cohort.</span>
+                    <span class="cohort-method-card__desc">Copy doctors from your default All Doctors group into this group.</span>
                   </button>
                 </div>
                 <div class="cohort-wizard-actions cohort-wizard-actions--split">
@@ -279,7 +279,7 @@
                 <p class="cohort-wizard-roster-title" id="createRosterTitle">Add doctors</p>
                 <div class="nhsuk-form-group" id="cohortEmailsGroup">
                   <div id="createPanelManual" hidden>
-                    <span class="nhsuk-hint nhsuk-hint--secondary" id="cohortAddSectionHint">Personal email is required. Fill in the fields, then click <strong>Add</strong>. When you submit the cohort, anything still in the form is included automatically.</span>
+                    <span class="nhsuk-hint nhsuk-hint--secondary" id="cohortAddSectionHint">Personal email is required. Fill in the fields, then click <strong>Add</strong>. When you submit the group, anything still in the form is included automatically.</span>
                     <div class="cohort-add-card" id="cohortAddCard" role="group" aria-labelledby="cohortAddCardTitle">
                       <p id="cohortAddCardTitle" class="cohort-add-card__title">Add one doctor</p>
                       <div class="cohort-add-card__primary">
@@ -319,13 +319,13 @@
                       <div id="cohortEmailsFileViz" class="hr-provision-viz-wrap hr-provision-viz-wrap--compact" aria-live="polite"></div>
                     </div>
                     <p id="cohortUploadDone" class="cohort-upload-done" hidden role="status">
-                      <strong>Roster imported.</strong> Review the doctors below, then create the cohort.
+                      <strong>Roster imported.</strong> Review the doctors below, then create the group.
                     </p>
                     <p class="cohort-email-error" id="cohortUploadError" hidden role="alert"></p>
                   </div>
 
                   <div id="createPanelAllDoctors" hidden>
-                    <span class="nhsuk-hint nhsuk-hint--secondary">Select doctors from your <strong>All Doctors</strong> group. Existing accounts are linked to the new cohort — nothing is duplicated.</span>
+                    <span class="nhsuk-hint nhsuk-hint--secondary">Select doctors from your <strong>All Doctors</strong> group. Existing accounts are linked to the new group — nothing is duplicated.</span>
                     <p class="hr-muted" id="createAllDoctorsLoading" style="margin:0.75rem 0;">Loading All Doctors&hellip;</p>
                     <div id="createAllDoctorsEmpty" hidden>
                       <p class="hr-muted" style="margin:0.75rem 0;">No doctors in All Doctors yet. Open that group to add some first.</p>
@@ -358,7 +358,7 @@
                 </div>
                 <div class="cohort-wizard-actions cohort-wizard-actions--split">
                   <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnCreateBackRoster">Back</button>
-                  <button type="submit" class="nhsuk-button cohort-roster-submit cohort-roster-submit--empty" id="btnCreateSubmit" disabled>Create cohort</button>
+                  <button type="submit" class="nhsuk-button cohort-roster-submit cohort-roster-submit--empty" id="btnCreateSubmit" disabled>Create group</button>
                 </div>
               </div>
             </form>
@@ -397,7 +397,7 @@
                     </svg>
                   </button>
                   <div class="msg-compose-field">
-                    <textarea class="nhsuk-textarea" id="cohortMsgBody" rows="5" placeholder="Write your message to everyone in this cohort…" aria-label="Message to cohort"></textarea>
+                    <textarea class="nhsuk-textarea" id="cohortMsgBody" rows="5" placeholder="Write your message to everyone in this group…" aria-label="Message to group"></textarea>
                   </div>
                 </div>
                 <ul class="msg-pending-files" id="cohortMsgPendingFiles" hidden aria-label="Files to send"></ul>
@@ -438,10 +438,10 @@
         <div class="hr-cohort-members-head">
           <h3>Members</h3>
         </div>
-        <p class="hr-cohort-legend">Click a name to edit details or remove someone from this cohort. Status shows sign-in and whether their welcome message has been sent.</p>
+        <p class="hr-cohort-legend">Click a name to edit details or remove someone from this group. Status shows sign-in and whether their welcome message has been sent.</p>
         <div id="detailMembersSection">
           <div class="hr-table-wrap">
-            <table class="hr-table" aria-label="Cohort members">
+            <table class="hr-table" aria-label="Group members">
               <thead><tr><th>Name</th><th>Personal email</th><th>GMC</th><th>Status</th></tr></thead>
               <tbody id="membersTbody"></tbody>
             </table>
@@ -454,9 +454,9 @@
         </div>
 
         <div class="hr-cohort-members-head">
-          <h3>Cohorts</h3>
+          <h3>Groups</h3>
         </div>
-        <p class="hr-cohort-legend">Open a cohort to add doctors, send messages, or check compliance.</p>
+        <p class="hr-cohort-legend">Open a group to add doctors, send messages, or check compliance.</p>
         <div id="detailCohortsSection" aria-live="polite">
           <div id="detailCohortList"></div>
         </div>
@@ -468,7 +468,7 @@
     <div class="hr-modal__panel hr-modal__panel--welcome-review">
       <h3 id="welcomeReviewModalTitle" class="hr-modal__title">Review welcome message</h3>
       <p class="nhsuk-hint" id="welcomeReviewIntro" style="margin-top:0;">Before a welcome is sent, check the message below. Each person gets their own private DocPass thread.</p>
-      <p class="nhsuk-hint nhsuk-hint--secondary" id="welcomeReviewLaterHint" style="margin-top:0.35rem;">If you choose <strong>Decide later</strong>, use <strong>Review and send welcome</strong> on this cohort page when you are ready, or the message sends automatically when each doctor finishes their profile.</p>
+      <p class="nhsuk-hint nhsuk-hint--secondary" id="welcomeReviewLaterHint" style="margin-top:0.35rem;">If you choose <strong>Decide later</strong>, use <strong>Review and send welcome</strong> on this group page when you are ready, or the message sends automatically when each doctor finishes their profile.</p>
       <p class="nhsuk-hint nhsuk-hint--secondary" id="welcomeReviewRecipients" aria-live="polite"></p>
       <div id="welcomeReviewPreviewBlock">
         <p class="cohort-welcome-block__title" style="margin:0.75rem 0 0.35rem;">Message</p>
@@ -526,7 +526,7 @@
           <p class="cohort-email-error" id="memberEditError" hidden role="alert"></p>
         </div>
         <div class="cohort-wizard-actions cohort-wizard-actions--split" style="margin-top:1rem;">
-          <button type="button" class="nhsuk-button nhsuk-button--secondary cohort-delete-btn" id="btnMemberRemove">Remove from cohort</button>
+          <button type="button" class="nhsuk-button nhsuk-button--secondary cohort-delete-btn" id="btnMemberRemove">Remove from group</button>
           <div style="display:flex;flex-wrap:wrap;gap:0.5rem;">
             <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnMemberCancel">Cancel</button>
             <button type="submit" class="nhsuk-button">Save</button>
@@ -594,15 +594,15 @@
     </div>
   </div>
 
-  <script src="/static/shared/import-result-viz.js?v=20260525-2"></script>
+  <script src="/static/shared/import-result-viz.js?v=20260525-3"></script>
   <script src="/static/shared/vendor/xlsx.full.min.js?v=20260522-1"></script>
   <script src="/static/shared/cohort-roster-parse.js?v=20260524-5"></script>
   <script src="/static/shared/auth.js?v=20260523-1"></script>
-  <script src="/static/shared/nav-account.js?v=20260529-4"></script>
+  <script src="/static/shared/nav-account.js?v=20260529-5"></script>
   <script src="/static/shared/ods-trust-suggest.js"></script>
   <script src="/static/shared/messages-common.js?v=20260524-2"></script>
   <script>window.__HR_PAGE__ = 'cohorts';</script>
-  <script src="/static/hr/hr-app.js?v=20260530-3"></script>
+  <script src="/static/hr/hr-app.js?v=20260530-4"></script>
   <script>
     (function () {
       var _activeCohortId = null;
@@ -1096,7 +1096,7 @@
           show(block, true);
           if (hint) {
             if (gapTopics.length) {
-              hint.textContent = 'Suggested for mandatory gaps in this cohort'
+              hint.textContent = 'Suggested for mandatory gaps in this group'
                 + (gapTopics.length === 1 ? ': ' + (gapTopics[0].topic_name || 'topic') + '.' : ' (' + gapTopics.length + ' topics).');
             } else {
               hint.textContent = 'Pick a saved template from your library.';
@@ -1684,7 +1684,7 @@
 
       function detailCohortEmptyHtml() {
         return (
-          '<p class="hr-muted" style="margin:0;">You haven&rsquo;t created a cohort yet. Use the <strong>Add cohort</strong> tab to add your first one.</p>'
+          '<p class="hr-muted" style="margin:0;">You haven&rsquo;t created a group yet. Use the <strong>Add group</strong> tab to add your first one.</p>'
         );
       }
 
@@ -1799,7 +1799,7 @@
           }).join('');
         }
         if (!members.length) {
-          if (membersTb) membersTb.innerHTML = '<tr><td colspan="6" class="hr-muted">No members in this cohort.</td></tr>';
+          if (membersTb) membersTb.innerHTML = '<tr><td colspan="6" class="hr-muted">No members in this group.</td></tr>';
         } else if (membersTb) {
           membersTb.innerHTML = members.map(function (m) {
             var s = m.summary || {};
@@ -1870,8 +1870,8 @@
             var n = _cohortPendingVerify.length;
             text.textContent =
               n === 1
-                ? '1 doctor in this cohort has training awaiting HR verification. Send them an in-app reminder.'
-                : String(n) + ' doctors in this cohort have training awaiting HR verification. Send them an in-app reminder.';
+                ? '1 doctor in this group has training awaiting HR verification. Send them an in-app reminder.'
+                : String(n) + ' doctors in this group have training awaiting HR verification. Send them an in-app reminder.';
           }
         } catch (e) {
           /* optional */
@@ -1934,7 +1934,7 @@
 
       function addCohortDisplayName() {
         var title = document.getElementById('detailTitle');
-        return (title && title.textContent) ? title.textContent.trim() : 'this cohort';
+        return (title && title.textContent) ? title.textContent.trim() : 'this group';
       }
 
       function updateAddCohortNamePreviews() {
@@ -2153,7 +2153,7 @@
             li.id = 'cohort-search-opt-' + i;
             li.dataset.index = String(i);
             var nameSpan = document.createElement('span');
-            nameSpan.textContent = c.name || 'Cohort';
+            nameSpan.textContent = c.name || 'Group';
             li.appendChild(nameSpan);
             var metaParts = [];
             metaParts.push(String(c.member_count != null ? c.member_count : 0) + ' member' + (Number(c.member_count) === 1 ? '' : 's'));
@@ -2260,7 +2260,7 @@
 
       function cohortEmptyHtml() {
         return (
-          '<p class="hr-muted" style="margin:0;">You haven&rsquo;t created a cohort yet. Use <strong>Create cohort</strong> above to add your first one.</p>'
+          '<p class="hr-muted" style="margin:0;">You haven&rsquo;t created a group yet. Use <strong>Create group</strong> above to add your first one.</p>'
         );
       }
 
@@ -2278,7 +2278,7 @@
         }
         if (!filtered.length) {
           var q = String(_cohortListFilter || '').trim();
-          el.innerHTML = '<p class="hr-muted" style="margin:0;">No cohorts match '
+          el.innerHTML = '<p class="hr-muted" style="margin:0;">No groups match '
             + (q ? ('“' + esc(q) + '”') : 'your search') + '.</p>';
           if (_activeCohortId != null) renderDetailCohortList();
           return;
@@ -2291,14 +2291,14 @@
 
       function renderCohortListLoading() {
         var el = document.getElementById('cohortList');
-        if (el) el.innerHTML = '<p class="hr-muted" style="margin:0;">Loading cohorts&hellip;</p>';
+        if (el) el.innerHTML = '<p class="hr-muted" style="margin:0;">Loading groups&hellip;</p>';
       }
 
       function renderCohortListError(message) {
         var el = document.getElementById('cohortList');
         if (!el) return;
         el.innerHTML =
-          '<p class="hr-muted" style="margin:0 0 0.5rem 0;">' + esc(message || 'Could not load cohorts') + '</p>' +
+          '<p class="hr-muted" style="margin:0 0 0.5rem 0;">' + esc(message || 'Could not load groups') + '</p>' +
           '<button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnRetryCohorts">Try again</button>';
         var retry = document.getElementById('btnRetryCohorts');
         if (retry) retry.addEventListener('click', function () { loadCohorts(); });
@@ -2318,20 +2318,20 @@
       }
 
       function confirmDeleteCohort(cohort) {
-        var name = (cohort && cohort.name) ? cohort.name : 'this cohort';
+        var name = (cohort && cohort.name) ? cohort.name : 'this group';
         var n = cohort && cohort.member_count != null ? Number(cohort.member_count) : 0;
         var memberNote = n > 0
-          ? '\n\n' + n + ' membership' + (n === 1 ? '' : 's') + ' will be removed from this cohort.'
+          ? '\n\n' + n + ' membership' + (n === 1 ? '' : 's') + ' will be removed from this group.'
           : '';
         return confirm(
-          'Delete “' + name + '”?' + memberNote + '\n\nDoctor accounts are not deleted — only this cohort group.'
+          'Delete “' + name + '”?' + memberNote + '\n\nDoctor accounts are not deleted — only this group.'
         );
       }
 
       async function deleteCohort(cohortId) {
         var cohort = cohortById(cohortId);
         if (!cohort && _activeCohortId === cohortId) {
-          cohort = { id: cohortId, name: document.getElementById('detailTitle').textContent || 'Cohort', member_count: (_detailMembers || []).length };
+          cohort = { id: cohortId, name: document.getElementById('detailTitle').textContent || 'Group', member_count: (_detailMembers || []).length };
         }
         if (!confirmDeleteCohort(cohort)) return;
         try {
@@ -2342,7 +2342,7 @@
             await loadCohorts();
           }
         } catch (err) {
-          alert(err.message || 'Could not delete cohort');
+          alert(err.message || 'Could not delete group');
         }
       }
 
@@ -2363,7 +2363,7 @@
           if (_cohortsCache.length) {
             renderCohortList(_cohortsCache);
           } else {
-            renderCohortListError(err.message || 'Could not load cohorts');
+            renderCohortListError(err.message || 'Could not load groups');
           }
         }
       }
@@ -2482,7 +2482,7 @@
       }
 
       function updateCreateCohortNamePreviews() {
-        var name = cohortNameValue() || 'this cohort';
+        var name = cohortNameValue() || 'this group';
         var p1 = document.getElementById('createCohortNamePreview');
         var p2 = document.getElementById('createRosterTitle');
         if (p1) p1.textContent = name;
@@ -2504,7 +2504,7 @@
         show(document.getElementById('createStepRoster'), step === 3);
         var label = document.getElementById('createWizardStepLabel');
         if (label) {
-          if (step === 1) label.textContent = 'Step 1 of 3 — Name your cohort';
+          if (step === 1) label.textContent = 'Step 1 of 3 — Name your group';
           else if (step === 2) label.textContent = 'Step 2 of 3 — How to add doctors';
           else {
             if (_createMethod === 'upload') {
@@ -2578,7 +2578,7 @@
       document.getElementById('btnCreateNextName').addEventListener('click', function () {
         var name = cohortNameValue();
         if (!name) {
-          setCohortNameError('Enter a cohort name to continue.');
+          setCohortNameError('Enter a group name to continue.');
           document.getElementById('cohortName').focus();
           return;
         }
@@ -2677,7 +2677,7 @@
         var skipBtn = document.getElementById('btnCreateSkipDoctors');
         var name = cohortNameValue();
         if (!name) {
-          setCohortNameError('Enter a cohort name to continue.');
+          setCohortNameError('Enter a group name to continue.');
           setCreateWizardStep(1);
           document.getElementById('cohortName').focus();
           return;
@@ -2695,7 +2695,7 @@
         if (viz()) {
           viz().showLoading(
             vizEl,
-            members.length ? 'Creating cohort and provisioning accounts…' : 'Creating cohort…'
+            members.length ? 'Creating group and provisioning accounts…' : 'Creating group…'
           );
         }
         if (submitBtn) submitBtn.disabled = true;
@@ -2716,7 +2716,7 @@
           renderCohortList(_cohortsCache);
           await loadCohorts({ showLoading: false });
           try {
-            if (viz()) viz().cohortProvision(vizEl, data, { createdCohort: cohortName });
+            if (viz()) viz().cohortProvision(vizEl, data, { createdGroup: cohortName });
           } catch (vizErr) {
             console.warn('cohort result viz', vizErr);
           }
@@ -2899,7 +2899,7 @@
         var m = memberById(_editingMemberId);
         var label = m ? memberDisplayLabel(m) : 'this doctor';
         if (!confirm(
-          'Remove ' + label + ' from this cohort?\n\nTheir DocPass account is not deleted — only this cohort membership.'
+          'Remove ' + label + ' from this group?\n\nTheir DocPass account is not deleted — only this group membership.'
         )) return;
         try {
           await apiJson(
@@ -2911,7 +2911,7 @@
           await openCohort(_activeCohortId);
           await loadCohorts({ showLoading: false });
         } catch (err) {
-          alert(err.message || 'Could not remove from cohort');
+          alert(err.message || 'Could not remove from group');
         }
       });
 
@@ -2992,7 +2992,7 @@
           : !!body.trim();
         if (!canSend) return;
         if (!_detailMembers.length) {
-          setStatusEl(document.getElementById('msgStatus'), 'Add doctors to this cohort before sending a message.', 'error');
+          setStatusEl(document.getElementById('msgStatus'), 'Add doctors to this group before sending a message.', 'error');
           return;
         }
         if (!confirmCohortSend(_detailMembers.length, _detailMembers)) return;
@@ -3001,7 +3001,7 @@
         var sendBtn = document.getElementById('btnSendCohort');
         show(st, false);
         clearProvisionResult(msgViz);
-        if (viz()) viz().showLoading(msgViz, 'Sending message to cohort…');
+        if (viz()) viz().showLoading(msgViz, 'Sending message to group…');
         if (sendBtn) sendBtn.disabled = true;
         try {
           var out;
@@ -3079,7 +3079,7 @@
         if (uploadErrHide) uploadErrHide.hidden = true;
         show(st, false);
         clearProvisionResult(vizEl);
-        if (viz()) viz().showLoading(vizEl, 'Adding doctors to cohort…');
+        if (viz()) viz().showLoading(vizEl, 'Adding doctors to group…');
         if (submitBtn) submitBtn.disabled = true;
         try {
           var data = await apiJsonWithProgress(

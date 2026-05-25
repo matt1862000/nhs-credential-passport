@@ -1688,7 +1688,7 @@
           var label = (name || '').trim() || 'this doctor';
           return window.confirm(
             'Permanently delete ' + label + '?\n\n' +
-            'This removes their DocPass account, all training records, and membership in any cohorts they belong to. This cannot be undone.'
+            'This removes their DocPass account, all training records, and membership in any groups they belong to. This cannot be undone.'
           );
         }
 
@@ -1872,11 +1872,11 @@
           if (!list) return;
           _bulkCohortsCache = cohorts || [];
           if (!_bulkCohortsCache.length) {
-            list.innerHTML = '<p class="hr-bulk-cohort-list__empty">No cohorts yet. Create one from Cohorts first.</p>';
+            list.innerHTML = '<p class="hr-bulk-cohort-list__empty">No groups yet. Create one from Groups first.</p>';
             return;
           }
           list.innerHTML = _bulkCohortsCache.map(function (c) {
-            var n = (c.name || 'Cohort').trim();
+            var n = (c.name || 'Group').trim();
             var cnt = c.member_count != null ? c.member_count : 0;
             var checked = c.is_default || String(n).toLowerCase() === 'all doctors' || String(n).toLowerCase() === 'ad-hoc' ? ' checked' : '';
             return (
@@ -1949,12 +1949,12 @@
             }
             var names = ids.map(function (id) {
               var c = bulkCohortById(id);
-              return c ? (c.name || 'Cohort').trim() : ('Cohort ' + id);
+              return c ? (c.name || 'Group').trim() : ('Group ' + id);
             });
             var label = names.length === 1
-              ? 'cohort “' + names[0] + '”'
-              : ids.length + ' cohorts (“' + names.slice(0, 3).join('”, “') + (names.length > 3 ? '”, …' : '') + '”)';
-            el.textContent = 'Recipients: ' + label + '. Duplicates across cohorts are only issued once.';
+              ? 'group “' + names[0] + '”'
+              : ids.length + ' groups (“' + names.slice(0, 3).join('”, “') + (names.length > 3 ? '”, …' : '') + '”)';
+            el.textContent = 'Recipients: ' + label + '. Duplicates across groups are only issued once.';
           } else if (bulkRecipientMethod === 'roster') {
             var r = document.getElementById('bulkRoster');
             var name = r && r.files && r.files[0] ? r.files[0].name : '';
@@ -1975,7 +1975,7 @@
         }
 
         function bulkStepTwoLabel() {
-          if (bulkRecipientMethod === 'cohort') return 'Step 2 of 4 — Choose cohorts';
+          if (bulkRecipientMethod === 'cohort') return 'Step 2 of 4 — Choose groups';
           if (bulkRecipientMethod === 'search') return 'Step 2 of 4 — Choose doctors';
           return 'Step 2 of 4 — Upload roster';
         }
@@ -2145,7 +2145,7 @@
             bulkNextCohort.addEventListener('click', function () {
               var ids = getSelectedBulkCohortIds();
               if (!ids.length) {
-                setBulkStepError('bulkStepCohortError', 'Select at least one cohort to continue.');
+                setBulkStepError('bulkStepCohortError', 'Select at least one group to continue.');
                 var list = document.getElementById('bulkCohortList');
                 if (list) list.focus();
                 return;
@@ -2495,7 +2495,7 @@
             var hasRoster = bulkRecipientMethod === 'roster' && rosterEl && rosterEl.files && rosterEl.files[0];
             var hasDoctors = bulkRecipientMethod === 'search' && bulkSelectedDoctors.length > 0;
             if (!hasCohorts && !hasRoster && !hasDoctors) {
-              setBulkStatusMessage('Complete the recipient steps: search for doctors, select a cohort, or upload a roster file.', 'error');
+              setBulkStatusMessage('Complete the recipient steps: search for doctors, select a group, or upload a roster file.', 'error');
               setBulkWizardStep(2);
               return;
             }
@@ -2509,10 +2509,10 @@
             if (hasCohorts) {
               if (selectedCohortIds.length === 1) {
                 var one = bulkCohortById(selectedCohortIds[0]);
-                var oneName = one ? (one.name || 'Cohort').trim() : ('Cohort ' + selectedCohortIds[0]);
-                bulkStartMsg = 'Loading cohort “' + oneName + '”…';
+                var oneName = one ? (one.name || 'Group').trim() : ('Group ' + selectedCohortIds[0]);
+                bulkStartMsg = 'Loading group “' + oneName + '”…';
               } else {
-                bulkStartMsg = 'Loading ' + selectedCohortIds.length + ' cohorts…';
+                bulkStartMsg = 'Loading ' + selectedCohortIds.length + ' groups…';
               }
             } else if (hasRoster) {
               bulkStartMsg = 'Uploading roster file…';

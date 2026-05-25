@@ -152,10 +152,10 @@
         <div class="msg-sidebar">
           <div class="msg-conv-list">
             <div class="msg-search-panel" id="msgDoctorSearchPanel">
-              <label class="nhsuk-label" for="msgDoctorSearchInput">Search doctors or cohorts</label>
-              <span class="nhsuk-hint nhsuk-hint--secondary" style="display:block;margin:0 0 0.35rem 0;font-size:0.8125rem;">Name, email, GMC number, or cohort name</span>
+              <label class="nhsuk-label" for="msgDoctorSearchInput">Search doctors or groups</label>
+              <span class="nhsuk-hint nhsuk-hint--secondary" style="display:block;margin:0 0 0.35rem 0;font-size:0.8125rem;">Name, email, GMC number, or group name</span>
               <input type="text" class="nhsuk-input" id="msgDoctorSearchInput" placeholder="e.g. jane.smith@gmail.com or February 2026…" autocomplete="off" aria-autocomplete="list" aria-controls="msgDoctorSearchResults">
-              <p id="msgSearchStatus" class="msg-search-status" role="status" aria-live="polite">Search to message a doctor, open a cohort, or view read history.</p>
+              <p id="msgSearchStatus" class="msg-search-status" role="status" aria-live="polite">Search to message a doctor, Open a group, or view read history.</p>
               <div class="msg-search-toolbar" id="msgSearchToolbar" hidden>
                 <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnSelectAllResults">Add all to selection</button>
               </div>
@@ -257,8 +257,8 @@
   </main>
 
   <script src="/static/shared/auth.js?v=20260523-1"></script>
-  <script src="/static/shared/nav-account.js?v=20260529-4"></script>
-  <script src="/static/shared/import-result-viz.js?v=20260525-2"></script>
+  <script src="/static/shared/nav-account.js?v=20260529-5"></script>
+  <script src="/static/shared/import-result-viz.js?v=20260525-3"></script>
   <script src="/static/shared/messages-common.js?v=20260524-3"></script>
   <script>
     (function () {
@@ -737,11 +737,11 @@
           );
         }
         (cohorts || []).forEach(function (c, i) {
-          var n = (c.name || 'Cohort').trim();
+          var n = (c.name || 'Group').trim();
           var mc = Number(c.member_count || 0);
           html += (
             '<li role="option" tabindex="0" class="msg-search-cohort" data-cohort-idx="' + i + '">' +
-              '<span class="msg-doctor-results-primary">Cohort: ' + esc(n) + '</span>' +
+              '<span class="msg-doctor-results-primary">Group: ' + esc(n) + '</span>' +
               '<span class="msg-doctor-results-meta">' + mc + ' doctor' + (mc === 1 ? '' : 's') +
               ' — click to list</span></li>'
           );
@@ -799,11 +799,11 @@
               current_trust: m.current_trust,
             };
           });
-          _searchCohortContext = { id: cohort.id, name: cohort.name || 'Cohort' };
+          _searchCohortContext = { id: cohort.id, name: cohort.name || 'Group' };
           _lastCohortSearch = [];
           _lastDoctorSearch = members;
           if (!members.length) {
-            renderSearchResults([], [], 'No doctors in this cohort yet.');
+            renderSearchResults([], [], 'No doctors in this group yet.');
             return;
           }
           renderSearchResults(
@@ -812,7 +812,7 @@
             members.length + ' in “' + (_searchCohortContext.name) + '” — tick to select, Open for one-to-one.'
           );
         } catch (e) {
-          setDoctorSearchStatus(e.message || 'Could not load cohort');
+          setDoctorSearchStatus(e.message || 'Could not load group');
         }
       }
 
@@ -827,7 +827,7 @@
           _lastDoctorSearch = [];
           _lastCohortSearch = [];
           _searchCohortContext = null;
-          setDoctorSearchStatus('Search to message a doctor, open a cohort, or view read history.');
+          setDoctorSearchStatus('Search to message a doctor, Open a group, or view read history.');
           return;
         }
         _searchCohortContext = null;
@@ -841,17 +841,17 @@
           if (!results.length && !cohorts.length) {
             listEl.hidden = true;
             listEl.innerHTML = '';
-            setDoctorSearchStatus('No matching doctors or cohorts found.');
+            setDoctorSearchStatus('No matching doctors or groups found.');
             return;
           }
           var parts = [];
           if (cohorts.length) {
-            parts.push(cohorts.length + ' cohort' + (cohorts.length === 1 ? '' : 's'));
+            parts.push(cohorts.length + ' group' + (cohorts.length === 1 ? '' : 's'));
           }
           if (results.length) {
             parts.push(results.length + ' doctor' + (results.length === 1 ? '' : 's'));
           }
-          renderSearchResults(results, cohorts, parts.join(', ') + ' — tick to select, Open for one-to-one, or list a cohort.');
+          renderSearchResults(results, cohorts, parts.join(', ') + ' — tick to select, Open for one-to-one, or list a group.');
         } catch (e) {
           listEl.hidden = true;
           setDoctorSearchStatus(e.message || 'Search failed.');

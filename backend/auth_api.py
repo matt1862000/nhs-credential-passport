@@ -1363,10 +1363,10 @@ def hr_doctor_delete(request: Request, doctor_user_id: int):
     cohorts = result.get("cohorts_removed") or []
     detail = f"Deleted DocPass account for {label}"
     if cohorts:
-        names = ", ".join(c.get("name") or f"Cohort {c.get('id')}" for c in cohorts[:8])
+        names = ", ".join(c.get("name") or f"Group {c.get('id')}" for c in cohorts[:8])
         if len(cohorts) > 8:
             names += f" (+{len(cohorts) - 8} more)"
-        detail += f"; removed from cohorts: {names}"
+        detail += f"; removed from groups: {names}"
     _audit_hr_action(
         hr,
         "doctor_delete",
@@ -1632,7 +1632,7 @@ def _hr_bulk_training_run(ctx: dict, *, emit_progress: bool = True) -> Iterator[
     if cohort_label:
         progress(
             "prepare",
-            f'Loaded {total} doctor{"s" if total != 1 else ""} from cohort “{cohort_label}”.',
+            f'Loaded {total} doctor{"s" if total != 1 else ""} from group “{cohort_label}”.',
             0,
             total,
         )
@@ -2015,8 +2015,8 @@ def _bulk_training_roster_from_cohorts(
     for cid in cohort_ids:
         cohort = db.cohort_get(int(cid), trust)
         if not cohort:
-            raise HTTPException(status_code=404, detail=f"Cohort not found: {cid}")
-        labels.append(cohort.get("name") or f"Cohort {cid}")
+            raise HTTPException(status_code=404, detail=f"Group not found: {cid}")
+        labels.append(cohort.get("name") or f"Group {cid}")
         for line in db.cohort_roster_lines(int(cid), trust):
             key = str(line or "").strip().lower()
             if key and key not in seen:
@@ -2025,14 +2025,14 @@ def _bulk_training_roster_from_cohorts(
     if not lines:
         raise HTTPException(
             status_code=400,
-            detail="Selected cohort(s) have no members with email or GMC.",
+            detail="Selected group(s) have no members with email or GMC.",
         )
     if len(labels) == 1:
         cohort_label = labels[0]
     elif len(labels) <= 3:
         cohort_label = ", ".join(labels)
     else:
-        cohort_label = f"{len(labels)} cohorts"
+        cohort_label = f"{len(labels)} groups"
     return lines, cohort_label
 
 
@@ -2123,7 +2123,7 @@ async def _hr_bulk_training_build_context(
     else:
         raise HTTPException(
             status_code=400,
-            detail="Select a cohort, search for doctors, or upload a roster file.",
+            detail="Select a group, search for doctors, or upload a roster file.",
         )
     if len(lines) > MAX_HR_BULK_LINES:
         raise HTTPException(
@@ -2663,7 +2663,7 @@ def hr_cohort_compliance_snapshot(request: Request, cohort_id: int):
     trust = _hr_trust_required(hr)
     snap = compliance_snapshot.cohort_compliance_snapshot(int(cohort_id), trust)
     if not snap:
-        raise HTTPException(status_code=404, detail="Cohort not found")
+        raise HTTPException(status_code=404, detail="Group not found")
     return {"snapshot": snap}
 
 
@@ -2673,7 +2673,7 @@ def hr_cohort_compliance_export(request: Request, cohort_id: int):
     trust = _hr_trust_required(hr)
     result = compliance_snapshot.cohort_compliance_csv(int(cohort_id), trust)
     if not result:
-        raise HTTPException(status_code=404, detail="Cohort not found")
+        raise HTTPException(status_code=404, detail="Group not found")
     filename, csv_text = result
     return Response(
         content=csv_text,
@@ -2915,12 +2915,12 @@ def hr_welcome_templates_delete_api(request: Request, template_id: int):
 
 @router.get("/hr/cohorts/{cohort_id}/welcome-template-suggestions")
 def hr_cohort_welcome_template_suggestions(request: Request, cohort_id: int):
-    """Suggest welcome templates based on mandatory gaps in the cohort."""
+    """Suggest welcome templates based on mandatory gaps in the group."""
     hr = require_premium_user(request)
     trust = _hr_trust_required(hr)
     snap = compliance_snapshot.cohort_compliance_snapshot(int(cohort_id), trust)
     if not snap:
-        raise HTTPException(status_code=404, detail="Cohort not found")
+        raise HTTPException(status_code=404, detail="Group not found")
     gap_topics = [
         t for t in (snap.get("topics") or [])
         if int(t.get("gap") or 0) > 0 or int(t.get("expiring") or 0) > 0
@@ -3251,7 +3251,7 @@ async def me_messages_send(request: Request, conv_id: int):
 # HR endpoints
 @router.get("/hr/messages/doctors/search")
 def hr_messages_doctors_search(request: Request, q: str = "", limit: int = 30):
-    """Search doctors or cohorts by name to start a message."""
+    """Search doctors or groups by name to start a message."""
     hr = require_premium_user(request)
     results = db.hr_doctors_search_messaging(q=q, limit=limit)
     cohorts: list[dict] = []
@@ -3728,7 +3728,7 @@ def _cohort_provision_stream(
     from . import trust_packs
 
     if not db.cohort_get(cohort_id, trust):
-        raise HTTPException(status_code=404, detail="Cohort not found")
+        raise HTTPException(status_code=404, detail="Group not found")
     processable = db.cohort_processable_members(members)
     total = len(processable)
     default_trust = trust_packs.trust_display_name(trust) or None
@@ -3776,7 +3776,7 @@ def _cohort_create_stream(
     hr: dict,
     reserved: set[str],
 ) -> Iterator[str]:
-    yield _ndjson_progress_line("prepare", f'Creating cohort “{name}”…', 0, 1)
+    yield _ndjson_progress_line("prepare", f'Creating group “{name}”…', 0, 1)
     cohort_id = db.cohort_create(trust, name, int(hr["id"]))
     yield from _cohort_provision_stream(
         cohort_id,
@@ -3833,11 +3833,11 @@ async def hr_cohorts_create(request: Request):
         raise HTTPException(status_code=400, detail="Invalid JSON")
     name = str(body.get("name") or "").strip()
     if not name:
-        raise HTTPException(status_code=400, detail="Cohort name is required")
+        raise HTTPException(status_code=400, detail="Group name is required")
     if db.is_default_cohort_name(name) and db.cohort_get_by_name(trust, name):
         raise HTTPException(
             status_code=400,
-            detail='A default "All Doctors" cohort already exists. Open it to add doctors.',
+            detail='A default "All Doctors" group already exists. Open it to add doctors.',
         )
     members = _parse_cohort_members(body)
     _validate_cohort_members(members, allow_empty=True)
@@ -3889,14 +3889,14 @@ def hr_cohorts_delete(request: Request, cohort_id: int):
     trust = _hr_trust_required(hr)
     cohort = db.cohort_get(int(cohort_id), trust)
     if not cohort:
-        raise HTTPException(status_code=404, detail="Cohort not found")
+        raise HTTPException(status_code=404, detail="Group not found")
     if db.is_default_cohort_name(cohort.get("name")):
         raise HTTPException(
             status_code=400,
-            detail='The default "All Doctors" cohort cannot be deleted. Add doctors to it instead.',
+            detail='The default "All Doctors" group cannot be deleted. Add doctors to it instead.',
         )
     if not db.cohort_delete(int(cohort_id), trust):
-        raise HTTPException(status_code=404, detail="Cohort not found")
+        raise HTTPException(status_code=404, detail="Group not found")
     return {"ok": True, "deleted_cohort_id": int(cohort_id)}
 
 
@@ -3906,7 +3906,7 @@ def hr_cohorts_detail(request: Request, cohort_id: int):
     trust = _hr_trust_required(hr)
     cohort = db.cohort_get(int(cohort_id), trust)
     if not cohort:
-        raise HTTPException(status_code=404, detail="Cohort not found")
+        raise HTTPException(status_code=404, detail="Group not found")
     members = db.cohort_members_list(int(cohort_id), trust)
     meta = _welcome_template_meta(cohort, hr)
     return {
@@ -3930,7 +3930,7 @@ async def hr_cohorts_patch(request: Request, cohort_id: int):
     tmpl = _normalize_welcome_template(body.get("welcome_message_template"))
     cohort = db.cohort_set_welcome_template(int(cohort_id), trust, tmpl)
     if not cohort:
-        raise HTTPException(status_code=404, detail="Cohort not found")
+        raise HTTPException(status_code=404, detail="Group not found")
     meta = _welcome_template_meta(cohort, hr)
     return {"cohort": {**cohort, **meta}}
 
@@ -3942,7 +3942,7 @@ async def hr_cohort_member_update(
     hr = require_premium_user(request)
     trust = _hr_trust_required(hr)
     if not db.cohort_get(int(cohort_id), trust):
-        raise HTTPException(status_code=404, detail="Cohort not found")
+        raise HTTPException(status_code=404, detail="Group not found")
     try:
         body = await request.json()
     except Exception:
@@ -3984,7 +3984,7 @@ async def hr_cohorts_add_members(request: Request, cohort_id: int):
     hr = require_premium_user(request)
     trust = _hr_trust_required(hr)
     if not db.cohort_get(int(cohort_id), trust):
-        raise HTTPException(status_code=404, detail="Cohort not found")
+        raise HTTPException(status_code=404, detail="Group not found")
     try:
         body = await request.json()
     except Exception:
@@ -3999,7 +3999,7 @@ async def hr_cohorts_add_members(request: Request, cohort_id: int):
 
     if stream:
         cohort = db.cohort_get(cid, trust) or {}
-        cname = cohort.get("name") or f"Cohort {cid}"
+        cname = cohort.get("name") or f"Group {cid}"
         return StreamingResponse(
             _ndjson_stream_wrap(
                 _cohort_provision_stream(
@@ -4048,7 +4048,7 @@ async def hr_cohorts_welcome_send(request: Request, cohort_id: int):
     hr = require_premium_user(request)
     trust = _hr_trust_required(hr)
     if not db.cohort_get(int(cohort_id), trust):
-        raise HTTPException(status_code=404, detail="Cohort not found")
+        raise HTTPException(status_code=404, detail="Group not found")
     try:
         body = await request.json()
     except Exception:
@@ -4089,7 +4089,7 @@ async def hr_cohorts_welcome_skip(request: Request, cohort_id: int):
     hr = require_premium_user(request)
     trust = _hr_trust_required(hr)
     if not db.cohort_get(int(cohort_id), trust):
-        raise HTTPException(status_code=404, detail="Cohort not found")
+        raise HTTPException(status_code=404, detail="Group not found")
     try:
         body = await request.json()
     except Exception:
@@ -4109,7 +4109,7 @@ def hr_cohort_pending_verification(request: Request, cohort_id: int):
     hr = require_premium_user(request)
     trust = _hr_trust_required(hr)
     if not db.cohort_get(int(cohort_id), trust):
-        raise HTTPException(status_code=404, detail="Cohort not found")
+        raise HTTPException(status_code=404, detail="Group not found")
     members = db.cohort_members_pending_verification(int(cohort_id), trust)
     return {"members": members, "count": len(members)}
 
@@ -4165,22 +4165,22 @@ async def hr_cohorts_message(
     hr = require_premium_user(request)
     trust = _hr_trust_required(hr)
     if not db.cohort_get(int(cohort_id), trust):
-        raise HTTPException(status_code=404, detail="Cohort not found")
+        raise HTTPException(status_code=404, detail="Group not found")
     text, attachments, subset_ids = await _cohort_message_payload(request)
     _require_message_content(text, attachments)
     doctor_ids = db.cohort_member_user_ids(int(cohort_id), trust)
     if not doctor_ids:
-        raise HTTPException(status_code=400, detail="Cohort has no members")
+        raise HTTPException(status_code=400, detail="Group has no members")
     if subset_ids:
         member_set = set(doctor_ids)
         doctor_ids = [d for d in subset_ids if d in member_set]
         if not doctor_ids:
             raise HTTPException(
                 status_code=400,
-                detail="No selected recipients are members of this cohort",
+                detail="No selected recipients are members of this group",
             )
     if len(doctor_ids) > MAX_HR_COHORT_LINES:
-        raise HTTPException(status_code=400, detail="Cohort is too large to message in one request")
+        raise HTTPException(status_code=400, detail="Group is too large to message in one request")
     if stream:
         return StreamingResponse(
             _ndjson_stream_wrap(
