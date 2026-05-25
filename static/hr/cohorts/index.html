@@ -150,6 +150,11 @@
           <p class="hr-cohort-stats" id="detailMeta" aria-live="polite"></p>
         </div>
 
+        <div id="cohortPendingVerifyBanner" class="cohort-pending-verify-banner" hidden role="region" aria-label="Training awaiting your verification">
+          <p class="cohort-pending-verify-banner__text" id="cohortPendingVerifyText"></p>
+          <a href="/static/hr/" class="nhsuk-button nhsuk-button--secondary hr-btn-small">Open Verify shared training</a>
+        </div>
+
         <h3 class="hr-cohort-actions-title">Actions</h3>
         <div class="hr-segment" role="tablist" aria-label="Group actions">
           <button type="button" class="active" id="tabCohortAdd" role="tab" aria-selected="true" aria-controls="panelCohortAdd" data-tab="add">Add doctors</button>
@@ -261,10 +266,6 @@
         </div>
 
         <div id="panelCohortMessage" class="hr-bulk-panel hr-cohort-panel" role="tabpanel" aria-labelledby="tabCohortMessage" hidden>
-          <div id="cohortPendingVerifyBanner" class="cohort-pending-verify-banner" hidden role="region" aria-label="Pending HR verification">
-            <p class="cohort-pending-verify-banner__text" id="cohortPendingVerifyText"></p>
-            <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnCohortNudgePending">Nudge with in-app message</button>
-          </div>
           <p class="nhsuk-hint" style="margin-top:0;max-width:none;" id="messageHint">Each person receives the same text in a <strong>separate private</strong> conversation.</p>
           <button type="button" class="hr-cohort-recipient-toggle" id="btnToggleRecipients" aria-expanded="false" aria-controls="recipientList">View recipients</button>
           <ul id="recipientList" class="hr-cohort-recipient-list" hidden aria-label="Recipients"></ul>
@@ -347,7 +348,7 @@
     <div class="hr-modal__panel hr-modal__panel--welcome-review">
       <h3 id="welcomeReviewModalTitle" class="hr-modal__title">Review welcome message</h3>
       <p class="nhsuk-hint" id="welcomeReviewIntro" style="margin-top:0;">Before a welcome is sent, check the message below. Each person gets their own private DocPass thread.</p>
-      <p class="nhsuk-hint nhsuk-hint--secondary" id="welcomeReviewLaterHint" style="margin-top:0.35rem;">If you choose <strong>Decide later</strong>, the message sends automatically when each doctor finishes their profile.</p>
+      <p class="nhsuk-hint nhsuk-hint--secondary" id="welcomeReviewLaterHint" style="margin-top:0.35rem;">Close this window to decide later &mdash; the welcome sends automatically when each doctor finishes their profile.</p>
       <p class="nhsuk-hint nhsuk-hint--secondary" id="welcomeReviewRecipients" aria-live="polite"></p>
       <div id="welcomeReviewPreviewBlock">
         <p class="cohort-welcome-block__title" style="margin:0.75rem 0 0.35rem;">Message</p>
@@ -383,10 +384,7 @@
       </div>
       <div class="cohort-wizard-actions cohort-wizard-actions--split" style="margin-top:1rem;">
         <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnWelcomeReviewSkip">Don&rsquo;t send welcome</button>
-        <div style="display:flex;flex-wrap:wrap;gap:0.5rem;">
-          <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnWelcomeReviewLater">Decide later</button>
-          <button type="button" class="nhsuk-button" id="btnWelcomeReviewSend">Send welcome</button>
-        </div>
+        <button type="button" class="nhsuk-button" id="btnWelcomeReviewSend">Send welcome</button>
       </div>
     </div>
   </div>
@@ -1632,7 +1630,6 @@
       }
 
       var LS_COHORT_TAB = 'hr_tab_cohort';
-      var _cohortPendingVerify = [];
 
       function loadStoredCohortTab() {
         try {
@@ -1652,30 +1649,33 @@
       async function refreshCohortPendingVerifyBanner() {
         var banner = document.getElementById('cohortPendingVerifyBanner');
         var text = document.getElementById('cohortPendingVerifyText');
-        _cohortPendingVerify = [];
         show(banner, false);
         if (!_activeCohortId || !banner) return;
         try {
           var data = await apiJson(
             '/api/hr/cohorts/' + encodeURIComponent(String(_activeCohortId)) + '/pending-verification'
           );
-          _cohortPendingVerify = data.members || [];
-          if (!_cohortPendingVerify.length) return;
+          var members = data.members || [];
+          if (!members.length) return;
           show(banner, true);
           if (text) {
-            var n = _cohortPendingVerify.length;
-            text.textContent =
-              n === 1
-                ? '1 doctor in this group has training awaiting HR verification. Send them an in-app reminder.'
-                : String(n) + ' doctors in this group have training awaiting HR verification. Send them an in-app reminder.';
+            var doctors = members.length;
+            var records = members.reduce(function (sum, m) {
+              return sum + (Number(m.pending_items) || 0);
+            }, 0);
+            if (doctors === 1) {
+              text.textContent = records === 1
+                ? '1 training record from a doctor in this group is in your verification queue (already shared automatically). Review it in Verify shared training.'
+                : String(records) + ' training records from 1 doctor in this group are in your verification queue (already shared automatically). Review them in Verify shared training.';
+            } else {
+              text.textContent = String(records) + ' training record' + (records === 1 ? '' : 's')
+                + ' from ' + String(doctors) + ' doctors in this group are in your verification queue (already shared automatically). Review them in Verify shared training.';
+            }
           }
         } catch (e) {
           /* optional */
         }
       }
-
-      var COHORT_NUDGE_DEFAULT =
-        'You have training shared with HR that still needs verification. Please check your DocPass messages or open My training to see anything outstanding.';
 
       function setCohortTab(tab) {
         if (tab === 'create') tab = 'add';
@@ -2685,12 +2685,11 @@
       });
       document.getElementById('btnWelcomeReviewSend').addEventListener('click', sendWelcomeReview);
       document.getElementById('btnWelcomeReviewSkip').addEventListener('click', skipWelcomeReview);
-      document.getElementById('btnWelcomeReviewLater').addEventListener('click', function () {
-        closeWelcomeReviewModal();
-        updateCohortActionUI();
-      });
       document.getElementById('welcomeReviewModal').addEventListener('click', function (e) {
-        if (e.target === document.getElementById('welcomeReviewModal')) closeWelcomeReviewModal();
+        if (e.target === document.getElementById('welcomeReviewModal')) {
+          closeWelcomeReviewModal();
+          updateCohortActionUI();
+        }
       });
 
       document.getElementById('btnMemberCancel').addEventListener('click', closeMemberModal);
@@ -2780,48 +2779,6 @@
         list.hidden = !open;
         btn.setAttribute('aria-expanded', open ? 'true' : 'false');
         btn.textContent = (open ? 'Hide' : 'View') + ' recipients (' + _detailMembers.length + ')';
-      });
-
-      document.getElementById('btnCohortNudgePending').addEventListener('click', async function () {
-        if (!_activeCohortId || !_cohortPendingVerify.length) return;
-        var ids = _cohortPendingVerify.map(function (m) { return m.user_id; });
-        var body = COHORT_NUDGE_DEFAULT;
-        var custom = window.prompt(
-          'Message to send (' + ids.length + ' doctor' + (ids.length === 1 ? '' : 's') + ' with pending verification):',
-          body
-        );
-        if (custom === null) return;
-        body = String(custom).trim();
-        if (!body) return;
-        if (!confirm('Send this in-app message to ' + ids.length + ' doctor' + (ids.length === 1 ? '' : 's') + '?')) return;
-        var st = document.getElementById('msgStatus');
-        var msgViz = document.getElementById('msgProvisionResult');
-        show(st, false);
-        clearProvisionResult(msgViz);
-        if (viz()) viz().showLoading(msgViz, 'Sending reminders…');
-        try {
-          var out;
-          if (window.NHSMessages && typeof NHSMessages.sendBroadcast === 'function') {
-            out = await NHSMessages.sendBroadcast(
-              '/api/hr/cohorts/' + encodeURIComponent(String(_activeCohortId)) + '/message',
-              ids,
-              body,
-              [],
-              msgViz
-            );
-          } else {
-            out = await apiJson('/api/hr/cohorts/' + encodeURIComponent(String(_activeCohortId)) + '/message', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ body: body, doctor_user_ids: ids }),
-            });
-          }
-          if (viz()) viz().cohortMessage(msgViz, out);
-        } catch (err) {
-          clearProvisionResult(msgViz);
-          show(st, true);
-          setStatusEl(st, err.message || 'Nudge failed', 'error');
-        }
       });
 
       document.getElementById('formCohortMessage').addEventListener('submit', async function (e) {
