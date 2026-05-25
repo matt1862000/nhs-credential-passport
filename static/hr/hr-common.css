@@ -510,7 +510,8 @@
     }
     .hr-cohort-fold-panel .hr-cohort-legend { margin-top: 0; }
     .hr-cohort-fold-panel[hidden] { display: none !important; }
-    .hr-cohort-browse-wrap .hr-cohort-fold + .hr-cohort-fold { margin-top: 1rem; }
+    .hr-cohort-fold-nested { margin-top: 1.25rem; padding-top: 1.25rem; border-top: 1px solid var(--nhsuk-border); }
+    .hr-cohort-fold--nested .hr-cohort-fold-head { margin-top: 0; }
     .hr-cohort-browse-wrap .hr-cohort-fold-head { margin-top: 0; }
     #detailView:not([hidden]) + #cohortBrowseWrap:not([hidden]) {
       margin-top: 0;

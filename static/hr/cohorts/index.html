@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#005eb8">
   <title>All Groups &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
-  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260525-10">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260525-11">
   <link rel="stylesheet" href="/static/shared/training-add-form.css?v=20260526-2">
   <link rel="stylesheet" href="/static/shared/messages-compose.css?v=20260528-1">
 </head>
@@ -1751,6 +1751,12 @@
         return !!(wrap && !wrap.hidden);
       }
 
+      function autoExpandGroupsSection() {
+        if (_cohortDetailFoldSetters.groups) {
+          _cohortDetailFoldSetters.groups(true);
+        }
+      }
+
       function autoExpandMembersSection() {
         if (_cohortDetailFoldSetters.members) {
           _cohortDetailFoldSetters.members(true);
@@ -1773,6 +1779,7 @@
         if (!isCohortBrowseVisible() || !_cohortDetailFoldSetters.members) return;
         var banner = document.getElementById('cohortWelcomePendingBanner');
         if (banner && !banner.hidden) {
+          autoExpandGroupsSection();
           _cohortDetailFoldSetters.members(true);
         }
       }
@@ -1780,24 +1787,27 @@
       function finalizeMembersFoldForOpen(browseOnly) {
         var hasBanner = cohortWelcomePendingCount() > 0;
         if (browseOnly) {
+          autoExpandGroupsSection();
           autoExpandMembersSection();
           maybeAutoExpandMembersForBanner();
           requestAnimationFrame(function () {
+            autoExpandGroupsSection();
             autoExpandMembersSection();
             maybeAutoExpandMembersForBanner();
           });
           return;
         }
         collapseGroupsSection();
+        collapseMembersSection();
         if (hasBanner) {
+          autoExpandGroupsSection();
           autoExpandMembersSection();
           maybeAutoExpandMembersForBanner();
           requestAnimationFrame(function () {
+            autoExpandGroupsSection();
             autoExpandMembersSection();
             maybeAutoExpandMembersForBanner();
           });
-        } else {
-          collapseMembersSection();
         }
       }
 
@@ -2489,12 +2499,16 @@
       function syncBrowseLayout() {
         var browseWrap = document.getElementById('cohortBrowseWrap');
         var detailEl = document.getElementById('detailView');
-        var groupsSection = document.getElementById('cohortBrowseGroupsSection');
+        var groupsListBlock = document.getElementById('cohortBrowseGroupsListBlock');
+        var groupsFoldHead = document.getElementById('cohortGroupsFoldHead');
         var backOnMembers = document.getElementById('btnBackListFromMembers');
+        var backOnGroups = document.getElementById('btnBackList');
         var searchBrowse = _activeCohortId != null && cohortsUrlSearchMode()
           && detailEl && detailEl.hidden && browseWrap && !browseWrap.hidden;
-        if (groupsSection) groupsSection.hidden = searchBrowse;
+        if (groupsListBlock) groupsListBlock.hidden = searchBrowse;
+        if (groupsFoldHead) groupsFoldHead.hidden = searchBrowse;
         if (backOnMembers) backOnMembers.hidden = !searchBrowse;
+        if (backOnGroups) backOnGroups.hidden = searchBrowse;
       }
 
       function showList() {
