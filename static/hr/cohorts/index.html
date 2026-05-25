@@ -156,7 +156,6 @@
           <button type="button" id="tabCohortMessage" role="tab" aria-selected="false" aria-controls="panelCohortMessage" data-tab="message">Message group</button>
           <button type="button" id="tabCohortCompliance" role="tab" aria-selected="false" aria-controls="panelCohortCompliance" data-tab="compliance">Compliance</button>
           <button type="button" id="tabCohortMembers" role="tab" aria-selected="false" aria-controls="panelCohortMembers" data-tab="members">Members</button>
-          <button type="button" id="tabCohortCreate" role="tab" aria-selected="false" aria-controls="panelCohortCreate" data-tab="create">Add group</button>
         </div>
 
         <div id="panelCohortAdd" class="hr-bulk-panel hr-cohort-panel" role="tabpanel" aria-labelledby="tabCohortAdd">
@@ -259,156 +258,6 @@
           </form>
           <div id="addProvisionResult" class="hr-provision-viz-wrap" aria-live="polite"></div>
           <p id="addStatus" class="hr-cohort-status-msg hr-muted" role="status" aria-live="polite" hidden></p>
-        </div>
-
-        <div id="panelCohortCreate" class="hr-bulk-panel hr-cohort-panel" role="tabpanel" aria-labelledby="tabCohortCreate" hidden>
-          <div class="cohort-wizard-head">
-            <h2 id="createWizardTitle">Create group</h2>
-            <p class="cohort-wizard-step-label" id="createWizardStepLabel" aria-live="polite">Step 1 of 3 — Name your group</p>
-          </div>
-            <form id="formCreateCohort" class="hr-bulk-form" novalidate>
-              <div id="createStepName" class="cohort-wizard-step-panel">
-                <div class="nhsuk-form-group" id="cohortNameGroup">
-                  <label class="nhsuk-label" for="cohortName">Group name</label>
-                  <span class="nhsuk-hint">Choose a name you will recognise later, for example a rotation or intake month.</span>
-                  <input class="nhsuk-input" type="text" id="cohortName" required placeholder="e.g. February 2026" maxlength="120" autocomplete="off">
-                  <p class="cohort-email-error" id="cohortNameError" hidden role="alert"></p>
-                </div>
-                <div class="cohort-wizard-actions cohort-wizard-actions--split">
-                  <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnCancelCreate">Cancel</button>
-                  <button type="button" class="nhsuk-button" id="btnCreateNextName">Next</button>
-                </div>
-              </div>
-
-              <div id="createStepMethod" class="cohort-wizard-step-panel" hidden>
-                <p class="cohort-method-intro">How would you like to add doctors to <strong id="createCohortNamePreview">this group</strong>? You can skip this step and add doctors later.</p>
-                <div class="cohort-method-grid" role="group" aria-label="How to add doctors">
-                  <button type="button" class="cohort-method-card" data-create-method="manual">
-                    <span class="cohort-method-card__icon" aria-hidden="true">
-                      <svg width="22" height="22" viewBox="0 0 24 24" focusable="false"><path fill="currentColor" d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
-                    </span>
-                    <span class="cohort-method-card__title">Add manually</span>
-                    <span class="cohort-method-card__desc">Enter personal email, full name, and GMC number one doctor at a time.</span>
-                  </button>
-                  <button type="button" class="cohort-method-card" data-create-method="upload">
-                    <span class="cohort-method-card__icon" aria-hidden="true">
-                      <svg width="22" height="22" viewBox="0 0 24 24" focusable="false"><path fill="currentColor" d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
-                    </span>
-                    <span class="cohort-method-card__title">Upload spreadsheet</span>
-                    <span class="cohort-method-card__desc">Import a CSV or Excel file with full name, GMC number, and personal email columns.</span>
-                  </button>
-                  <button type="button" class="cohort-method-card" data-create-method="all_doctors">
-                    <span class="cohort-method-card__icon" aria-hidden="true">
-                      <svg width="22" height="22" viewBox="0 0 24 24" focusable="false"><path fill="currentColor" d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
-                    </span>
-                    <span class="cohort-method-card__title">From All Doctors</span>
-                    <span class="cohort-method-card__desc">Copy doctors from your default All Doctors group into this group.</span>
-                  </button>
-                </div>
-                <div class="cohort-wizard-actions cohort-wizard-actions--split">
-                  <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnCreateBackMethod">Back</button>
-                  <button type="button" class="nhsuk-button" id="btnCreateSkipDoctors">Skip for now</button>
-                </div>
-              </div>
-
-              <div id="createStepRoster" class="cohort-wizard-step-panel" hidden>
-                <p class="cohort-wizard-roster-title" id="createRosterTitle">Add doctors</p>
-                <div class="nhsuk-form-group" id="cohortEmailsGroup">
-                  <div id="createPanelManual" hidden>
-                    <span class="nhsuk-hint nhsuk-hint--secondary" id="cohortAddSectionHint">Personal email is required. Fill in the fields, then click <strong>Add</strong>. When you submit the group, anything still in the form is included automatically.</span>
-                    <div class="cohort-add-card" id="cohortAddCard" role="group" aria-labelledby="cohortAddCardTitle">
-                      <p id="cohortAddCardTitle" class="cohort-add-card__title">Add one doctor</p>
-                      <div class="cohort-add-card__primary">
-                        <div class="cohort-add-field cohort-add-field--grow">
-                          <label class="nhsuk-label" for="cohortPersonalEmailInput">Personal email</label>
-                          <input class="nhsuk-input" type="email" id="cohortPersonalEmailInput" name="cohort_personal_email" placeholder="jane.smith@gmail.com" spellcheck="false" autocapitalize="off" autocomplete="email" inputmode="email" aria-describedby="cohortEmailError cohortEmailsCount cohortAddOptionalHint">
-                        </div>
-                      </div>
-                      <p class="cohort-add-card__optional-hint" id="cohortAddOptionalHint">Optional — pre-fills their profile when they first sign in</p>
-                      <div class="cohort-add-card__grid">
-                        <div class="cohort-add-field">
-                          <label class="nhsuk-label nhsuk-label--s" for="cohortNameInput">Full name</label>
-                          <input class="nhsuk-input" type="text" id="cohortNameInput" name="cohort_full_name" placeholder="Jane Smith" autocomplete="name" maxlength="200">
-                        </div>
-                        <div class="cohort-add-field">
-                          <label class="nhsuk-label nhsuk-label--s" for="cohortGmcInput">GMC number</label>
-                          <input class="nhsuk-input" type="text" id="cohortGmcInput" name="cohort_gmc" placeholder="1234567" inputmode="numeric" maxlength="11" aria-describedby="cohortGmcHint">
-                          <span class="nhsuk-hint nhsuk-hint--secondary" id="cohortGmcHint">Seven digits</span>
-                        </div>
-                      </div>
-                      <div class="cohort-add-card__actions">
-                        <button type="button" class="nhsuk-button cohort-add-card__btn" id="btnCohortEmailAdd">Add</button>
-                      </div>
-                    </div>
-                    <p class="cohort-email-error" id="cohortEmailError" hidden role="alert"></p>
-                  </div>
-
-                  <div id="createPanelUpload" hidden>
-                    <div id="cohortUploadPicker" class="hr-roster-upload">
-                      <label class="nhsuk-label" for="cohortEmailsFile">CSV or Excel file</label>
-                      <span class="nhsuk-hint">Upload <strong>.csv</strong> or <strong>.xlsx</strong>. Columns in order: <strong>full name</strong>, <strong>GMC number</strong>, <strong>personal email</strong> (header row recommended). Empty cells are OK.</span>
-                      <div class="hr-bulk-file">
-                        <input class="nhsuk-input" type="file" id="cohortEmailsFile" accept=".txt,.csv,.xlsx,.xls,text/plain,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" aria-describedby="cohortEmailsFileStatus">
-                      </div>
-                      <span class="hr-roster-file-name" id="cohortEmailsFileName" aria-live="polite">No file chosen</span>
-                      <p class="hr-roster-upload-status" id="cohortEmailsFileStatus" hidden role="status"></p>
-                      <div id="cohortEmailsFileViz" class="hr-provision-viz-wrap hr-provision-viz-wrap--compact" aria-live="polite"></div>
-                    </div>
-                    <p id="cohortUploadDone" class="cohort-upload-done" hidden role="status">
-                      <strong>Roster imported.</strong> Review the doctors below, then create the group.
-                    </p>
-                    <p class="cohort-email-error" id="cohortUploadError" hidden role="alert"></p>
-                  </div>
-
-                  <div id="createPanelAllDoctors" hidden>
-                    <span class="nhsuk-hint nhsuk-hint--secondary">Select doctors from your <strong>All Doctors</strong> group. Existing accounts are linked to the new group — nothing is duplicated.</span>
-                    <p class="hr-muted" id="createAllDoctorsLoading" style="margin:0.75rem 0;">Loading All Doctors&hellip;</p>
-                    <div id="createAllDoctorsEmpty" hidden>
-                      <p class="hr-muted" style="margin:0.75rem 0;">No doctors in All Doctors yet. Open that group to add some first.</p>
-                      <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnOpenAllDoctors">Open All Doctors</button>
-                    </div>
-                    <div id="createAllDoctorsPicker" hidden>
-                      <div class="nhsuk-form-group" style="margin-top:0.75rem;margin-bottom:0.5rem;">
-                        <label class="nhsuk-label" for="createAllDoctorsSearch">Search doctors</label>
-                        <div class="nhs-ac-wrap" id="createAllDoctorsSearchWrap">
-                          <input class="nhsuk-input" type="search" id="createAllDoctorsSearch" placeholder="Name, email or GMC number…" autocomplete="off" spellcheck="false" aria-label="Search All Doctors doctors" role="combobox" aria-autocomplete="list" aria-controls="createAllDoctorsSuggestList" aria-expanded="false">
-                          <ul id="createAllDoctorsSuggestList" class="nhs-suggest-list" role="listbox" hidden aria-label="Matching All Doctors doctors"></ul>
-                        </div>
-                      </div>
-                      <p class="hr-muted" id="createAllDoctorsFilterHint" style="margin:0 0 0.5rem 0;" hidden aria-live="polite"></p>
-                      <label class="nhsuk-label nhsuk-label--s" style="display:block;">
-                        <input type="checkbox" id="createAllDoctorsSelectAll" checked> Select all
-                      </label>
-                      <div class="hr-bulk-cohort-list" id="createAllDoctorsList" role="group" aria-label="All Doctors doctors"></div>
-                      <p class="hr-muted" id="createAllDoctorsNoMatches" style="margin:0.75rem 0;" hidden>No doctors match your search.</p>
-                    </div>
-                    <p class="cohort-email-error" id="createAllDoctorsError" hidden role="alert"></p>
-                  </div>
-
-                  <div class="cohort-roster-added" id="createRosterAdded">
-                    <p class="cohort-roster-added__heading">Added doctors</p>
-                    <span class="cohort-email-count cohort-email-count--empty" id="cohortEmailsCount" aria-live="polite">0 doctors</span>
-                    <p class="cohort-list-empty" id="cohortEmailsListEmpty">No doctors added yet — use the form above or upload a file.</p>
-                    <div id="cohortEmailsList" class="cohort-email-list" aria-live="polite"></div>
-                  </div>
-                </div>
-                <div class="cohort-wizard-actions cohort-wizard-actions--split">
-                  <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnCreateBackRoster">Back</button>
-                  <button type="submit" class="nhsuk-button cohort-roster-submit cohort-roster-submit--empty" id="btnCreateSubmit" disabled>Create group</button>
-                </div>
-              </div>
-            </form>
-          <div id="createProvisionResult" class="hr-provision-viz-wrap" aria-live="polite"></div>
-          <p id="createStatus" class="hr-muted" style="min-height:1.25rem;margin-top:0.75rem;" hidden aria-live="polite"></p>
-          <div id="createResultsWrap" hidden>
-            <h3 style="font-size:1rem;margin:1rem 0 0.5rem;">Results</h3>
-            <div class="hr-table-wrap">
-              <table class="hr-table" aria-label="Provisioning results">
-                <thead><tr><th>Email</th><th>Status</th><th>Pre-filled</th><th>Note</th></tr></thead>
-                <tbody id="createResultsTbody"></tbody>
-              </table>
-            </div>
-          </div>
         </div>
 
         <div id="panelCohortMessage" class="hr-bulk-panel hr-cohort-panel" role="tabpanel" aria-labelledby="tabCohortMessage" hidden>
@@ -637,18 +486,10 @@
     (function () {
       var _activeCohortId = null;
       var _detailMembers = [];
-      var _createEmailRoster = null;
       var _addEmailRoster = null;
       var _cohortMsgCompose = null;
       var _cohortsCache = [];
       var _cohortsLoadSeq = 0;
-      var _createWizardStep = 1;
-      var _createMethod = null;
-      var _allDoctorsMembers = [];
-      var _allDoctorsCohortId = null;
-      var _allDoctorsFilterQuery = '';
-      var _allDoctorsSelectedEmails = null;
-      var _allDoctorsSearchWired = false;
       var _addWizardStep = 1;
       var _addMethod = null;
       var _addTargetCohortTouched = false;
@@ -675,365 +516,6 @@
 
       function defaultCohortFromCache() {
         return _cohortsCache.find(function (c) { return isDefaultCohort(c); }) || null;
-      }
-
-      function allDoctorsMemberEmail(m) {
-        return String((m && (m.personal_email || m.email)) || '').trim().toLowerCase();
-      }
-
-      function allDoctorsMemberHaystack(m) {
-        var parts = [
-          memberDisplayLabel(m),
-          m.personal_email || m.email || '',
-          m.gmc_number || '',
-        ];
-        return parts.join(' ').toLowerCase();
-      }
-
-      function filterAllDoctorsMembers(query) {
-        var q = String(query || '').trim().toLowerCase();
-        if (!q) return _allDoctorsMembers.slice();
-        return _allDoctorsMembers.filter(function (m) {
-          return allDoctorsMemberHaystack(m).indexOf(q) !== -1;
-        });
-      }
-
-      function allDoctorsSelectedSet() {
-        if (!_allDoctorsSelectedEmails) {
-          _allDoctorsSelectedEmails = new Set(
-            _allDoctorsMembers.map(allDoctorsMemberEmail).filter(Boolean)
-          );
-        }
-        return _allDoctorsSelectedEmails;
-      }
-
-      function syncAllDoctorsSelectAllUi() {
-        var selectAll = document.getElementById('createAllDoctorsSelectAll');
-        var list = document.getElementById('createAllDoctorsList');
-        if (!selectAll || !list) return;
-        var boxes = list.querySelectorAll('input[type="checkbox"][data-all-doctors-email]');
-        var checked = list.querySelectorAll('input[type="checkbox"][data-all-doctors-email]:checked');
-        selectAll.checked = boxes.length > 0 && checked.length === boxes.length;
-        selectAll.indeterminate = checked.length > 0 && checked.length < boxes.length;
-      }
-
-      function syncAllDoctorsSubmitState() {
-        if (_createMethod !== 'all_doctors') return;
-        var submitBtn = document.getElementById('btnCreateSubmit');
-        if (!submitBtn) return;
-        var n = getSelectedAllDoctorsMembers().length;
-        var ready = n > 0;
-        submitBtn.disabled = !ready;
-        submitBtn.classList.toggle('cohort-roster-submit--ready', ready);
-        submitBtn.classList.toggle('cohort-roster-submit--empty', !ready);
-      }
-
-      function getSelectedAllDoctorsMembers() {
-        var selectedEmails = allDoctorsSelectedSet();
-        return _allDoctorsMembers.filter(function (m) {
-          return selectedEmails.has(allDoctorsMemberEmail(m));
-        }).map(function (m) {
-          var dn = (m.display_name && String(m.display_name).trim()) || '';
-          return {
-            personal_email: m.personal_email || m.email,
-            display_name: dn || undefined,
-            gmc_number: m.gmc_number || undefined,
-          };
-        });
-      }
-
-      function renderAllDoctorsPicker() {
-        var list = document.getElementById('createAllDoctorsList');
-        var hint = document.getElementById('createAllDoctorsFilterHint');
-        var noMatches = document.getElementById('createAllDoctorsNoMatches');
-        if (!list) return;
-        var selected = allDoctorsSelectedSet();
-        var visible = filterAllDoctorsMembers(_allDoctorsFilterQuery);
-        if (hint) {
-          var q = String(_allDoctorsFilterQuery || '').trim();
-          if (q && _allDoctorsMembers.length) {
-            hint.textContent = 'Showing ' + visible.length + ' of ' + _allDoctorsMembers.length + ' doctor'
-              + (_allDoctorsMembers.length === 1 ? '' : 's') + ' matching “' + q + '”.';
-            hint.hidden = false;
-          } else {
-            hint.hidden = true;
-            hint.textContent = '';
-          }
-        }
-        if (!visible.length) {
-          list.innerHTML = '';
-          if (noMatches) noMatches.hidden = !String(_allDoctorsFilterQuery || '').trim();
-        } else {
-          if (noMatches) noMatches.hidden = true;
-          list.innerHTML = visible.map(function (m) {
-            var email = m.personal_email || m.email || '';
-            var emailKey = allDoctorsMemberEmail(m);
-            var label = memberDisplayLabel(m);
-            var metaParts = [];
-            if (label.toLowerCase() !== String(email).toLowerCase() && email) metaParts.push(email);
-            if (m.gmc_number) metaParts.push('GMC ' + m.gmc_number);
-            var meta = metaParts.join(' · ');
-            var isChecked = selected.has(emailKey);
-            return (
-              '<label class="hr-bulk-cohort-option">' +
-              '<input type="checkbox" data-all-doctors-email="' + esc(email) + '"' + (isChecked ? ' checked' : '') + '>' +
-              '<span><strong>' + esc(label) + '</strong>' +
-              (meta ? '<span class="hr-bulk-cohort-option__meta">' + esc(meta) + '</span>' : '') +
-              '</span></label>'
-            );
-          }).join('');
-        }
-        syncAllDoctorsSelectAllUi();
-        syncAllDoctorsSubmitState();
-      }
-
-      function wireCreateAllDoctorsSearch() {
-        if (_allDoctorsSearchWired) return;
-        var inputEl = document.getElementById('createAllDoctorsSearch');
-        var listEl = document.getElementById('createAllDoctorsSuggestList');
-        var wrapEl = document.getElementById('createAllDoctorsSearchWrap');
-        if (!inputEl || !listEl || !wrapEl) return;
-        _allDoctorsSearchWired = true;
-
-        var items = [];
-        var active = -1;
-        var debSuggest = null;
-        var debFilter = null;
-
-        function hideSuggest() {
-          listEl.innerHTML = '';
-          listEl.hidden = true;
-          active = -1;
-          items = [];
-          inputEl.setAttribute('aria-expanded', 'false');
-          inputEl.removeAttribute('aria-activedescendant');
-        }
-
-        function updateHighlight() {
-          var lis = listEl.querySelectorAll('li[role="option"]');
-          for (var j = 0; j < lis.length; j++) {
-            lis[j].setAttribute('aria-selected', j === active ? 'true' : 'false');
-          }
-          if (active >= 0 && lis[active]) {
-            inputEl.setAttribute('aria-activedescendant', lis[active].id);
-            try { lis[active].scrollIntoView({ block: 'nearest' }); } catch (eSc) {}
-          } else {
-            inputEl.removeAttribute('aria-activedescendant');
-          }
-        }
-
-        function applyFilter(query) {
-          _allDoctorsFilterQuery = String(query || '').trim();
-          renderAllDoctorsPicker();
-        }
-
-        function suggestMatches(query, limit) {
-          var q = String(query || '').trim().toLowerCase();
-          if (!q) return [];
-          limit = limit || 8;
-          return filterAllDoctorsMembers(q).slice(0, limit);
-        }
-
-        function renderSuggest(matches) {
-          items = matches || [];
-          listEl.innerHTML = '';
-          active = -1;
-          if (!items.length) {
-            hideSuggest();
-            return;
-          }
-          for (var i = 0; i < items.length; i++) {
-            var m = items[i];
-            var li = document.createElement('li');
-            li.setAttribute('role', 'option');
-            li.id = 'create-all-doctors-opt-' + i;
-            li.dataset.index = String(i);
-            var nameSpan = document.createElement('span');
-            nameSpan.textContent = memberDisplayLabel(m);
-            li.appendChild(nameSpan);
-            var metaParts = [];
-            var email = m.personal_email || m.email || '';
-            if (email) metaParts.push(email);
-            if (m.gmc_number) metaParts.push('GMC ' + m.gmc_number);
-            if (metaParts.length) {
-              var meta = document.createElement('span');
-              meta.className = 'nhs-suggest-meta';
-              meta.textContent = metaParts.join(' · ');
-              li.appendChild(meta);
-            }
-            listEl.appendChild(li);
-          }
-          listEl.hidden = false;
-          inputEl.setAttribute('aria-expanded', 'true');
-        }
-
-        function pickMember(m) {
-          if (!m) return;
-          var label = memberDisplayLabel(m);
-          inputEl.value = label;
-          hideSuggest();
-          applyFilter(label);
-          allDoctorsSelectedSet().add(allDoctorsMemberEmail(m));
-          renderAllDoctorsPicker();
-          var list = document.getElementById('createAllDoctorsList');
-          if (list) {
-            var email = m.personal_email || m.email || '';
-            var row = list.querySelector('input[data-all-doctors-email="' + CSS.escape(email) + '"]');
-            if (row) {
-              row.checked = true;
-              try { row.focus(); } catch (eF) {}
-            }
-          }
-          syncAllDoctorsSelectAllUi();
-          syncAllDoctorsSubmitState();
-        }
-
-        function applySuggestIndex(idx) {
-          if (idx < 0 || idx >= items.length) return;
-          pickMember(items[idx]);
-        }
-
-        function refreshSuggest() {
-          var q = String(inputEl.value || '').trim();
-          if (q.length < 1) {
-            hideSuggest();
-            return;
-          }
-          renderSuggest(suggestMatches(q, 8));
-        }
-
-        inputEl.addEventListener('input', function () {
-          var q = String(inputEl.value || '');
-          if (debFilter) clearTimeout(debFilter);
-          debFilter = setTimeout(function () {
-            debFilter = null;
-            applyFilter(q);
-          }, 120);
-          if (debSuggest) clearTimeout(debSuggest);
-          debSuggest = setTimeout(function () {
-            debSuggest = null;
-            refreshSuggest();
-          }, 180);
-        });
-
-        inputEl.addEventListener('keydown', function (e) {
-          if (e.key === 'ArrowDown') {
-            if (listEl.hidden) refreshSuggest();
-            if (!items.length) return;
-            e.preventDefault();
-            active = active < items.length - 1 ? active + 1 : 0;
-            updateHighlight();
-            return;
-          }
-          if (e.key === 'ArrowUp') {
-            if (listEl.hidden || !items.length) return;
-            e.preventDefault();
-            active = active > 0 ? active - 1 : items.length - 1;
-            updateHighlight();
-            return;
-          }
-          if (e.key === 'Enter') {
-            if (!listEl.hidden && active >= 0) {
-              e.preventDefault();
-              applySuggestIndex(active);
-            }
-            return;
-          }
-          if (e.key === 'Escape') {
-            hideSuggest();
-          }
-        });
-
-        listEl.addEventListener('mousedown', function (ev) {
-          if (ev.target.closest('li[role="option"]')) ev.preventDefault();
-        });
-        listEl.addEventListener('click', function (ev) {
-          var li = ev.target.closest('li[role="option"]');
-          if (!li) return;
-          applySuggestIndex(parseInt(li.dataset.index, 10));
-        });
-
-        document.addEventListener('click', function (ev) {
-          if (!wrapEl.contains(ev.target)) hideSuggest();
-        });
-
-        inputEl.addEventListener('focus', function () {
-          if (String(inputEl.value || '').trim()) refreshSuggest();
-        });
-      }
-
-      function resetAllDoctorsSearchUi() {
-        _allDoctorsFilterQuery = '';
-        _allDoctorsSelectedEmails = null;
-        var searchInp = document.getElementById('createAllDoctorsSearch');
-        var hint = document.getElementById('createAllDoctorsFilterHint');
-        var noMatches = document.getElementById('createAllDoctorsNoMatches');
-        var suggest = document.getElementById('createAllDoctorsSuggestList');
-        if (searchInp) searchInp.value = '';
-        if (hint) { hint.hidden = true; hint.textContent = ''; }
-        if (noMatches) noMatches.hidden = true;
-        if (suggest) { suggest.innerHTML = ''; suggest.hidden = true; }
-      }
-
-      async function loadAllDoctorsPicker() {
-        var loading = document.getElementById('createAllDoctorsLoading');
-        var empty = document.getElementById('createAllDoctorsEmpty');
-        var picker = document.getElementById('createAllDoctorsPicker');
-        var err = document.getElementById('createAllDoctorsError');
-        show(loading, true);
-        show(empty, false);
-        show(picker, false);
-        if (err) { err.hidden = true; err.textContent = ''; }
-        _allDoctorsMembers = [];
-        _allDoctorsCohortId = null;
-        resetAllDoctorsSearchUi();
-        syncAllDoctorsSubmitState();
-        try {
-          var cohort = defaultCohortFromCache();
-          if (!cohort) {
-            var data = await apiJson('/api/hr/cohorts');
-            _cohortsCache = (data && data.cohorts) ? data.cohorts : [];
-            cohort = defaultCohortFromCache();
-          }
-          if (!cohort) {
-            show(loading, false);
-            show(empty, true);
-            return;
-          }
-          _allDoctorsCohortId = cohort.id;
-          var detail = await apiJson('/api/hr/cohorts/' + encodeURIComponent(String(cohort.id)));
-          _allDoctorsMembers = sortMembers((detail && detail.members) ? detail.members : []);
-          show(loading, false);
-          if (!_allDoctorsMembers.length) {
-            show(empty, true);
-            return;
-          }
-          wireCreateAllDoctorsSearch();
-          renderAllDoctorsPicker();
-          show(picker, true);
-        } catch (e) {
-          show(loading, false);
-          if (err) {
-            err.textContent = e.message || 'Could not load All Doctors';
-            err.hidden = false;
-          }
-        }
-      }
-
-      function resetAllDoctorsPicker() {
-        _allDoctorsMembers = [];
-        _allDoctorsCohortId = null;
-        resetAllDoctorsSearchUi();
-        var loading = document.getElementById('createAllDoctorsLoading');
-        var empty = document.getElementById('createAllDoctorsEmpty');
-        var picker = document.getElementById('createAllDoctorsPicker');
-        var list = document.getElementById('createAllDoctorsList');
-        var err = document.getElementById('createAllDoctorsError');
-        if (list) list.innerHTML = '';
-        show(loading, false);
-        show(empty, false);
-        show(picker, false);
-        if (err) { err.hidden = true; err.textContent = ''; }
       }
 
       function hrWelcomeDefault() {
@@ -1850,7 +1332,7 @@
 
       function detailCohortEmptyHtml() {
         return (
-          '<p class="hr-muted" style="margin:0;">You haven&rsquo;t created a group yet. Use the <strong>Add group</strong> tab to add your first one.</p>'
+          '<p class="hr-muted" style="margin:0;">You haven&rsquo;t created a group yet. Use <strong>Add doctors</strong> and choose <strong>New group</strong>, or click <strong>Create group</strong> above.</p>'
         );
       }
 
@@ -2095,7 +1577,8 @@
       function loadStoredCohortTab() {
         try {
           var v = localStorage.getItem(LS_COHORT_TAB);
-          if (v === 'add' || v === 'compliance' || v === 'message' || v === 'create' || v === 'members') return v;
+          if (v === 'create') v = 'add';
+          if (v === 'add' || v === 'compliance' || v === 'message' || v === 'members') return v;
         } catch (e) { /* ignore */ }
         return 'add';
       }
@@ -2135,21 +1618,19 @@
         'You have training shared with HR that still needs verification. Please check your DocPass messages or open My training to see anything outstanding.';
 
       function setCohortTab(tab) {
+        if (tab === 'create') tab = 'add';
         saveStoredCohortTab(tab);
         var isMsg = tab === 'message';
         var isAdd = tab === 'add';
         var isComp = tab === 'compliance';
-        var isCreate = tab === 'create';
         var isMembers = tab === 'members';
         var tabMsg = document.getElementById('tabCohortMessage');
         var tabAdd = document.getElementById('tabCohortAdd');
         var tabComp = document.getElementById('tabCohortCompliance');
-        var tabCreate = document.getElementById('tabCohortCreate');
         var tabMembers = document.getElementById('tabCohortMembers');
         var panelMsg = document.getElementById('panelCohortMessage');
         var panelAdd = document.getElementById('panelCohortAdd');
         var panelComp = document.getElementById('panelCohortCompliance');
-        var panelCreate = document.getElementById('panelCohortCreate');
         var panelMembers = document.getElementById('panelCohortMembers');
         if (tabMsg) {
           tabMsg.classList.toggle('active', isMsg);
@@ -2163,10 +1644,6 @@
           tabComp.classList.toggle('active', isComp);
           tabComp.setAttribute('aria-selected', isComp ? 'true' : 'false');
         }
-        if (tabCreate) {
-          tabCreate.classList.toggle('active', isCreate);
-          tabCreate.setAttribute('aria-selected', isCreate ? 'true' : 'false');
-        }
         if (tabMembers) {
           tabMembers.classList.toggle('active', isMembers);
           tabMembers.setAttribute('aria-selected', isMembers ? 'true' : 'false');
@@ -2174,7 +1651,6 @@
         show(panelMsg, isMsg);
         show(panelAdd, isAdd);
         show(panelComp, isComp);
-        show(panelCreate, isCreate);
         show(panelMembers, isMembers);
         if (isAdd) {
           updateAddCohortNamePreviews();
@@ -2183,16 +1659,6 @@
         if (isMembers) {
           renderMembersTable();
           syncMembersTabUI();
-        }
-        if (isCreate) {
-          var createStatus = document.getElementById('createStatus');
-          if (createStatus) {
-            createStatus.textContent = '';
-            show(createStatus, false);
-          }
-          clearProvisionResult(document.getElementById('createProvisionResult'));
-          show(document.getElementById('createResultsWrap'), false);
-          resetCreateWizard();
         }
         if (isComp) void loadCohortCompliance();
       }
@@ -2955,7 +2421,13 @@
             if (detail) detail.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
           });
         }
-        if (_addWizardStep === 2) resetAddTargetCohortUI();
+        if (opts.preselectNewGroup) {
+          _addMethod = 'manual';
+          setAddWizardStep(2);
+          setAddTargetNewGroup();
+        } else if (_addWizardStep === 2) {
+          resetAddTargetCohortUI();
+        }
         syncCohortsPageHead();
       }
 
@@ -3008,339 +2480,26 @@
         }
       }
 
-      function setCohortNameError(msg) {
-        var err = document.getElementById('cohortNameError');
-        var group = document.getElementById('cohortNameGroup');
-        if (err) {
-          err.textContent = msg || '';
-          err.hidden = !msg;
+      function setAddTargetNewGroup() {
+        populateAddTargetCohortSelect();
+        var sel = document.getElementById('addTargetCohortSelect');
+        if (sel) {
+          sel.value = ADD_TARGET_NEW_GROUP;
+          _addTargetCohortTouched = true;
         }
-        if (group) group.classList.toggle('nhsuk-form-group--error', !!msg);
+        syncAddNewCohortNameField();
+        updateAddCohortNamePreviews();
       }
 
-      function cohortNameValue() {
-        return String(document.getElementById('cohortName').value || '').trim();
-      }
-
-      function updateCreateCohortNamePreviews() {
-        var name = cohortNameValue() || 'this group';
-        var p1 = document.getElementById('createCohortNamePreview');
-        var p2 = document.getElementById('createRosterTitle');
-        if (p1) p1.textContent = name;
-        if (p2) {
-          if (_createMethod === 'upload') {
-            p2.textContent = 'Upload roster for “' + name + '”';
-          } else if (_createMethod === 'all_doctors') {
-            p2.textContent = 'Add from All Doctors to “' + name + '”';
-          } else {
-            p2.textContent = 'Add doctors to “' + name + '”';
-          }
-        }
-      }
-
-      function setCreateWizardStep(step) {
-        _createWizardStep = step;
-        show(document.getElementById('createStepName'), step === 1);
-        show(document.getElementById('createStepMethod'), step === 2);
-        show(document.getElementById('createStepRoster'), step === 3);
-        var label = document.getElementById('createWizardStepLabel');
-        if (label) {
-          if (step === 1) label.textContent = 'Step 1 of 3 — Name your group';
-          else if (step === 2) label.textContent = 'Step 2 of 3 — How to add doctors';
-          else {
-            if (_createMethod === 'upload') {
-              label.textContent = 'Step 3 of 3 — Upload spreadsheet';
-            } else if (_createMethod === 'all_doctors') {
-              label.textContent = 'Step 3 of 3 — Choose from All Doctors';
-            } else {
-              label.textContent = 'Step 3 of 3 — Add doctors manually';
-            }
-          }
-        }
-        show(document.getElementById('createPanelManual'), step === 3 && _createMethod === 'manual');
-        show(document.getElementById('createPanelUpload'), step === 3 && _createMethod === 'upload');
-        show(document.getElementById('createPanelAllDoctors'), step === 3 && _createMethod === 'all_doctors');
-        var rosterAdded = document.getElementById('createRosterAdded');
-        if (rosterAdded) rosterAdded.hidden = step === 3 && _createMethod === 'all_doctors';
-        if (step === 3) {
-          updateCreateCohortNamePreviews();
-          if (_createMethod === 'upload' && _createEmailRoster && _createEmailRoster.syncUploadPicker) {
-            _createEmailRoster.syncUploadPicker();
-          }
-          if (_createMethod === 'all_doctors') {
-            syncAllDoctorsSubmitState();
-          }
-          var focusId = _createMethod === 'manual'
-            ? 'cohortPersonalEmailInput'
-            : (_createMethod === 'upload' ? 'cohortEmailsFile' : 'createAllDoctorsSelectAll');
-          var focusEl = document.getElementById(focusId);
-          if (focusEl && !focusEl.closest('[hidden]')) focusEl.focus();
-        }
-        if (step === 1) {
-          var nameInp = document.getElementById('cohortName');
-          if (nameInp) nameInp.focus();
-        }
-      }
-
-      function resetCreateWizard() {
-        _createWizardStep = 1;
-        _createMethod = null;
-        document.getElementById('cohortName').value = '';
-        setCohortNameError('');
-        setCreateWizardStep(1);
-        if (_createEmailRoster) _createEmailRoster.clear();
-        resetAllDoctorsPicker();
-        var uploadErr = document.getElementById('cohortUploadError');
-        if (uploadErr) { uploadErr.hidden = true; uploadErr.textContent = ''; }
-      }
-
-      async function openCreateWizard() {
-        var detailEl = document.getElementById('detailView');
-        if (detailEl && !detailEl.hidden && _activeCohortId != null) {
-          setCohortTab('create');
-          return;
-        }
+      async function openAddDoctorsNewGroup() {
         var cohort = defaultCohortFromCache();
         if (!cohort && _cohortsCache.length) cohort = _cohortsCache[0];
         if (!cohort) return;
-        await openCohort(cohort.id, { forceTab: 'create' });
+        await openCohort(cohort.id, { forceTab: 'add', preselectNewGroup: true });
       }
 
       document.getElementById('btnShowCreate').addEventListener('click', function () {
-        void openCreateWizard();
-      });
-      document.getElementById('btnCancelCreate').addEventListener('click', function () {
-        resetCreateWizard();
-        clearProvisionResult(document.getElementById('createProvisionResult'));
-        show(document.getElementById('createResultsWrap'), false);
-        setCohortTab('add');
-      });
-
-      document.getElementById('btnCreateNextName').addEventListener('click', function () {
-        var name = cohortNameValue();
-        if (!name) {
-          setCohortNameError('Enter a group name to continue.');
-          document.getElementById('cohortName').focus();
-          return;
-        }
-        if (isReservedDefaultCohortName(name)) {
-          setCohortNameError('“All Doctors” is reserved for the default group. Choose a different name.');
-          document.getElementById('cohortName').focus();
-          return;
-        }
-        setCohortNameError('');
-        updateCreateCohortNamePreviews();
-        setCreateWizardStep(2);
-      });
-
-      document.getElementById('cohortName').addEventListener('input', function () {
-        setCohortNameError('');
-      });
-      document.getElementById('cohortName').addEventListener('keydown', function (e) {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          document.getElementById('btnCreateNextName').click();
-        }
-      });
-
-      document.getElementById('btnCreateBackMethod').addEventListener('click', function () {
-        setCreateWizardStep(1);
-      });
-
-      document.getElementById('btnCreateSkipDoctors').addEventListener('click', function () {
-        void submitCreateCohort([]);
-      });
-
-      document.getElementById('btnCreateBackRoster').addEventListener('click', function () {
-        setCreateWizardStep(2);
-      });
-
-      document.querySelectorAll('[data-create-method]').forEach(function (btn) {
-        btn.addEventListener('click', function () {
-          _createMethod = btn.getAttribute('data-create-method');
-          if (_createMethod === 'all_doctors') {
-            void loadAllDoctorsPicker();
-          }
-          setCreateWizardStep(3);
-        });
-      });
-
-      var createAllDoctorsList = document.getElementById('createAllDoctorsList');
-      if (createAllDoctorsList) {
-        createAllDoctorsList.addEventListener('change', function (e) {
-          var inp = e.target;
-          if (inp && inp.matches && inp.matches('input[type="checkbox"][data-all-doctors-email]')) {
-            var emailKey = String(inp.getAttribute('data-all-doctors-email') || '').trim().toLowerCase();
-            var selected = allDoctorsSelectedSet();
-            if (inp.checked) selected.add(emailKey);
-            else selected.delete(emailKey);
-          }
-          syncAllDoctorsSelectAllUi();
-          var adErr = document.getElementById('createAllDoctorsError');
-          if (adErr) { adErr.hidden = true; adErr.textContent = ''; }
-          syncAllDoctorsSubmitState();
-        });
-      }
-      var createAllDoctorsSelectAll = document.getElementById('createAllDoctorsSelectAll');
-      if (createAllDoctorsSelectAll) {
-        createAllDoctorsSelectAll.addEventListener('change', function () {
-          var list = document.getElementById('createAllDoctorsList');
-          if (!list) return;
-          var selected = allDoctorsSelectedSet();
-          list.querySelectorAll('input[type="checkbox"][data-all-doctors-email]').forEach(function (inp) {
-            inp.checked = createAllDoctorsSelectAll.checked;
-            var emailKey = String(inp.getAttribute('data-all-doctors-email') || '').trim().toLowerCase();
-            if (createAllDoctorsSelectAll.checked) selected.add(emailKey);
-            else selected.delete(emailKey);
-          });
-          createAllDoctorsSelectAll.indeterminate = false;
-          syncAllDoctorsSubmitState();
-        });
-      }
-      var btnOpenAllDoctors = document.getElementById('btnOpenAllDoctors');
-      if (btnOpenAllDoctors) {
-        btnOpenAllDoctors.addEventListener('click', function () {
-          var cohort = defaultCohortFromCache();
-          if (!cohort && _allDoctorsCohortId != null) {
-            cohort = cohortById(_allDoctorsCohortId);
-          }
-          if (!cohort) return;
-          resetCreateWizard();
-          openCohort(cohort.id, { forceTab: 'add' });
-        });
-      }
-
-      async function submitCreateCohort(members) {
-        members = members || [];
-        var status = document.getElementById('createStatus');
-        var vizEl = document.getElementById('createProvisionResult');
-        var submitBtn = document.getElementById('btnCreateSubmit');
-        var skipBtn = document.getElementById('btnCreateSkipDoctors');
-        var name = cohortNameValue();
-        if (!name) {
-          setCohortNameError('Enter a group name to continue.');
-          setCreateWizardStep(1);
-          document.getElementById('cohortName').focus();
-          return;
-        }
-        if (isReservedDefaultCohortName(name)) {
-          setCohortNameError('“All Doctors” is reserved for the default group. Choose a different name.');
-          setCreateWizardStep(1);
-          document.getElementById('cohortName').focus();
-          return;
-        }
-        var uploadErrHide = document.getElementById('cohortUploadError');
-        if (uploadErrHide) uploadErrHide.hidden = true;
-        show(status, false);
-        clearProvisionResult(vizEl);
-        if (viz()) {
-          viz().showLoading(
-            vizEl,
-            members.length ? 'Creating group and provisioning accounts…' : 'Creating group…'
-          );
-        }
-        if (submitBtn) submitBtn.disabled = true;
-        if (skipBtn) skipBtn.disabled = true;
-        try {
-          var data = await apiJsonWithProgress(
-            '/api/hr/cohorts',
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ name: name, members: members }),
-            },
-            vizEl
-          );
-          var cohortName = (data.cohort && data.cohort.name) || name;
-          if (data.cohort) upsertCohortInCache(data.cohort);
-          resetCreateWizard();
-          renderCohortList(_cohortsCache);
-          await loadCohorts({ showLoading: false });
-          try {
-            if (viz()) viz().cohortProvision(vizEl, data, { createdGroup: cohortName });
-          } catch (vizErr) {
-            console.warn('cohort result viz', vizErr);
-          }
-          var wrap = document.getElementById('createResultsWrap');
-          var tb = document.getElementById('createResultsTbody');
-          var results = data.results || [];
-          tb.innerHTML = results.map(function (r) {
-            var pref = (r.prefilled && r.prefilled.length) ? r.prefilled.join(', ') : '—';
-            return '<tr><td>' + esc(r.email) + '</td><td>' + esc(r.status) + '</td><td>' + esc(pref) + '</td><td>' + esc(r.error || '') + '</td></tr>';
-          }).join('');
-          show(wrap, !!results.length);
-          if (data.cohort && data.cohort.id) {
-            var reviewIds = userIdsAwaitingWelcomeFromResults(results);
-            var openOpts = {};
-            if (reviewIds.length) {
-              openOpts = {
-                welcomeReview: {
-                  userIds: reviewIds,
-                  results: results,
-                  cohort: data.cohort,
-                },
-              };
-            } else if (!members.length) {
-              openOpts = { forceTab: 'add' };
-            }
-            setTimeout(function () {
-              openCohort(data.cohort.id, openOpts);
-            }, 400);
-          }
-        } catch (err) {
-          clearProvisionResult(vizEl);
-          show(status, true);
-          status.textContent = err.message || 'Failed';
-        } finally {
-          if (submitBtn) submitBtn.disabled = false;
-          if (skipBtn) skipBtn.disabled = false;
-        }
-      }
-
-      document.getElementById('formCreateCohort').addEventListener('submit', async function (e) {
-        e.preventDefault();
-        var status = document.getElementById('createStatus');
-        var members;
-        if (_createMethod === 'all_doctors') {
-          members = getSelectedAllDoctorsMembers();
-          if (!members.length) {
-            var adErr = document.getElementById('createAllDoctorsError');
-            var adMsg = 'Select at least one doctor from All Doctors.';
-            if (adErr) {
-              adErr.textContent = adMsg;
-              adErr.hidden = false;
-            }
-            show(status, true);
-            status.textContent = adMsg;
-            setCreateWizardStep(3);
-            return;
-          }
-        } else {
-          var createFlush = _createEmailRoster ? _createEmailRoster.flushPendingForm() : null;
-          if (createFlush && createFlush.gmcWarning && _createEmailRoster) {
-            _createEmailRoster.setFieldError(createFlush.gmcWarning, 'gmc');
-          }
-          members = _createEmailRoster ? _createEmailRoster.getMembers() : [];
-          if (!members.length) {
-            var uploadErr = document.getElementById('cohortUploadError');
-            var manualErr = document.getElementById('cohortEmailError');
-            var msg = _createMethod === 'upload'
-              ? 'Upload a spreadsheet with at least one personal email, or go back and choose Add manually.'
-              : 'Add at least one doctor with a personal email.';
-            if (_createMethod === 'upload' && uploadErr) {
-              uploadErr.textContent = msg;
-              uploadErr.hidden = false;
-            } else if (manualErr) {
-              manualErr.textContent = msg;
-              manualErr.hidden = false;
-            }
-            show(status, true);
-            status.textContent = msg;
-            setCreateWizardStep(3);
-            return;
-          }
-        }
-        await submitCreateCohort(members);
+        void openAddDoctorsNewGroup();
       });
 
       function handleCohortListClick(e) {
@@ -3682,7 +2841,7 @@
           }
         }
         var members = _addEmailRoster ? _addEmailRoster.getMembers() : [];
-        if (!members.length) {
+        if (!members.length && !creatingNewGroup) {
           var uploadErr = document.getElementById('addUploadError');
           var manualErr = document.getElementById('addEmailError');
           var msg = _addMethod === 'upload'
@@ -3723,7 +2882,9 @@
         if (viz()) {
           viz().showLoading(
             vizEl,
-            creatingNewGroup ? 'Creating group and adding doctors…' : 'Adding doctors to group…'
+            creatingNewGroup
+              ? (members.length ? 'Creating group and adding doctors…' : 'Creating group…')
+              : 'Adding doctors to group…'
           );
         }
         if (submitBtn) submitBtn.disabled = true;
@@ -3789,25 +2950,6 @@
         syncCohortsPageHead();
         wireCohortListSearch();
         try {
-        _createEmailRoster = wireEmailRoster({
-          listId: 'cohortEmailsList',
-          listEmptyId: 'cohortEmailsListEmpty',
-          formGroupId: 'cohortEmailsGroup',
-          addCardId: 'cohortAddCard',
-          personalEmailInputId: 'cohortPersonalEmailInput',
-          nameInputId: 'cohortNameInput',
-          gmcInputId: 'cohortGmcInput',
-          addBtnId: 'btnCohortEmailAdd',
-          countId: 'cohortEmailsCount',
-          errorId: 'cohortEmailError',
-          fileInputId: 'cohortEmailsFile',
-          fileNameId: 'cohortEmailsFileName',
-          fileStatusId: 'cohortEmailsFileStatus',
-          fileVizId: 'cohortEmailsFileViz',
-          uploadPickerId: 'cohortUploadPicker',
-          uploadDoneId: 'cohortUploadDone',
-          submitBtnId: 'btnCreateSubmit',
-        });
         _addEmailRoster = wireEmailRoster({
           listId: 'addEmailsList',
           listEmptyId: 'addEmailsListEmpty',
