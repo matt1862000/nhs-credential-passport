@@ -37,7 +37,8 @@
 
   <main class="nhsuk-main hr-wrap" id="maincontent" role="main">
     <div id="addDoctorsPageHead">
-      <h1 class="nhsuk-page-heading">Groups</h1>
+      <h1 class="nhsuk-page-heading" id="groupsListPageTitle">Groups</h1>
+      <h1 class="nhsuk-page-heading" id="addDoctorsDetailPageTitle" hidden>Add doctors</h1>
       <p class="nhsuk-lead">Create doctor accounts using each person&rsquo;s <strong>personal email</strong> as their login, organise them into groups, and send the same message to everyone (each replies in their own thread).</p>
       <p class="hr-muted" style="margin:0 0 1rem 0;font-size:0.875rem;">HR never sees passwords here. Send login details to each person&rsquo;s personal email outside DocPass. Demo accounts use a standard initial password; doctors must change it on first sign-in.</p>
     </div>
@@ -2447,12 +2448,16 @@
         var searchMode = cohortsUrlSearchMode();
         var detailEl = document.getElementById('detailView');
         var detailOpen = _activeCohortId != null && detailEl && !detailEl.hidden;
-        show(document.getElementById('addDoctorsPageHead'), !searchMode && !detailOpen);
-        show(document.getElementById('searchDoctorsPageHead'), searchMode && !detailOpen);
+        var listTitle = document.getElementById('groupsListPageTitle');
+        var detailPageTitle = document.getElementById('addDoctorsDetailPageTitle');
+        show(document.getElementById('addDoctorsPageHead'), !searchMode);
+        show(document.getElementById('searchDoctorsPageHead'), searchMode);
+        if (listTitle) listTitle.hidden = detailOpen;
+        if (detailPageTitle) detailPageTitle.hidden = !detailOpen;
         if (searchMode) {
           document.title = 'Search doctors \u2014 DocPass';
-        } else if (detailOpen && _activeCohortMeta && _activeCohortMeta.name) {
-          document.title = _activeCohortMeta.name + ' \u2014 DocPass';
+        } else if (detailOpen) {
+          document.title = 'Add doctors \u2014 DocPass';
         } else {
           document.title = 'Groups \u2014 DocPass';
         }
