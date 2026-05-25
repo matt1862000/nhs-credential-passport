@@ -45,6 +45,9 @@
     .mand-edit-inline td { background: #f9fbff; }
     .mand-edit-inline input { padding: 0.35rem 0.55rem; border: 2px solid var(--nhsuk-border); border-radius: 4px; font-size: 0.9375rem; width: 100%; box-sizing: border-box; }
     .mand-edit-inline input:focus { outline: 3px solid #ffbf47; border-color: var(--nhsuk-text); }
+    .mand-category-other { margin-top: 0.35rem; }
+    .mand-category-other[hidden] { display: none; }
+    .mand-edit-category-cell { white-space: normal; text-align: left; }
   </style>
 </head>
 <body>
@@ -118,7 +121,8 @@
             </div>
             <div class="mand-fg">
               <label for="newCategory">Category</label>
-              <input type="text" id="newCategory" placeholder="e.g. E-learning via ESR" maxlength="200" autocomplete="off">
+              <select id="newCategory"></select>
+              <input type="text" id="newCategoryOther" class="mand-category-other" placeholder="e.g. Room 41" maxlength="200" autocomplete="off" hidden aria-label="New category name">
             </div>
           </div>
           <div class="mand-form-row mand-form-row--bottom">
@@ -182,6 +186,98 @@
       var _topics = [];
       var _dragSrcIdx = null;
       var _packAvailable = false;
+      var CATEGORY_PRESETS = [
+        'Assessments via JARVIS',
+        'E-learning via ESR',
+        'UK CSTF / statutory',
+        'UK CSTF / trust policy',
+        'Local — usually not portable'
+      ];
+      var CATEGORY_OTHER = '__other__';
+
+      function mandCategoryOptions() {
+        var seen = {};
+        var out = [];
+        CATEGORY_PRESETS.forEach(function (c) {
+          if (!seen[c]) { seen[c] = true; out.push(c); }
+        });
+        _topics.forEach(function (t) {
+          var c = (t.category || '').trim();
+          if (c && !seen[c]) { seen[c] = true; out.push(c); }
+        });
+        out.sort(function (a, b) { return a.localeCompare(b, undefined, { sensitivity: 'base' }); });
+        return out;
+      }
+
+      function categorySelectOptionsHtml(selected) {
+        var opts = mandCategoryOptions();
+        var sel = (selected || '').trim();
+        var useOther = !!sel && opts.indexOf(sel) < 0;
+        var html = '<option value="">—</option>';
+        opts.forEach(function (c) {
+          html += '<option value="' + esc(c) + '"' + (!useOther && c === sel ? ' selected' : '') + '>' + esc(c) + '</option>';
+        });
+        html += '<option value="' + CATEGORY_OTHER + '"' + (useOther ? ' selected' : '') + '>Other…</option>';
+        return html;
+      }
+
+      function syncCategoryOtherVisibility(selectEl, otherEl, keepOtherValue) {
+        if (!selectEl || !otherEl) return;
+        var show = selectEl.value === CATEGORY_OTHER;
+        otherEl.hidden = !show;
+        if (!show && !keepOtherValue) otherEl.value = '';
+      }
+
+      function resolveCategoryValue(selectEl, otherEl) {
+        if (!selectEl) return '';
+        if (selectEl.value === CATEGORY_OTHER) {
+          return (otherEl ? otherEl.value : '').trim();
+        }
+        return (selectEl.value || '').trim();
+      }
+
+      function wireCategorySelect(selectEl, otherEl) {
+        if (!selectEl) return;
+        selectEl.addEventListener('change', function () {
+          syncCategoryOtherVisibility(selectEl, otherEl, false);
+          if (selectEl.value === CATEGORY_OTHER && otherEl) otherEl.focus();
+        });
+      }
+
+      function applyCategorySelectValue(selectEl, otherEl, category) {
+        if (!selectEl) return;
+        var sel = (category || '').trim();
+        selectEl.innerHTML = categorySelectOptionsHtml(sel);
+        if (!sel) {
+          selectEl.value = '';
+          if (otherEl) { otherEl.value = ''; otherEl.hidden = true; }
+          return;
+        }
+        if (mandCategoryOptions().indexOf(sel) >= 0) {
+          selectEl.value = sel;
+          if (otherEl) { otherEl.value = ''; otherEl.hidden = true; }
+          return;
+        }
+        selectEl.value = CATEGORY_OTHER;
+        if (otherEl) {
+          otherEl.value = sel;
+          otherEl.hidden = false;
+        }
+      }
+
+      function refreshAddCategorySelect() {
+        var sel = document.getElementById('newCategory');
+        var other = document.getElementById('newCategoryOther');
+        if (!sel) return;
+        var current = resolveCategoryValue(sel, other);
+        applyCategorySelectValue(sel, other, current);
+      }
+
+      function resetAddCategorySelect() {
+        var sel = document.getElementById('newCategory');
+        var other = document.getElementById('newCategoryOther');
+        applyCategorySelectValue(sel, other, '');
+      }
 
       function channelLabel(ch) {
         if (ch === 'jarvis') return 'JARVIS';
@@ -237,7 +333,12 @@
         row.innerHTML =
           '<td></td>' +
           '<td><input type="text" class="edit-topic-name" value="' + esc(t.topic_name) + '" maxlength="200" aria-label="Topic name"></td>' +
-          '<td><input type="text" class="edit-category" value="' + esc(t.category || '') + '" maxlength="200" aria-label="Category"></td>' +
+          '<td class="mand-edit-category-cell">' +
+            '<select class="edit-category-select" aria-label="Category" style="width:100%;padding:0.35rem;">' +
+              categorySelectOptionsHtml(t.category || '') +
+            '</select>' +
+            '<input type="text" class="edit-category-other mand-category-other" maxlength="200" aria-label="New category name" style="width:100%;box-sizing:border-box;padding:0.35rem 0.55rem;border:2px solid var(--nhsuk-border);border-radius:4px;font-size:0.9375rem;">' +
+          '</td>' +
           '<td style="white-space:normal;text-align:left;">' +
             '<select class="edit-channel" aria-label="Where to complete" style="width:100%;margin-bottom:0.35rem;padding:0.35rem;">' +
               '<option value="">—</option>' +
@@ -250,20 +351,30 @@
             '<button type="button" class="mand-btn-sm mand-btn-edit" data-save="' + String(t.id) + '" data-idx="' + idx + '">Save</button>' +
             '<button type="button" class="mand-btn-sm mand-btn-del" data-cancel="1" style="border-color:var(--nhsuk-border);color:var(--nhsuk-secondary-text);">Cancel</button>' +
           '</td>';
+        var catSelect = row.querySelector('.edit-category-select');
+        var catOther = row.querySelector('.edit-category-other');
+        applyCategorySelectValue(catSelect, catOther, t.category || '');
+        wireCategorySelect(catSelect, catOther);
         var nameInput = row.querySelector('.edit-topic-name');
         if (nameInput) { nameInput.focus(); nameInput.select(); }
       }
 
       async function saveInlineEdit(topicId, idx, row) {
         var nameInput = row.querySelector('.edit-topic-name');
-        var catInput = row.querySelector('.edit-category');
+        var catSelect = row.querySelector('.edit-category-select');
+        var catOther = row.querySelector('.edit-category-other');
         var chInput = row.querySelector('.edit-channel');
         var urlInput = row.querySelector('.edit-url');
         var topicName = (nameInput ? nameInput.value : '').trim();
-        var category = (catInput ? catInput.value : '').trim();
+        var category = resolveCategoryValue(catSelect, catOther);
         var channel = (chInput ? chInput.value : '').trim();
         var url = (urlInput ? urlInput.value : '').trim();
         if (!topicName) { setStatus('listStatus', 'Topic name cannot be empty.', 'err'); return; }
+        if (catSelect && catSelect.value === CATEGORY_OTHER && !category) {
+          setStatus('listStatus', 'Enter a name for the new category.', 'err');
+          if (catOther) catOther.focus();
+          return;
+        }
         try {
           await apiJson('/api/hr/mandatory-topics/' + encodeURIComponent(String(topicId)), {
             method: 'PUT',
@@ -282,6 +393,7 @@
             resource_url: url || null,
           });
           renderTopics();
+          refreshAddCategorySelect();
           setStatus('listStatus', 'Saved.', 'ok');
         } catch (err) {
           setStatus('listStatus', err.message || 'Could not save.', 'err');
@@ -320,6 +432,7 @@
               await apiJson('/api/hr/mandatory-topics/' + encodeURIComponent(String(did)), { method: 'DELETE' });
               _topics = _topics.filter(function (t) { return t.id !== did; });
               renderTopics();
+              refreshAddCategorySelect();
               setStatus('listStatus', 'Topic removed.', 'ok');
             } catch (err) {
               setStatus('listStatus', err.message || 'Could not remove.', 'err');
@@ -388,6 +501,7 @@
           renderTopics();
           wireTbodyEvents();
           updateSeedButton();
+          refreshAddCategorySelect();
           setStatus('listStatus', '');
         } catch (err) {
           setStatus('listStatus', err.message || 'Could not load topics.', 'err');
@@ -397,13 +511,19 @@
       document.getElementById('btnAdd').addEventListener('click', async function () {
         var btnAdd = this;
         var topicInput = document.getElementById('newTopic');
-        var catInput = document.getElementById('newCategory');
+        var catSelect = document.getElementById('newCategory');
+        var catOther = document.getElementById('newCategoryOther');
         var topicName = (topicInput ? topicInput.value : '').trim();
-        var category = (catInput ? catInput.value : '').trim();
+        var category = resolveCategoryValue(catSelect, catOther);
         var channel = (document.getElementById('newChannel') || {}).value || '';
         var url = (document.getElementById('newUrl') || {}).value || '';
         if (!topicName) {
           setStatus('addStatus', 'Topic name is required.', 'err');
+          return;
+        }
+        if (catSelect && catSelect.value === CATEGORY_OTHER && !category) {
+          setStatus('addStatus', 'Enter a name for the new category.', 'err');
+          if (catOther) catOther.focus();
           return;
         }
         btnAdd.disabled = true;
@@ -425,8 +545,9 @@
           renderTopics();
           wireTbodyEvents();
           updateSeedButton();
+          refreshAddCategorySelect();
           if (topicInput) topicInput.value = '';
-          if (catInput) catInput.value = '';
+          resetAddCategorySelect();
           var chEl = document.getElementById('newChannel');
           var urlEl = document.getElementById('newUrl');
           if (chEl) chEl.value = '';
@@ -468,6 +589,7 @@
           renderTopics();
           wireTbodyEvents();
           updateSeedButton();
+          refreshAddCategorySelect();
           if (window.NHSBatchResultViz) {
             NHSBatchResultViz.trustPackSeed(seedViz, data);
           } else {
@@ -502,6 +624,11 @@
         if (trustLabel && trust) trustLabel.textContent = trust;
         var lead = document.getElementById('trustNameLead');
         if (lead && trust) lead.textContent = 'Mandatory training requirements for ' + trust + '. Edit links or topics as needed.';
+
+        var addCatSelect = document.getElementById('newCategory');
+        var addCatOther = document.getElementById('newCategoryOther');
+        wireCategorySelect(addCatSelect, addCatOther);
+        resetAddCategorySelect();
 
         await loadTopics();
       })();
