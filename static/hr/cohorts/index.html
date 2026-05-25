@@ -43,8 +43,8 @@
       <p class="hr-muted" style="margin:0 0 1rem 0;font-size:0.875rem;">HR never sees passwords here. Send login details to each person&rsquo;s personal email outside DocPass. Demo accounts use a standard initial password; doctors must change it on first sign-in.</p>
     </div>
     <div id="searchDoctorsPageHead" hidden>
-      <h1 class="nhsuk-page-heading">Search doctors</h1>
-      <p class="nhsuk-lead">Look up permitted doctors, view verified e-learning, or add training on their behalf.</p>
+      <h1 class="nhsuk-page-heading">Search doctors and groups</h1>
+      <p class="nhsuk-lead">Look up permitted doctors, open your groups to view members, view verified e-learning, or add training on behalf of a doctor.</p>
     </div>
 
     <div id="notPremium" class="hr-card" hidden>
@@ -2553,7 +2553,7 @@
         if (listTitle) listTitle.hidden = detailOpen;
         if (detailPageTitle) detailPageTitle.hidden = !detailOpen;
         if (searchMode) {
-          document.title = 'Search doctors \u2014 DocPass';
+          document.title = 'Search doctors and groups \u2014 DocPass';
         } else if (detailOpen) {
           document.title = 'Add doctors \u2014 DocPass';
         } else {
