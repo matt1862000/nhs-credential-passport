@@ -2432,6 +2432,7 @@
         if (exportBtn) {
           exportBtn.href = '/api/hr/cohorts/' + encodeURIComponent(String(id)) + '/compliance-export';
         }
+        syncCohortsPageHead();
       }
 
       function cohortsUrlSearchMode() {
@@ -2444,9 +2445,17 @@
 
       function syncCohortsPageHead() {
         var searchMode = cohortsUrlSearchMode();
-        show(document.getElementById('addDoctorsPageHead'), !searchMode);
-        show(document.getElementById('searchDoctorsPageHead'), searchMode);
-        document.title = (searchMode ? 'Search doctors' : 'Groups') + ' \u2014 DocPass';
+        var detailEl = document.getElementById('detailView');
+        var detailOpen = _activeCohortId != null && detailEl && !detailEl.hidden;
+        show(document.getElementById('addDoctorsPageHead'), !searchMode && !detailOpen);
+        show(document.getElementById('searchDoctorsPageHead'), searchMode && !detailOpen);
+        if (searchMode) {
+          document.title = 'Search doctors \u2014 DocPass';
+        } else if (detailOpen && _activeCohortMeta && _activeCohortMeta.name) {
+          document.title = _activeCohortMeta.name + ' \u2014 DocPass';
+        } else {
+          document.title = 'Groups \u2014 DocPass';
+        }
       }
       window.syncCohortsPageHead = syncCohortsPageHead;
 
