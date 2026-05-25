@@ -124,6 +124,15 @@
           <span class="profile-hint">Sent automatically in DocPass when doctors you add complete their profile. Use <strong>{name}</strong> and <strong>{trust}</strong>. Individual groups can override this on the Groups page.</span>
           <textarea class="nhsuk-input" id="hrWelcomeTemplate" name="hr_welcome_message_template" rows="4" maxlength="4000" style="min-height:5rem;resize:vertical;" placeholder="Welcome {name} to {trust}. Please reply if you have any queries or concerns."></textarea>
           <p class="profile-hint" id="hrWelcomePreview" aria-live="polite" style="margin-top:0.5rem;"></p>
+          <div class="profile-check-group" style="margin-top:0.75rem;">
+            <label for="hrWelcomeReviewEnabled">
+              <input type="checkbox" id="hrWelcomeReviewEnabled" name="hr_welcome_review_enabled" checked>
+              <span>
+                <span class="profile-check-title">Review welcome message before sending</span>
+                <span class="profile-check-desc">Show a preview when you add doctors. When unchecked, the default message above is sent automatically.</span>
+              </span>
+            </label>
+          </div>
         </div>
         <div id="hrEmailSection" hidden>
           <hr style="border:none; border-top:1px solid var(--nhsuk-border); margin:1.25rem 0;">
@@ -360,6 +369,8 @@
           hrWelcome.value = u.hr_welcome_message_template || '';
           updateHrWelcomePreview();
         }
+        var hrReview = document.getElementById('hrWelcomeReviewEnabled');
+        if (hrReview) hrReview.checked = !u.hr_auto_send_welcome;
         hideTrustSuggest();
       }
 
@@ -592,6 +603,8 @@
           payload.hr_welcome_message_template = hrTa
             ? String(hrTa.value || '').trim() || null
             : null;
+          var hrReview = document.getElementById('hrWelcomeReviewEnabled');
+          payload.hr_auto_send_welcome = hrReview ? !hrReview.checked : false;
         }
         try {
           await NHSAuth.updateProfile(payload);

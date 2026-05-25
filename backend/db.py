@@ -2635,6 +2635,7 @@ def _ensure_users_profile_extra_columns(conn: sqlite3.Connection) -> None:
     if "personal_email" not in cols:
         conn.execute("ALTER TABLE users ADD COLUMN personal_email TEXT")
     _ensure_users_hr_welcome_template_column(conn)
+    _ensure_users_hr_auto_send_welcome_column(conn)
     _ensure_users_hr_email_columns(conn)
 
 
@@ -2643,6 +2644,15 @@ def _ensure_users_hr_welcome_template_column(conn: sqlite3.Connection) -> None:
     cols = [row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()]
     if "hr_welcome_message_template" not in cols:
         conn.execute("ALTER TABLE users ADD COLUMN hr_welcome_message_template TEXT")
+
+
+def _ensure_users_hr_auto_send_welcome_column(conn: sqlite3.Connection) -> None:
+    """HR accounts: skip welcome review modal and send default message when adding doctors."""
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()]
+    if "hr_auto_send_welcome" not in cols:
+        conn.execute(
+            "ALTER TABLE users ADD COLUMN hr_auto_send_welcome INTEGER NOT NULL DEFAULT 0"
+        )
 
 
 def _ensure_users_hr_email_columns(conn: sqlite3.Connection) -> None:
@@ -3117,6 +3127,9 @@ def _user_public_dict(row: sqlite3.Row, include_password_hash: bool = False) -> 
         "hr_welcome_message_template": row["hr_welcome_message_template"]
         if "hr_welcome_message_template" in keys
         else None,
+        "hr_auto_send_welcome": bool(row["hr_auto_send_welcome"])
+        if "hr_auto_send_welcome" in keys and row["hr_auto_send_welcome"] is not None
+        else False,
         "hr_email_digest_enabled": bool(row["hr_email_digest_enabled"])
         if "hr_email_digest_enabled" in keys and row["hr_email_digest_enabled"] is not None
         else True,
@@ -3161,13 +3174,14 @@ def user_get_by_id(user_id: int):
         _ensure_users_provision_columns(conn)
         conn.row_factory = sqlite3.Row
         _ensure_users_hr_welcome_template_column(conn)
+        _ensure_users_hr_auto_send_welcome_column(conn)
         _ensure_users_hr_email_columns(conn)
         row = conn.execute(
             """SELECT id, email, premium, gmc_number, display_name, current_trust,
                       personal_email, must_change_password, onboarding_completed,
-                      hr_welcome_message_template, hr_email_digest_enabled,
-                      hr_email_instant_enabled, hr_notification_email,
-                      hr_expiry_reminders_enabled
+                      hr_welcome_message_template, hr_auto_send_welcome,
+                      hr_email_digest_enabled, hr_email_instant_enabled,
+                      hr_notification_email, hr_expiry_reminders_enabled
                FROM users WHERE id = ?""",
             (user_id,),
         ).fetchone()
@@ -3406,6 +3420,16 @@ def user_set_hr_welcome_template(user_id: int, template: Optional[str]) -> None:
         conn.execute(
             "UPDATE users SET hr_welcome_message_template = ? WHERE id = ?",
             (template, int(user_id)),
+        )
+        conn.commit()
+
+
+def user_set_hr_auto_send_welcome(user_id: int, enabled: bool) -> None:
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_users_hr_auto_send_welcome_column(conn)
+        conn.execute(
+            "UPDATE users SET hr_auto_send_welcome = ? WHERE id = ?",
+            (1 if enabled else 0, int(user_id)),
         )
         conn.commit()
 

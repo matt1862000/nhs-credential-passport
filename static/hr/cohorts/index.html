@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#005eb8">
   <title>All Groups &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
-  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260531-4">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260531-5">
   <link rel="stylesheet" href="/static/shared/training-add-form.css?v=20260526-2">
   <link rel="stylesheet" href="/static/shared/messages-compose.css?v=20260528-1">
 </head>
@@ -375,6 +375,12 @@
       </div>
       <div id="welcomeReviewSendResult" class="hr-provision-viz-wrap hr-provision-viz-wrap--compact" style="margin-top:0.75rem;" aria-live="polite"></div>
       <p id="welcomeReviewStatus" class="hr-cohort-status-msg hr-muted" role="status" aria-live="polite" hidden></p>
+      <div class="nhsuk-checkboxes nhsuk-checkboxes--small" style="margin-top:0.75rem;">
+        <div class="nhsuk-checkboxes__item">
+          <input class="nhsuk-checkboxes__input" id="welcomeReviewDontShowAgain" name="welcomeReviewDontShowAgain" type="checkbox" value="yes">
+          <label class="nhsuk-label nhsuk-checkboxes__label" for="welcomeReviewDontShowAgain">Don&rsquo;t show this again &mdash; always send the default welcome message when I add doctors</label>
+        </div>
+      </div>
       <div class="cohort-wizard-actions cohort-wizard-actions--split" style="margin-top:1rem;">
         <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnWelcomeReviewSkip">Don&rsquo;t send welcome</button>
         <div style="display:flex;flex-wrap:wrap;gap:0.5rem;">
@@ -481,7 +487,7 @@
   <script src="/static/shared/ods-trust-suggest.js"></script>
   <script src="/static/shared/messages-common.js?v=20260524-2"></script>
   <script>window.__HR_PAGE__ = 'cohorts';</script>
-  <script src="/static/hr/hr-app.js?v=20260531-4"></script>
+  <script src="/static/hr/hr-app.js?v=20260531-5"></script>
   <script>
     (function () {
       var _activeCohortId = null;
@@ -575,6 +581,8 @@
         var resultEl = document.getElementById('welcomeReviewSendResult');
         if (resultEl) resultEl.innerHTML = '';
         show(document.getElementById('welcomeReviewStatus'), false);
+        var dontShow = document.getElementById('welcomeReviewDontShowAgain');
+        if (dontShow) dontShow.checked = false;
       }
 
       function setWelcomeReviewEditMode(editing) {
@@ -688,6 +696,8 @@
             + (lines.length ? ': ' + lines.join(', ') + extra : '') + '.';
         }
         setWelcomeReviewEditMode(false);
+        var dontShow = document.getElementById('welcomeReviewDontShowAgain');
+        if (dontShow) dontShow.checked = false;
         show(modal, true);
         void loadWelcomeTemplateSuggestions(cohort.id);
       }
@@ -696,6 +706,83 @@
         return (results || []).filter(function (r) {
           return (r.status === 'created' || r.status === 'existing') && r.user_id;
         }).map(function (r) { return r.user_id; });
+      }
+
+      function renderWelcomeSendResult(out, userIds, resultEl) {
+        if (!viz() || !resultEl) return;
+        viz().render(resultEl, {
+          total: userIds.length,
+          barTitle: 'Welcome delivery',
+          segments: [
+            { count: out.welcome_sent || 0, variant: 'valid' },
+            { count: out.welcome_queued || 0, variant: 'skipped' },
+          ],
+          statItems: [
+            { count: out.welcome_sent || 0, label: 'Sent now', variant: 'valid' },
+            { count: out.welcome_queued || 0, label: 'After onboarding', variant: 'skipped' },
+            { count: userIds.length, label: 'Recipients' },
+          ].filter(function (item) {
+            return item.count > 0 || item.label === 'Recipients';
+          }),
+          successHtml: 'Welcome message saved and delivery started.',
+          notesHtml: out.welcome_queued
+            ? ['Anyone who has not finished their profile will receive this welcome after they complete onboarding.']
+            : [],
+        });
+      }
+
+      async function postWelcomeSend(cohortId, userIds, template, resultEl) {
+        var payload = { doctor_user_ids: userIds };
+        if (template) payload.welcome_message_template = template;
+        if (viz() && resultEl) viz().showLoading(resultEl, 'Sending welcome messages…');
+        var out = await apiJsonWithProgress(
+          '/api/hr/cohorts/' + encodeURIComponent(String(cohortId)) + '/welcome/send',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          },
+          resultEl
+        );
+        if (out.cohort) _activeCohortMeta = out.cohort;
+        renderWelcomeSendResult(out, userIds, resultEl);
+        return out;
+      }
+
+      async function autoSendWelcomeReview(cohort, userIds) {
+        if (!cohort || !userIds || !userIds.length) return;
+        var resultEl = document.getElementById('addProvisionResult');
+        var tmpl = effectiveWelcomeFromCohort(cohort);
+        try {
+          await postWelcomeSend(cohort.id, userIds, tmpl, resultEl);
+          await openCohort(cohort.id, { preserveAddViz: true });
+        } catch (err) {
+          if (resultEl) resultEl.innerHTML = '';
+          openWelcomeReviewModal(cohort, userIds, []);
+          var st = document.getElementById('welcomeReviewStatus');
+          show(st, true);
+          setStatusEl(st, err.message || 'Could not send welcome automatically. Review and send manually.', 'error');
+        }
+      }
+
+      async function handleWelcomeReviewAfterAdd(cohort, userIds, results) {
+        if (!cohort || !userIds || !userIds.length) return;
+        var u = NHSAuth.user;
+        if (u && u.hr_auto_send_welcome) {
+          await autoSendWelcomeReview(cohort, userIds);
+          return;
+        }
+        openWelcomeReviewModal(cohort, userIds, results);
+      }
+
+      async function persistWelcomeAutoSendPreference() {
+        var dontShow = document.getElementById('welcomeReviewDontShowAgain');
+        if (!dontShow || !dontShow.checked) return;
+        try {
+          await NHSAuth.updateProfile({ hr_auto_send_welcome: true });
+        } catch (err) {
+          console.warn('Could not save welcome preference', err);
+        }
       }
 
       async function sendWelcomeReview() {
@@ -708,41 +795,14 @@
         if (btn) btn.disabled = true;
         show(st, false);
         if (resultEl) resultEl.innerHTML = '';
-        if (viz()) viz().showLoading(resultEl, 'Sending welcome messages…');
         try {
-          var payload = { doctor_user_ids: _welcomeReviewState.userIds };
-          if (tmpl) payload.welcome_message_template = tmpl;
-          var out = await apiJsonWithProgress(
-            '/api/hr/cohorts/' + encodeURIComponent(String(_welcomeReviewState.cohortId)) + '/welcome/send',
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(payload),
-            },
+          await persistWelcomeAutoSendPreference();
+          await postWelcomeSend(
+            _welcomeReviewState.cohortId,
+            _welcomeReviewState.userIds,
+            tmpl,
             resultEl
           );
-          if (out.cohort) _activeCohortMeta = out.cohort;
-          if (viz()) {
-            viz().render(resultEl, {
-              total: _welcomeReviewState.userIds.length,
-              barTitle: 'Welcome delivery',
-              segments: [
-                { count: out.welcome_sent || 0, variant: 'valid' },
-                { count: out.welcome_queued || 0, variant: 'skipped' },
-              ],
-              statItems: [
-                { count: out.welcome_sent || 0, label: 'Sent now', variant: 'valid' },
-                { count: out.welcome_queued || 0, label: 'After onboarding', variant: 'skipped' },
-                { count: _welcomeReviewState.userIds.length, label: 'Recipients' },
-              ].filter(function (item) {
-                return item.count > 0 || item.label === 'Recipients';
-              }),
-              successHtml: 'Welcome message saved and delivery started.',
-              notesHtml: out.welcome_queued
-                ? ['Anyone who has not finished their profile will receive this welcome after they complete onboarding.']
-                : [],
-            });
-          }
           await openCohort(_welcomeReviewState.cohortId);
           setTimeout(closeWelcomeReviewModal, 1200);
         } catch (err) {
@@ -2391,7 +2451,7 @@
           clearProvisionResult(document.getElementById('addProvisionResult'));
         }
         if (opts.welcomeReview && opts.welcomeReview.userIds && opts.welcomeReview.userIds.length) {
-          openWelcomeReviewModal(
+          void handleWelcomeReviewAfterAdd(
             opts.welcomeReview.cohort || c,
             opts.welcomeReview.userIds,
             opts.welcomeReview.results

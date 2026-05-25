@@ -91,6 +91,9 @@ def _auth_me_payload(u: dict) -> dict:
         or None
         if db.user_is_premium(u)
         else None,
+        "hr_auto_send_welcome": bool(u.get("hr_auto_send_welcome"))
+        if db.user_is_premium(u)
+        else None,
         "hr_email_digest_enabled": bool(u.get("hr_email_digest_enabled", True))
         if db.user_is_premium(u)
         else None,
@@ -771,6 +774,14 @@ async def me_profile_put(request: Request):
         hr_welcome_template = _normalize_welcome_template(
             body.get("hr_welcome_message_template")
         )
+
+    if db.user_is_premium(u) and "hr_auto_send_welcome" in body:
+        auto_send = body.get("hr_auto_send_welcome")
+        if not isinstance(auto_send, bool):
+            raise HTTPException(
+                status_code=400, detail="hr_auto_send_welcome must be a boolean"
+            )
+        db.user_set_hr_auto_send_welcome(uid, auto_send)
 
     merged = {
         "display_name": display_name,
