@@ -27,12 +27,18 @@
     .mand-btn-del:hover { background: #fef2f2; }
     .mand-empty { color: var(--nhsuk-secondary-text); padding: 0.75rem 0; font-style: italic; }
     /* Add / edit form */
-    .mand-form { display: flex; flex-wrap: wrap; gap: 0.65rem; align-items: flex-end; margin-top: 1rem; }
+    .mand-form { display: flex; flex-direction: column; gap: 0.65rem; margin-top: 1rem; }
+    .mand-form-row { display: flex; flex-wrap: wrap; gap: 0.65rem; align-items: flex-end; }
+    .mand-form-row .mand-fg { flex: 1 1 0; min-width: 12rem; }
+    .mand-form-row--bottom .mand-fg--channel { flex: 0 0 auto; min-width: 10rem; }
+    .mand-form-row--bottom .mand-fg--url { flex: 1 1 auto; min-width: 0; }
     .mand-form .mand-fg { display: flex; flex-direction: column; gap: 0.3rem; }
     .mand-form .mand-fg label { font-size: 0.875rem; font-weight: 600; }
-    .mand-form .mand-fg input { padding: 0.45rem 0.65rem; border: 2px solid var(--nhsuk-border); border-radius: 4px; font-size: 0.9375rem; min-width: 14rem; }
-    .mand-form .mand-fg input:focus { outline: 3px solid #ffbf47; outline-offset: 0; border-color: var(--nhsuk-text); }
-    .mand-form .mand-fg--wide input { min-width: 20rem; }
+    .mand-form .mand-fg input,
+    .mand-form .mand-fg select { width: 100%; box-sizing: border-box; padding: 0.45rem 0.65rem; border: 2px solid var(--nhsuk-border); border-radius: 4px; font-size: 0.9375rem; }
+    .mand-form .mand-fg input:focus,
+    .mand-form .mand-fg select:focus { outline: 3px solid #ffbf47; outline-offset: 0; border-color: var(--nhsuk-text); }
+    .mand-form-row--bottom .nhsuk-button { flex: 0 0 auto; margin: 0 0 0 auto; white-space: nowrap; }
     .mand-status { min-height: 1.25rem; font-size: 0.875rem; margin-top: 0.5rem; }
     .mand-status.ok { color: var(--nhsuk-success); font-weight: 600; }
     .mand-status.err { color: var(--nhsuk-error); font-weight: 600; }
@@ -105,27 +111,31 @@
       <div class="mand-card">
         <h2 style="margin:0 0 0.75rem 0; font-size:1.125rem;">Add a topic</h2>
         <div class="mand-form" id="addForm">
-          <div class="mand-fg mand-fg--wide">
-            <label for="newTopic">Topic name</label>
-            <input type="text" id="newTopic" placeholder="e.g. Manual Handling" maxlength="200" autocomplete="off">
+          <div class="mand-form-row">
+            <div class="mand-fg">
+              <label for="newTopic">Topic name</label>
+              <input type="text" id="newTopic" placeholder="e.g. Manual Handling" maxlength="200" autocomplete="off">
+            </div>
+            <div class="mand-fg">
+              <label for="newCategory">Category</label>
+              <input type="text" id="newCategory" placeholder="e.g. E-learning via ESR" maxlength="200" autocomplete="off">
+            </div>
           </div>
-          <div class="mand-fg mand-fg--wide">
-            <label for="newCategory">Category</label>
-            <input type="text" id="newCategory" placeholder="e.g. E-learning via ESR" maxlength="200" autocomplete="off">
+          <div class="mand-form-row mand-form-row--bottom">
+            <div class="mand-fg mand-fg--channel">
+              <label for="newChannel">Where to complete</label>
+              <select id="newChannel">
+                <option value="">—</option>
+                <option value="jarvis">JARVIS</option>
+                <option value="esr">ESR</option>
+              </select>
+            </div>
+            <div class="mand-fg mand-fg--url">
+              <label for="newUrl">Link (JARVIS page or ESR guides)</label>
+              <input type="url" id="newUrl" placeholder="https://…" maxlength="500" autocomplete="off">
+            </div>
+            <button type="button" class="nhsuk-button" id="btnAdd">Add topic</button>
           </div>
-          <div class="mand-fg">
-            <label for="newChannel">Where to complete</label>
-            <select id="newChannel" style="padding:0.45rem 0.65rem;border:2px solid var(--nhsuk-border);border-radius:4px;font-size:0.9375rem;">
-              <option value="">—</option>
-              <option value="jarvis">JARVIS</option>
-              <option value="esr">ESR</option>
-            </select>
-          </div>
-          <div class="mand-fg mand-fg--wide">
-            <label for="newUrl">Link (JARVIS page or ESR guides)</label>
-            <input type="url" id="newUrl" placeholder="https://…" maxlength="500" autocomplete="off">
-          </div>
-          <button type="button" class="nhsuk-button" id="btnAdd" style="margin:0; align-self:flex-end;">Add topic</button>
         </div>
         <p id="addStatus" class="mand-status" role="status" aria-live="polite"></p>
       </div>
