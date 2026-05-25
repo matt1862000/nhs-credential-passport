@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="application-name" content="DocPass">
   <meta name="theme-color" content="#005eb8">
-  <title>Add doctors &mdash; DocPass</title>
+  <title>Groups &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
   <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260524-1">
   <link rel="stylesheet" href="/static/shared/training-add-form.css?v=20260526-2">
@@ -37,7 +37,7 @@
 
   <main class="nhsuk-main hr-wrap" id="maincontent" role="main">
     <div id="addDoctorsPageHead">
-      <h1 class="nhsuk-page-heading">Add doctors</h1>
+      <h1 class="nhsuk-page-heading">Groups</h1>
       <p class="nhsuk-lead">Create doctor accounts using each person&rsquo;s <strong>personal email</strong> as their login, organise them into groups, and send the same message to everyone (each replies in their own thread).</p>
       <p class="hr-muted" style="margin:0 0 1rem 0;font-size:0.875rem;">HR never sees passwords here. Send login details to each person&rsquo;s personal email outside DocPass. Demo accounts use a standard initial password; doctors must change it on first sign-in.</p>
     </div>
@@ -2446,7 +2446,7 @@
         var searchMode = cohortsUrlSearchMode();
         show(document.getElementById('addDoctorsPageHead'), !searchMode);
         show(document.getElementById('searchDoctorsPageHead'), searchMode);
-        document.title = (searchMode ? 'Search doctors' : 'Add doctors') + ' \u2014 DocPass';
+        document.title = (searchMode ? 'Search doctors' : 'Groups') + ' \u2014 DocPass';
       }
       window.syncCohortsPageHead = syncCohortsPageHead;
 
