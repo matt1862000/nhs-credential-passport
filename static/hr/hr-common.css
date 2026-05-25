@@ -498,6 +498,7 @@
       display: flex;
       flex-wrap: wrap;
       gap: 0.5rem;
+      justify-content: flex-end;
     }
     .hr-table .hr-member-select-cell {
       width: 2.5rem;

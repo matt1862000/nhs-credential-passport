@@ -1339,6 +1339,67 @@ def hr_issuing_defaults(request: Request):
     return _hr_issuing_defaults_payload(hr)
 
 
+def _audit_doctor_delete_result(hr: dict, result: dict) -> None:
+    doctor_user_id = int(result.get("deleted_user_id") or 0)
+    label = (
+        (result.get("display_name") or "").strip()
+        or (result.get("email") or "").strip()
+        or f"user {doctor_user_id}"
+    )
+    cohorts = result.get("cohorts_removed") or []
+    detail = f"Deleted DocPass account for {label}"
+    if cohorts:
+        names = ", ".join(c.get("name") or f"Group {c.get('id')}" for c in cohorts[:8])
+        if len(cohorts) > 8:
+            names += f" (+{len(cohorts) - 8} more)"
+        detail += f"; removed from groups: {names}"
+    _audit_hr_action(
+        hr,
+        "doctor_delete",
+        doctor_user_id=doctor_user_id,
+        detail=detail,
+        meta={"cohorts_removed": cohorts},
+    )
+
+
+@router.post("/hr/doctors/delete")
+async def hr_doctors_delete_bulk(request: Request):
+    """Permanently delete one or more doctor accounts."""
+    hr = require_premium_user(request)
+    trust = (hr.get("current_trust") or "").strip()
+    if not trust:
+        raise HTTPException(
+            status_code=400,
+            detail="Your HR account must have a current trust set.",
+        )
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    raw_ids = body.get("user_ids")
+    if not isinstance(raw_ids, list):
+        raise HTTPException(status_code=400, detail="user_ids must be a list")
+    user_ids: list[int] = []
+    for item in raw_ids:
+        try:
+            user_ids.append(int(item))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="user_ids must contain integers")
+    if not user_ids:
+        raise HTTPException(status_code=400, detail="Select at least one doctor to delete")
+    result = db.hr_doctors_delete_bulk(user_ids, trust)
+    if result["deleted_count"] <= 0:
+        raise HTTPException(
+            status_code=404,
+            detail="No doctor accounts could be deleted.",
+        )
+    for row in result.get("deleted") or []:
+        _audit_doctor_delete_result(hr, row)
+    return {"ok": True, **result}
+
+
 @router.delete("/hr/doctors/{doctor_user_id}")
 def hr_doctor_delete(request: Request, doctor_user_id: int):
     """Permanently delete a doctor account (removes all cohort memberships)."""
@@ -1355,25 +1416,7 @@ def hr_doctor_delete(request: Request, doctor_user_id: int):
             status_code=404,
             detail="Doctor not found or cannot be deleted.",
         )
-    label = (
-        (result.get("display_name") or "").strip()
-        or (result.get("email") or "").strip()
-        or f"user {doctor_user_id}"
-    )
-    cohorts = result.get("cohorts_removed") or []
-    detail = f"Deleted DocPass account for {label}"
-    if cohorts:
-        names = ", ".join(c.get("name") or f"Group {c.get('id')}" for c in cohorts[:8])
-        if len(cohorts) > 8:
-            names += f" (+{len(cohorts) - 8} more)"
-        detail += f"; removed from groups: {names}"
-    _audit_hr_action(
-        hr,
-        "doctor_delete",
-        doctor_user_id=int(doctor_user_id),
-        detail=detail,
-        meta={"cohorts_removed": cohorts},
-    )
+    _audit_doctor_delete_result(hr, result)
     return {"ok": True, **result}
 
 

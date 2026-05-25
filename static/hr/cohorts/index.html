@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#005eb8">
   <title>All Groups &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
-  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260525-17">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260525-18">
   <link rel="stylesheet" href="/static/shared/training-add-form.css?v=20260526-2">
   <link rel="stylesheet" href="/static/shared/messages-compose.css?v=20260528-1">
 </head>
@@ -462,13 +462,15 @@
         </div>
 
         <div id="panelCohortMembers" class="hr-bulk-panel hr-cohort-panel" role="tabpanel" aria-labelledby="tabCohortMembers" hidden>
-          <p class="hr-cohort-legend">Select doctors to remove in bulk, or click a name to edit details. Status shows sign-in and whether their welcome message has been sent.</p>
+          <p class="hr-cohort-legend">Select doctors for bulk actions, or click a name to edit details. <strong>Remove from group</strong> keeps their DocPass account; <strong>Delete account</strong> removes them entirely.</p>
           <div id="detailMembersSection">
             <div class="hr-members-bulk-bar" id="membersBulkBar" hidden>
               <span class="hr-muted" id="membersBulkCount" aria-live="polite">0 selected</span>
               <div class="hr-members-bulk-actions">
-                <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small cohort-delete-btn" id="btnMembersRemoveSelected" disabled>Remove selected</button>
-                <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small cohort-delete-btn" id="btnMembersRemoveAll">Remove all from group</button>
+                <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnMembersRemoveSelected" disabled>Remove selected from group</button>
+                <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnMembersRemoveAll">Remove all from group</button>
+                <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small cohort-delete-btn" id="btnMembersDeleteSelected" disabled>Delete selected accounts</button>
+                <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small cohort-delete-btn" id="btnMembersDeleteAll">Delete all accounts</button>
               </div>
             </div>
             <div class="hr-table-wrap">
@@ -1682,6 +1684,8 @@
         var countEl = document.getElementById('membersBulkCount');
         var btnSelected = document.getElementById('btnMembersRemoveSelected');
         var btnAll = document.getElementById('btnMembersRemoveAll');
+        var btnDeleteSelected = document.getElementById('btnMembersDeleteSelected');
+        var btnDeleteAll = document.getElementById('btnMembersDeleteAll');
         var selectAll = document.getElementById('membersSelectAll');
         var nMembers = (_detailMembers || []).length;
         var selected = memberRemoveSelectedSet();
@@ -1695,12 +1699,22 @@
         if (btnSelected) {
           btnSelected.disabled = nSelected === 0;
           btnSelected.textContent = nSelected > 0
-            ? ('Remove selected (' + nSelected + ')')
-            : 'Remove selected';
+            ? ('Remove selected from group (' + nSelected + ')')
+            : 'Remove selected from group';
         }
         if (btnAll) {
           btnAll.hidden = nMembers === 0;
           btnAll.textContent = 'Remove all from group (' + nMembers + ')';
+        }
+        if (btnDeleteSelected) {
+          btnDeleteSelected.disabled = nSelected === 0;
+          btnDeleteSelected.textContent = nSelected > 0
+            ? ('Delete selected accounts (' + nSelected + ')')
+            : 'Delete selected accounts';
+        }
+        if (btnDeleteAll) {
+          btnDeleteAll.hidden = nMembers === 0;
+          btnDeleteAll.textContent = 'Delete all accounts (' + nMembers + ')';
         }
         if (selectAll && nMembers > 0) {
           selectAll.indeterminate = nSelected > 0 && nSelected < nMembers;
@@ -1741,6 +1755,44 @@
           'Remove ' + count + ' doctor' + (count === 1 ? '' : 's') + ' from this group?\n\n'
           + 'Their DocPass accounts are not deleted — only this group membership.'
         );
+      }
+
+      function confirmDeleteDoctorAccounts(count) {
+        var n = Number(count) || 0;
+        if (n <= 0) return false;
+        var msg = (
+          'Permanently delete ' + n + ' doctor account' + (n === 1 ? '' : 's') + '?\n\n'
+          + 'This removes their DocPass login, all training records, messages, and membership in every group. '
+          + 'This cannot be undone.'
+        );
+        if (!confirm(msg)) return false;
+        if (n > 1 && !confirm('Are you sure? ' + n + ' accounts will be permanently deleted.')) return false;
+        return true;
+      }
+
+      async function deleteDoctorAccounts(userIds) {
+        if (!userIds.length) return;
+        try {
+          var out = await apiJson('/api/hr/doctors/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_ids: userIds }),
+          });
+          resetMemberRemoveSelection();
+          if (_activeCohortId != null) {
+            await openCohort(_activeCohortId);
+          }
+          await loadCohorts({ showLoading: false });
+          var skipped = (out && out.not_deleted_user_ids) ? out.not_deleted_user_ids.length : 0;
+          if (skipped > 0) {
+            alert(
+              (out.deleted_count || 0) + ' account' + ((out.deleted_count || 0) === 1 ? '' : 's')
+              + ' deleted. ' + skipped + ' could not be deleted.'
+            );
+          }
+        } catch (err) {
+          alert(err.message || 'Could not delete doctor accounts');
+        }
       }
 
       async function removeMembersFromGroup(userIds) {
@@ -3189,6 +3241,20 @@
         var ids = _detailMembers.map(function (m) { return Number(m.user_id); });
         if (!confirmRemoveMembersFromGroup(ids.length)) return;
         await removeMembersFromGroup(ids);
+      });
+
+      document.getElementById('btnMembersDeleteSelected').addEventListener('click', async function () {
+        var ids = Array.from(memberRemoveSelectedSet());
+        if (!ids.length) return;
+        if (!confirmDeleteDoctorAccounts(ids.length)) return;
+        await deleteDoctorAccounts(ids);
+      });
+
+      document.getElementById('btnMembersDeleteAll').addEventListener('click', async function () {
+        if (!_detailMembers.length) return;
+        var ids = _detailMembers.map(function (m) { return Number(m.user_id); });
+        if (!confirmDeleteDoctorAccounts(ids.length)) return;
+        await deleteDoctorAccounts(ids);
       });
 
       document.getElementById('btnWelcomeReviewEdit').addEventListener('click', function () {

@@ -307,6 +307,31 @@ def _doctor_visible_to_trust(doctor_user_id: int, hr_trust: str, conn: sqlite3.C
     return False
 
 
+def _doctor_member_of_trust_cohort(
+    doctor_user_id: int, hr_trust: str, conn: sqlite3.Connection
+) -> bool:
+    """True if the doctor belongs to any cohort owned by this HR trust."""
+    row = conn.execute(
+        """
+        SELECT 1 FROM hr_cohort_members m
+        JOIN hr_cohorts c ON c.id = m.cohort_id
+        WHERE m.user_id = ? AND LOWER(TRIM(c.hr_trust)) = LOWER(TRIM(?))
+        LIMIT 1
+        """,
+        (int(doctor_user_id), (hr_trust or "").strip()),
+    ).fetchone()
+    return row is not None
+
+
+def _doctor_deletable_by_trust(
+    doctor_user_id: int, hr_trust: str, conn: sqlite3.Connection
+) -> bool:
+    """HR may delete if the doctor is searchable-visible or in one of the trust's groups."""
+    if _doctor_visible_to_trust(int(doctor_user_id), hr_trust, conn):
+        return True
+    return _doctor_member_of_trust_cohort(int(doctor_user_id), hr_trust, conn)
+
+
 def _user_trust_fields(current_trust: Optional[str]) -> dict:
     from . import trust_packs
 
@@ -3747,7 +3772,7 @@ def cohort_members_remove_bulk(
 
 def hr_doctor_delete(doctor_user_id: int, hr_trust: str) -> Optional[dict]:
     """
-    Permanently delete a non-premium doctor account visible to hr_trust.
+    Permanently delete a non-premium doctor account managed by hr_trust.
     Cohort memberships and related records are removed via ON DELETE CASCADE.
     """
     hr_trust = (hr_trust or "").strip()
@@ -3766,7 +3791,7 @@ def hr_doctor_delete(doctor_user_id: int, hr_trust: str) -> Optional[dict]:
         ).fetchone()
         if not row or int(row["premium"] or 0) != 0:
             return None
-        if not _doctor_visible_to_trust(int(doctor_user_id), hr_trust, conn):
+        if not _doctor_deletable_by_trust(int(doctor_user_id), hr_trust, conn):
             return None
         cohort_rows = conn.execute(
             """
@@ -3800,6 +3825,34 @@ def hr_doctor_delete(doctor_user_id: int, hr_trust: str) -> Optional[dict]:
             "gmc_number": row["gmc_number"],
             "cohorts_removed": cohorts,
         }
+
+
+def hr_doctors_delete_bulk(user_ids: list[int], hr_trust: str) -> dict:
+    """Permanently delete multiple doctor accounts; skips ids that cannot be deleted."""
+    ids: list[int] = []
+    seen: set[int] = set()
+    for uid in user_ids or []:
+        try:
+            n = int(uid)
+        except (TypeError, ValueError):
+            continue
+        if n <= 0 or n in seen:
+            continue
+        seen.add(n)
+        ids.append(n)
+    deleted: list[dict] = []
+    not_deleted: list[int] = []
+    for uid in ids:
+        result = hr_doctor_delete(uid, hr_trust)
+        if result:
+            deleted.append(result)
+        else:
+            not_deleted.append(uid)
+    return {
+        "deleted_count": len(deleted),
+        "deleted": deleted,
+        "not_deleted_user_ids": not_deleted,
+    }
 
 
 def cohort_member_update_profile(
