@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#005eb8">
   <title>All Groups &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
-  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260525-9">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260525-10">
   <link rel="stylesheet" href="/static/shared/training-add-form.css?v=20260526-2">
   <link rel="stylesheet" href="/static/shared/messages-compose.css?v=20260528-1">
 </head>
@@ -115,6 +115,51 @@
           </div>
           <div id="cohortList" aria-live="polite"></div>
         </div>
+      </div>
+
+      <div id="cohortBrowseWrap" class="hr-card hr-cohort-browse-wrap" hidden>
+        <div id="cohortBrowseGroupsSection">
+          <section class="hr-cohort-fold" aria-labelledby="btnToggleGroupsSection">
+            <div class="hr-cohort-members-head hr-cohort-fold-head">
+              <button type="button" class="hr-cohort-fold-toggle" id="btnToggleGroupsSection" aria-expanded="false" aria-controls="detailGroupsPanel">
+                <span class="hr-cohort-fold-chevron" aria-hidden="true"></span>
+                <span class="hr-cohort-fold-title">Groups</span>
+              </button>
+              <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnBackList">All Groups</button>
+            </div>
+            <div id="detailGroupsPanel" class="hr-cohort-fold-panel" hidden>
+              <p class="hr-cohort-legend">Open a group to add doctors, send messages, or check compliance.</p>
+              <div id="detailCohortsSection" aria-live="polite">
+                <div id="detailCohortList"></div>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <section class="hr-cohort-fold" aria-labelledby="btnToggleMembersSection">
+          <div class="hr-cohort-members-head hr-cohort-fold-head">
+            <button type="button" class="hr-cohort-fold-toggle" id="btnToggleMembersSection" aria-expanded="false" aria-controls="detailMembersPanel">
+              <span class="hr-cohort-fold-chevron" aria-hidden="true"></span>
+              <span class="hr-cohort-fold-title" id="detailMembersFoldTitle">Members</span>
+            </button>
+            <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnBackListFromMembers" hidden>All Groups</button>
+          </div>
+          <div id="detailMembersPanel" class="hr-cohort-fold-panel" hidden>
+            <p class="hr-cohort-legend">Click a name to edit details or remove someone from this group. Status shows sign-in and whether their welcome message has been sent.</p>
+            <div id="detailMembersSection">
+              <div class="hr-table-wrap">
+                <table class="hr-table" aria-label="Group members">
+                  <thead><tr><th>Name</th><th>Personal email</th><th>GMC</th><th>Status</th></tr></thead>
+                  <tbody id="membersTbody"></tbody>
+                </table>
+              </div>
+            </div>
+            <div id="cohortWelcomePendingBanner" class="cohort-welcome-pending-banner" hidden role="region" aria-label="Pending welcome messages">
+              <p class="cohort-welcome-pending-banner__text" id="cohortWelcomePendingText"></p>
+              <button type="button" class="nhsuk-button" id="btnOpenWelcomeReviewPending">Review and send welcome</button>
+            </div>
+          </div>
+        </section>
       </div>
 
       <div id="detailView" class="hr-card" hidden>
@@ -437,46 +482,6 @@
           </div>
           <p id="cohortCompStatus" class="hr-muted" role="status" aria-live="polite"></p>
         </div>
-
-        <section class="hr-cohort-fold" aria-labelledby="btnToggleGroupsSection">
-          <div class="hr-cohort-members-head hr-cohort-fold-head">
-            <button type="button" class="hr-cohort-fold-toggle" id="btnToggleGroupsSection" aria-expanded="false" aria-controls="detailGroupsPanel">
-              <span class="hr-cohort-fold-chevron" aria-hidden="true"></span>
-              <span class="hr-cohort-fold-title">Groups</span>
-            </button>
-            <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnBackList">All Groups</button>
-          </div>
-          <div id="detailGroupsPanel" class="hr-cohort-fold-panel" hidden>
-            <p class="hr-cohort-legend">Open a group to add doctors, send messages, or check compliance.</p>
-            <div id="detailCohortsSection" aria-live="polite">
-              <div id="detailCohortList"></div>
-            </div>
-          </div>
-        </section>
-
-        <section class="hr-cohort-fold" aria-labelledby="btnToggleMembersSection">
-          <div class="hr-cohort-members-head hr-cohort-fold-head">
-            <button type="button" class="hr-cohort-fold-toggle" id="btnToggleMembersSection" aria-expanded="false" aria-controls="detailMembersPanel">
-              <span class="hr-cohort-fold-chevron" aria-hidden="true"></span>
-              <span class="hr-cohort-fold-title" id="detailMembersFoldTitle">Members</span>
-            </button>
-          </div>
-          <div id="detailMembersPanel" class="hr-cohort-fold-panel" hidden>
-            <p class="hr-cohort-legend">Click a name to edit details or remove someone from this group. Status shows sign-in and whether their welcome message has been sent.</p>
-            <div id="detailMembersSection">
-              <div class="hr-table-wrap">
-                <table class="hr-table" aria-label="Group members">
-                  <thead><tr><th>Name</th><th>Personal email</th><th>GMC</th><th>Status</th></tr></thead>
-                  <tbody id="membersTbody"></tbody>
-                </table>
-              </div>
-            </div>
-            <div id="cohortWelcomePendingBanner" class="cohort-welcome-pending-banner" hidden role="region" aria-label="Pending welcome messages">
-              <p class="cohort-welcome-pending-banner__text" id="cohortWelcomePendingText"></p>
-              <button type="button" class="nhsuk-button" id="btnOpenWelcomeReviewPending">Review and send welcome</button>
-            </div>
-          </div>
-        </section>
       </div>
     </div>
   </main>
@@ -2349,7 +2354,7 @@
           return;
         }
         el.innerHTML = filtered.map(function (c) {
-          return buildCohortListRowsHtml([c]);
+          return buildCohortListRowsHtml([c], _activeCohortId);
         }).join('');
         if (_activeCohortId != null) renderDetailCohortList();
       }
@@ -2433,8 +2438,20 @@
         }
       }
 
+      function syncBrowseLayout() {
+        var browseWrap = document.getElementById('cohortBrowseWrap');
+        var detailEl = document.getElementById('detailView');
+        var groupsSection = document.getElementById('cohortBrowseGroupsSection');
+        var backOnMembers = document.getElementById('btnBackListFromMembers');
+        var searchBrowse = _activeCohortId != null && cohortsUrlSearchMode()
+          && detailEl && detailEl.hidden && browseWrap && !browseWrap.hidden;
+        if (groupsSection) groupsSection.hidden = searchBrowse;
+        if (backOnMembers) backOnMembers.hidden = !searchBrowse;
+      }
+
       function showList() {
         show(document.getElementById('detailView'), false);
+        show(document.getElementById('cohortBrowseWrap'), false);
         show(document.getElementById('listView'), true);
         var searchMode = cohortsUrlSearchMode();
         show(document.getElementById('searchDoctorView'), false);
@@ -2477,8 +2494,6 @@
           recipToggle.setAttribute('aria-expanded', 'false');
           recipToggle.textContent = 'View recipients (' + _detailMembers.length + ')';
         }
-        show(document.getElementById('listView'), false);
-        show(document.getElementById('detailView'), true);
         setStatusEl(document.getElementById('msgStatus'), '', null);
         setStatusEl(document.getElementById('addStatus'), '', null);
         clearProvisionResult(document.getElementById('msgProvisionResult'));
@@ -2497,7 +2512,25 @@
         if (exportBtn) {
           exportBtn.href = '/api/hr/cohorts/' + encodeURIComponent(String(id)) + '/compliance-export';
         }
+        var needsFullDetail = !!(opts.forceTab || opts.preserveAddViz);
+        var browseOnly = cohortsUrlSearchMode() && !needsFullDetail;
+        if (browseOnly) {
+          show(document.getElementById('listView'), true);
+          show(document.getElementById('detailView'), false);
+        } else {
+          show(document.getElementById('listView'), false);
+          show(document.getElementById('detailView'), true);
+        }
+        show(document.getElementById('cohortBrowseWrap'), true);
+        syncBrowseLayout();
         autoExpandMembersSection();
+        if (browseOnly) {
+          renderCohortList(_cohortsCache);
+          requestAnimationFrame(function () {
+            var wrap = document.getElementById('cohortBrowseWrap');
+            if (wrap) wrap.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          });
+        }
         syncCohortsPageHead();
       }
 
@@ -2922,6 +2955,8 @@
       wireCohortDetailFold('groups', 'btnToggleGroupsSection', 'detailGroupsPanel');
 
       document.getElementById('btnBackList').addEventListener('click', showList);
+      var btnBackListFromMembers = document.getElementById('btnBackListFromMembers');
+      if (btnBackListFromMembers) btnBackListFromMembers.addEventListener('click', showList);
       document.getElementById('btnDeleteCohort').addEventListener('click', function () {
         if (_activeCohortId != null) deleteCohort(_activeCohortId);
       });

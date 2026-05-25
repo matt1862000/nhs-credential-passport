@@ -510,6 +510,15 @@
     }
     .hr-cohort-fold-panel .hr-cohort-legend { margin-top: 0; }
     .hr-cohort-fold-panel[hidden] { display: none !important; }
+    .hr-cohort-browse-wrap .hr-cohort-fold + .hr-cohort-fold { margin-top: 1rem; }
+    .hr-cohort-browse-wrap .hr-cohort-fold-head { margin-top: 0; }
+    #detailView:not([hidden]) + #cohortBrowseWrap:not([hidden]) {
+      margin-top: 0;
+      border-top: none;
+      border-radius: 0 0 6px 6px;
+      padding-top: 0;
+    }
+    #detailView:not([hidden]) { border-radius: 6px 6px 0 0; margin-bottom: 0; }
     .hr-cohort-legend { font-size: 0.8125rem; color: var(--nhsuk-secondary-text); margin: 0 0 0.75rem 0; max-width: 42rem; }
     .hr-cohort-actions-title { margin: 0 0 0.75rem 0; font-size: 1.125rem; }
     .hr-cohort-panel { margin-top: 0; }
