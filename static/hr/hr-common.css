@@ -232,6 +232,12 @@
     .hr-search-results { margin-top: 0.5rem; }
     .hr-search-result-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem 1rem; padding: 0.75rem 0; border-bottom: 1px solid var(--nhsuk-border); }
     .hr-search-result-row:last-child { border-bottom: none; }
+    .hr-search-result-row--active {
+      background: rgba(0, 94, 184, 0.08);
+      border-radius: 4px;
+      box-shadow: inset 3px 0 0 var(--nhsuk-link);
+    }
+    .hr-search-result-row--active .hr-search-result-name { color: var(--nhsuk-link); }
     .hr-search-result-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; justify-content: flex-end; }
     .hr-search-result-name { font-weight: 700; color: var(--nhsuk-text); }
     .hr-search-result-meta { font-size: 0.8125rem; color: var(--nhsuk-secondary-text); margin-top: 0.2rem; }

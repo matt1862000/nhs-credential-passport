@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#005eb8">
   <title>All Groups &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
-  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260525-7">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260525-8">
   <link rel="stylesheet" href="/static/shared/training-add-form.css?v=20260526-2">
   <link rel="stylesheet" href="/static/shared/messages-compose.css?v=20260528-1">
 </head>
@@ -442,7 +442,7 @@
           <div class="hr-cohort-members-head hr-cohort-fold-head">
             <button type="button" class="hr-cohort-fold-toggle" id="btnToggleMembersSection" aria-expanded="false" aria-controls="detailMembersPanel">
               <span class="hr-cohort-fold-chevron" aria-hidden="true"></span>
-              <span class="hr-cohort-fold-title">Members</span>
+              <span class="hr-cohort-fold-title" id="detailMembersFoldTitle">Members</span>
             </button>
           </div>
           <div id="detailMembersPanel" class="hr-cohort-fold-panel" hidden>
@@ -1705,13 +1705,16 @@
         );
       }
 
-      function buildCohortListRowsHtml(cohorts) {
+      var _cohortDetailFoldSetters = {};
+
+      function buildCohortListRowsHtml(cohorts, activeCohortId) {
         return cohorts.map(function (c) {
           var isDefault = isDefaultCohort(c);
+          var isActive = activeCohortId != null && Number(c.id) === Number(activeCohortId);
           var meta = esc(String(c.member_count != null ? c.member_count : 0)) + ' member' + (c.member_count === 1 ? '' : 's');
           if (isDefault) meta += ' · Default group';
           return (
-            '<div class="hr-search-result-row" data-cohort-id="' + c.id + '">' +
+            '<div class="hr-search-result-row' + (isActive ? ' hr-search-result-row--active' : '') + '" data-cohort-id="' + c.id + '">' +
               '<div><div class="hr-search-result-name">' + esc(c.name) + '</div>' +
               '<div class="hr-search-result-meta">' + meta + '</div></div>' +
               '<div class="hr-search-result-actions">' +
@@ -1723,6 +1726,22 @@
         }).join('');
       }
 
+      function syncDetailMembersHeading() {
+        var titleEl = document.getElementById('detailMembersFoldTitle');
+        if (!titleEl) return;
+        var name = (_activeCohortMeta && _activeCohortMeta.name)
+          || (document.getElementById('detailTitle') && document.getElementById('detailTitle').textContent)
+          || 'Group';
+        titleEl.textContent = String(name).trim() + ' Members';
+      }
+
+      function maybeAutoExpandMembersForBanner() {
+        var banner = document.getElementById('cohortWelcomePendingBanner');
+        if (banner && !banner.hidden && _cohortDetailFoldSetters.members) {
+          _cohortDetailFoldSetters.members(true);
+        }
+      }
+
       function renderDetailCohortList() {
         var el = document.getElementById('detailCohortList');
         if (!el) return;
@@ -1730,12 +1749,13 @@
           el.innerHTML = detailCohortEmptyHtml();
           return;
         }
-        el.innerHTML = buildCohortListRowsHtml(_cohortsCache);
+        el.innerHTML = buildCohortListRowsHtml(_cohortsCache, _activeCohortId);
       }
 
       function updateDetailBottomSections() {
         renderMembersTable();
         renderDetailCohortList();
+        syncDetailMembersHeading();
       }
 
       function closeMemberModal() {
@@ -2019,6 +2039,7 @@
               + ' a welcome message ready to review and send.';
           }
         }
+        maybeAutoExpandMembersForBanner();
 
         var btn = document.getElementById('btnSendCohort');
         if (btn) btn.textContent = n ? ('Send to ' + n + ' doctor' + (n === 1 ? '' : 's')) : 'Send message';
@@ -2884,6 +2905,7 @@
         btn.addEventListener('click', function () {
           setExpanded(btn.getAttribute('aria-expanded') !== 'true');
         });
+        _cohortDetailFoldSetters[sectionKey] = setExpanded;
       }
 
       document.getElementById('cohortList').addEventListener('click', handleCohortListClick);
