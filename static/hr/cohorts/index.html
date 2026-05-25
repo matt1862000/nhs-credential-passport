@@ -1696,7 +1696,6 @@
         var btnSelected = document.getElementById('btnMembersRemoveSelected');
         var btnAll = document.getElementById('btnMembersRemoveAll');
         var btnDeleteSelected = document.getElementById('btnMembersDeleteSelected');
-        var btnDeleteAll = document.getElementById('btnMembersDeleteAll');
         var selectAll = document.getElementById('membersSelectAll');
         var nMembers = (_detailMembers || []).length;
         var selected = memberRemoveSelectedSet();
@@ -1722,10 +1721,6 @@
           btnDeleteSelected.textContent = nSelected > 0
             ? ('Delete selected accounts (' + nSelected + ')')
             : 'Delete selected accounts';
-        }
-        if (btnDeleteAll) {
-          btnDeleteAll.hidden = nMembers === 0;
-          btnDeleteAll.textContent = 'Delete all accounts (' + nMembers + ')';
         }
         if (selectAll && nMembers > 0) {
           selectAll.indeterminate = nSelected > 0 && nSelected < nMembers;
@@ -3381,13 +3376,6 @@
       document.getElementById('btnMembersDeleteSelected').addEventListener('click', async function () {
         var ids = Array.from(memberRemoveSelectedSet());
         if (!ids.length) return;
-        if (!confirmDeleteDoctorAccounts(ids.length)) return;
-        await deleteDoctorAccounts(ids);
-      });
-
-      document.getElementById('btnMembersDeleteAll').addEventListener('click', async function () {
-        if (!_detailMembers.length) return;
-        var ids = _detailMembers.map(function (m) { return Number(m.user_id); });
         if (!confirmDeleteDoctorAccounts(ids.length)) return;
         await deleteDoctorAccounts(ids);
       });
