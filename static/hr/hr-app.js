@@ -1005,11 +1005,80 @@
         return base;
       }
 
+      var _pdfJsLoadPromise = null;
+
+      function ensurePdfJsLoaded() {
+        if (window.pdfjsLib) {
+          window.pdfjsLib.GlobalWorkerOptions.workerSrc = '/static/shared/vendor/pdf.worker.min.js';
+          return Promise.resolve(window.pdfjsLib);
+        }
+        if (_pdfJsLoadPromise) return _pdfJsLoadPromise;
+        _pdfJsLoadPromise = new Promise(function (resolve, reject) {
+          var s = document.createElement('script');
+          s.src = '/static/shared/vendor/pdf.min.js';
+          s.onload = function () {
+            if (!window.pdfjsLib) {
+              reject(new Error('PDF.js failed to load'));
+              return;
+            }
+            window.pdfjsLib.GlobalWorkerOptions.workerSrc = '/static/shared/vendor/pdf.worker.min.js';
+            resolve(window.pdfjsLib);
+          };
+          s.onerror = function () { reject(new Error('PDF.js failed to load')); };
+          document.head.appendChild(s);
+        });
+        return _pdfJsLoadPromise;
+      }
+
+      function renderHrPdfCanvasPreview(container, bytes, renderToken) {
+        if (!container) return Promise.resolve();
+        container.dataset.renderToken = String(renderToken);
+        return ensurePdfJsLoaded()
+          .then(function (pdfjsLib) {
+            if (container.dataset.renderToken !== String(renderToken)) return null;
+            return pdfjsLib.getDocument({ data: bytes }).promise;
+          })
+          .then(function (pdf) {
+            if (!pdf || container.dataset.renderToken !== String(renderToken)) return;
+            container.innerHTML = '';
+            var chain = Promise.resolve();
+            for (var pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+              (function (n) {
+                chain = chain.then(function () {
+                  if (container.dataset.renderToken !== String(renderToken)) return;
+                  return pdf.getPage(n).then(function (page) {
+                    var baseViewport = page.getViewport({ scale: 1 });
+                    var maxWidth = container.clientWidth || 720;
+                    var scale = Math.min(1.5, maxWidth / baseViewport.width);
+                    var viewport = page.getViewport({ scale: scale });
+                    var canvas = document.createElement('canvas');
+                    canvas.className = 'hr-cert-pdf-page';
+                    canvas.width = viewport.width;
+                    canvas.height = viewport.height;
+                    container.appendChild(canvas);
+                    return page.render({
+                      canvasContext: canvas.getContext('2d'),
+                      viewport: viewport,
+                    }).promise;
+                  });
+                });
+              })(pageNum);
+            }
+            return chain;
+          })
+          .catch(function () {
+            if (container.dataset.renderToken !== String(renderToken)) return;
+            container.innerHTML =
+              '<p class="hr-muted" style="margin:0;">Preview unavailable. Use <strong>Open PDF in new tab</strong> above.</p>';
+          });
+      }
+
       function renderHrCertificatePreview(body, b64, mime, filename) {
         if (body && body.dataset.certBlobUrl) {
           try { URL.revokeObjectURL(body.dataset.certBlobUrl); } catch (e) {}
           delete body.dataset.certBlobUrl;
         }
+        body.dataset.certRenderToken = String(Date.now());
         var clean = String(b64 || '').replace(/\s/g, '');
         if (!clean) return false;
         var bin = atob(clean);
@@ -1021,14 +1090,15 @@
         body.dataset.certBlobUrl = url;
         var safeName = String(filename || 'evidence').replace(/"/g, '');
         if (mime === 'application/pdf') {
+          var renderToken = String(Date.now());
+          body.dataset.certRenderToken = renderToken;
           body.innerHTML =
             '<p class="hr-muted" style="margin:0 0 0.75rem 0;">' +
             '<a href="' + url + '" target="_blank" rel="noopener">Open PDF in new tab</a>' +
             ' · <a href="' + url + '" download="' + safeName + '">Download</a>' +
             '</p>' +
-            '<object class="hr-cert-iframe" type="application/pdf" data="' + url + '">' +
-            '<iframe class="hr-cert-iframe" title="Uploaded evidence" src="' + url + '"></iframe>' +
-            '</object>';
+            '<div class="hr-cert-pdf-view" aria-live="polite">Loading preview…</div>';
+          void renderHrPdfCanvasPreview(body.querySelector('.hr-cert-pdf-view'), bytes, renderToken);
         } else {
           body.innerHTML = '<img class="hr-cert-img" alt="Uploaded evidence" src="' + url + '" />';
         }
