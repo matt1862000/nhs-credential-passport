@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#005eb8">
   <title>All Groups &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
-  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260525-4">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260525-5">
   <link rel="stylesheet" href="/static/shared/training-add-form.css?v=20260526-2">
   <link rel="stylesheet" href="/static/shared/messages-compose.css?v=20260528-1">
 </head>
@@ -110,6 +110,7 @@
                 <input class="nhsuk-input" type="search" id="cohortSearchInput" placeholder="Group name…" autocomplete="off" spellcheck="false" aria-label="Search for a group" role="combobox" aria-autocomplete="list" aria-controls="cohortSearchSuggestList" aria-expanded="false">
                 <ul id="cohortSearchSuggestList" class="nhs-suggest-list" role="listbox" hidden aria-label="Matching groups"></ul>
               </div>
+              <button type="button" class="nhsuk-button hr-btn-small" id="btnCohortSearch">Search</button>
             </div>
           </div>
           <div id="cohortList" aria-live="polite"></div>
@@ -2259,6 +2260,27 @@
         inputEl.addEventListener('focus', function () {
           if (String(inputEl.value || '').trim()) refreshSuggest();
         });
+
+        function submitCohortListSearch() {
+          if (!listEl.hidden && active >= 0) {
+            applySuggestIndex(active);
+            return;
+          }
+          var q = String(inputEl.value || '').trim();
+          applyFilter(q);
+          if (!q) return;
+          var exact = cohortSuggestMatches(q, 2);
+          if (exact.length === 1) {
+            pickCohort(exact[0]);
+            return;
+          }
+          refreshSuggest();
+        }
+
+        var btnCohortSearch = document.getElementById('btnCohortSearch');
+        if (btnCohortSearch) {
+          btnCohortSearch.addEventListener('click', submitCohortListSearch);
+        }
       }
 
       function cohortEmptyHtml() {
