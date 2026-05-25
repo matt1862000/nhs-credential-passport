@@ -101,6 +101,14 @@
             <h2>Your groups</h2>
             <button type="button" class="nhsuk-button hr-btn-small" id="btnShowCreate">Create cohort</button>
           </div>
+          <div class="nhsuk-form-group" style="margin-bottom:1rem;">
+            <label class="nhsuk-label" for="cohortSearchInput">Search for a cohort</label>
+            <span class="nhsuk-hint">Type a cohort name and choose from the suggestions to open it.</span>
+            <div class="nhs-ac-wrap hr-doctor-search-ac" id="cohortSearchAcWrap">
+              <input class="nhsuk-input" type="search" id="cohortSearchInput" placeholder="Cohort name…" autocomplete="off" spellcheck="false" aria-label="Search for a cohort" role="combobox" aria-autocomplete="list" aria-controls="cohortSearchSuggestList" aria-expanded="false">
+              <ul id="cohortSearchSuggestList" class="nhs-suggest-list" role="listbox" hidden aria-label="Matching cohorts"></ul>
+            </div>
+          </div>
           <div id="cohortList" aria-live="polite"></div>
         </div>
 
@@ -605,6 +613,8 @@
       var _addMethod = null;
       var _editingMemberId = null;
       var _activeCohortMeta = null;
+      var _cohortListFilter = '';
+      var _cohortSearchWired = false;
       var SYSTEM_WELCOME_DEFAULT = 'Welcome {name} to {trust}. Please reply if you have any queries or concerns.';
 
       function isReservedDefaultCohortName(name) {
@@ -1984,6 +1994,203 @@
         return apiJson(url, opts);
       }
 
+      function cohortSearchHaystack(c) {
+        var parts = [String(c.name || '')];
+        if (isDefaultCohort(c)) parts.push('default group', 'all doctors');
+        parts.push(String(c.member_count != null ? c.member_count : ''));
+        return parts.join(' ').toLowerCase();
+      }
+
+      function cohortMatchesFilter(c, query) {
+        var q = String(query != null ? query : _cohortListFilter || '').trim().toLowerCase();
+        if (!q) return true;
+        return cohortSearchHaystack(c).indexOf(q) >= 0;
+      }
+
+      function cohortSuggestMatches(query, limit) {
+        var q = String(query || '').trim().toLowerCase();
+        if (!q) return [];
+        limit = limit || 8;
+        return (_cohortsCache || []).filter(function (c) {
+          return cohortSearchHaystack(c).indexOf(q) >= 0;
+        }).slice(0, limit);
+      }
+
+      function resetCohortListSearch() {
+        _cohortListFilter = '';
+        var inputEl = document.getElementById('cohortSearchInput');
+        var listEl = document.getElementById('cohortSearchSuggestList');
+        if (inputEl) {
+          inputEl.value = '';
+          inputEl.setAttribute('aria-expanded', 'false');
+          inputEl.removeAttribute('aria-activedescendant');
+        }
+        if (listEl) {
+          listEl.innerHTML = '';
+          listEl.hidden = true;
+        }
+      }
+
+      function wireCohortListSearch() {
+        if (_cohortSearchWired) return;
+        var inputEl = document.getElementById('cohortSearchInput');
+        var listEl = document.getElementById('cohortSearchSuggestList');
+        var wrapEl = document.getElementById('cohortSearchAcWrap');
+        if (!inputEl || !listEl || !wrapEl) return;
+        _cohortSearchWired = true;
+
+        var items = [];
+        var active = -1;
+        var debSuggest = null;
+        var debFilter = null;
+
+        function hideSuggest() {
+          listEl.innerHTML = '';
+          listEl.hidden = true;
+          active = -1;
+          items = [];
+          inputEl.setAttribute('aria-expanded', 'false');
+          inputEl.removeAttribute('aria-activedescendant');
+        }
+
+        function updateHighlight() {
+          var lis = listEl.querySelectorAll('li[role="option"]');
+          for (var j = 0; j < lis.length; j++) {
+            lis[j].setAttribute('aria-selected', j === active ? 'true' : 'false');
+          }
+          if (active >= 0 && lis[active]) {
+            inputEl.setAttribute('aria-activedescendant', lis[active].id);
+            try { lis[active].scrollIntoView({ block: 'nearest' }); } catch (eSc) {}
+          } else {
+            inputEl.removeAttribute('aria-activedescendant');
+          }
+        }
+
+        function applyFilter(query) {
+          _cohortListFilter = String(query || '').trim();
+          renderCohortList(_cohortsCache);
+        }
+
+        function renderSuggest(matches) {
+          items = matches || [];
+          listEl.innerHTML = '';
+          active = -1;
+          if (!items.length) {
+            hideSuggest();
+            return;
+          }
+          for (var i = 0; i < items.length; i++) {
+            var c = items[i];
+            var li = document.createElement('li');
+            li.setAttribute('role', 'option');
+            li.id = 'cohort-search-opt-' + i;
+            li.dataset.index = String(i);
+            var nameSpan = document.createElement('span');
+            nameSpan.textContent = c.name || 'Cohort';
+            li.appendChild(nameSpan);
+            var metaParts = [];
+            metaParts.push(String(c.member_count != null ? c.member_count : 0) + ' member' + (Number(c.member_count) === 1 ? '' : 's'));
+            if (isDefaultCohort(c)) metaParts.push('Default group');
+            var meta = document.createElement('span');
+            meta.className = 'nhs-suggest-meta';
+            meta.textContent = metaParts.join(' · ');
+            li.appendChild(meta);
+            listEl.appendChild(li);
+          }
+          listEl.hidden = false;
+          inputEl.setAttribute('aria-expanded', 'true');
+        }
+
+        function pickCohort(c) {
+          if (!c || c.id == null) return;
+          hideSuggest();
+          inputEl.value = c.name || '';
+          _cohortListFilter = '';
+          void openCohort(c.id);
+        }
+
+        function applySuggestIndex(idx) {
+          if (idx < 0 || idx >= items.length) return;
+          pickCohort(items[idx]);
+        }
+
+        function refreshSuggest() {
+          var q = String(inputEl.value || '').trim();
+          if (q.length < 1) {
+            hideSuggest();
+            return;
+          }
+          renderSuggest(cohortSuggestMatches(q, 8));
+        }
+
+        inputEl.addEventListener('input', function () {
+          var q = String(inputEl.value || '');
+          if (debFilter) clearTimeout(debFilter);
+          debFilter = setTimeout(function () {
+            debFilter = null;
+            applyFilter(q);
+          }, 120);
+          if (debSuggest) clearTimeout(debSuggest);
+          debSuggest = setTimeout(function () {
+            debSuggest = null;
+            refreshSuggest();
+          }, 180);
+        });
+
+        inputEl.addEventListener('keydown', function (e) {
+          if (e.key === 'ArrowDown') {
+            if (listEl.hidden) refreshSuggest();
+            if (!items.length) return;
+            e.preventDefault();
+            active = active < items.length - 1 ? active + 1 : 0;
+            updateHighlight();
+            return;
+          }
+          if (e.key === 'ArrowUp') {
+            if (listEl.hidden || !items.length) return;
+            e.preventDefault();
+            active = active > 0 ? active - 1 : items.length - 1;
+            updateHighlight();
+            return;
+          }
+          if (e.key === 'Enter') {
+            if (!listEl.hidden && active >= 0) {
+              e.preventDefault();
+              applySuggestIndex(active);
+              return;
+            }
+            var q = String(inputEl.value || '').trim();
+            if (!q) return;
+            var exact = cohortSuggestMatches(q, 2);
+            if (exact.length === 1) {
+              e.preventDefault();
+              pickCohort(exact[0]);
+            }
+            return;
+          }
+          if (e.key === 'Escape') {
+            hideSuggest();
+          }
+        });
+
+        listEl.addEventListener('mousedown', function (ev) {
+          if (ev.target.closest('li[role="option"]')) ev.preventDefault();
+        });
+        listEl.addEventListener('click', function (ev) {
+          var li = ev.target.closest('li[role="option"]');
+          if (!li) return;
+          applySuggestIndex(parseInt(li.dataset.index, 10));
+        });
+
+        document.addEventListener('click', function (ev) {
+          if (!wrapEl.contains(ev.target)) hideSuggest();
+        });
+
+        inputEl.addEventListener('focus', function () {
+          if (String(inputEl.value || '').trim()) refreshSuggest();
+        });
+      }
+
       function cohortEmptyHtml() {
         return (
           '<p class="hr-muted" style="margin:0;">You haven&rsquo;t created a cohort yet. Use <strong>Create cohort</strong> above to add your first one.</p>'
@@ -1993,12 +2200,21 @@
       function renderCohortList(cohorts) {
         var el = document.getElementById('cohortList');
         if (!el) return;
-        _cohortsCache = cohorts || [];
+        if (Array.isArray(cohorts)) _cohortsCache = cohorts;
+        var filtered = (_cohortsCache || []).filter(function (c) {
+          return cohortMatchesFilter(c, _cohortListFilter);
+        });
         if (!_cohortsCache.length) {
           el.innerHTML = cohortEmptyHtml();
           return;
         }
-        el.innerHTML = _cohortsCache.map(function (c) {
+        if (!filtered.length) {
+          var q = String(_cohortListFilter || '').trim();
+          el.innerHTML = '<p class="hr-muted" style="margin:0;">No cohorts match '
+            + (q ? ('“' + esc(q) + '”') : 'your search') + '.</p>';
+          return;
+        }
+        el.innerHTML = filtered.map(function (c) {
           var isDefault = isDefaultCohort(c);
           var meta = esc(String(c.member_count != null ? c.member_count : 0)) + ' member' + (c.member_count === 1 ? '' : 's');
           if (isDefault) meta += ' · Default group';
@@ -2101,6 +2317,7 @@
         show(document.getElementById('doctorSearchSection'), searchMode);
         show(document.getElementById('searchView'), searchMode);
         show(document.getElementById('groupsCard'), true);
+        resetCohortListSearch();
         syncCohortsPageHead();
         _activeCohortId = null;
         _activeCohortMeta = null;
@@ -2818,6 +3035,7 @@
         }
         show(document.getElementById('mainContent'), true);
         syncCohortsPageHead();
+        wireCohortListSearch();
         try {
         _createEmailRoster = wireEmailRoster({
           listId: 'cohortEmailsList',
