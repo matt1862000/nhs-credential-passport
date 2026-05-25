@@ -439,11 +439,21 @@
           <h3>Members</h3>
         </div>
         <p class="hr-cohort-legend">Click a name to edit details or remove someone from this cohort. Status shows sign-in and whether their welcome message has been sent.</p>
-        <div class="hr-table-wrap">
-          <table class="hr-table" aria-label="Cohort members">
-            <thead><tr><th>Name</th><th>Personal email</th><th>GMC</th><th>Status</th></tr></thead>
-            <tbody id="membersTbody"></tbody>
-          </table>
+        <div id="detailMembersSection">
+          <div class="hr-table-wrap">
+            <table class="hr-table" aria-label="Cohort members">
+              <thead><tr><th>Name</th><th>Personal email</th><th>GMC</th><th>Status</th></tr></thead>
+              <tbody id="membersTbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="hr-cohort-members-head">
+          <h3>Cohorts</h3>
+        </div>
+        <p class="hr-cohort-legend">Open a cohort to add doctors, send messages, or check compliance.</p>
+        <div id="detailCohortsSection" aria-live="polite">
+          <div id="detailCohortList"></div>
         </div>
 
         <div id="cohortWelcomePendingBanner" class="cohort-welcome-pending-banner" hidden role="region" aria-label="Pending welcome messages">
@@ -1672,6 +1682,45 @@
         }).join('');
       }
 
+      function detailCohortEmptyHtml() {
+        return (
+          '<p class="hr-muted" style="margin:0;">You haven&rsquo;t created a cohort yet. Use the <strong>Add cohort</strong> tab to add your first one.</p>'
+        );
+      }
+
+      function buildCohortListRowsHtml(cohorts) {
+        return cohorts.map(function (c) {
+          var isDefault = isDefaultCohort(c);
+          var meta = esc(String(c.member_count != null ? c.member_count : 0)) + ' member' + (c.member_count === 1 ? '' : 's');
+          if (isDefault) meta += ' · Default group';
+          return (
+            '<div class="hr-search-result-row" data-cohort-id="' + c.id + '">' +
+              '<div><div class="hr-search-result-name">' + esc(c.name) + '</div>' +
+              '<div class="hr-search-result-meta">' + meta + '</div></div>' +
+              '<div class="hr-search-result-actions">' +
+                '<button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" data-cohort-open="' + c.id + '">Open</button>' +
+                (isDefault ? '' : '<button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small cohort-delete-btn" data-cohort-delete="' + c.id + '">Delete</button>') +
+              '</div>' +
+            '</div>'
+          );
+        }).join('');
+      }
+
+      function renderDetailCohortList() {
+        var el = document.getElementById('detailCohortList');
+        if (!el) return;
+        if (!_cohortsCache.length) {
+          el.innerHTML = detailCohortEmptyHtml();
+          return;
+        }
+        el.innerHTML = buildCohortListRowsHtml(_cohortsCache);
+      }
+
+      function updateDetailBottomSections() {
+        renderMembersTable();
+        renderDetailCohortList();
+      }
+
       function closeMemberModal() {
         _editingMemberId = null;
         var modal = document.getElementById('memberEditModal');
@@ -2224,29 +2273,20 @@
         });
         if (!_cohortsCache.length) {
           el.innerHTML = cohortEmptyHtml();
+          if (_activeCohortId != null) renderDetailCohortList();
           return;
         }
         if (!filtered.length) {
           var q = String(_cohortListFilter || '').trim();
           el.innerHTML = '<p class="hr-muted" style="margin:0;">No cohorts match '
             + (q ? ('“' + esc(q) + '”') : 'your search') + '.</p>';
+          if (_activeCohortId != null) renderDetailCohortList();
           return;
         }
         el.innerHTML = filtered.map(function (c) {
-          var isDefault = isDefaultCohort(c);
-          var meta = esc(String(c.member_count != null ? c.member_count : 0)) + ' member' + (c.member_count === 1 ? '' : 's');
-          if (isDefault) meta += ' · Default group';
-          return (
-            '<div class="hr-search-result-row" data-cohort-id="' + c.id + '">' +
-              '<div><div class="hr-search-result-name">' + esc(c.name) + '</div>' +
-              '<div class="hr-search-result-meta">' + meta + '</div></div>' +
-              '<div class="hr-search-result-actions">' +
-                '<button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" data-cohort-open="' + c.id + '">Open</button>' +
-                (isDefault ? '' : '<button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small cohort-delete-btn" data-cohort-delete="' + c.id + '">Delete</button>') +
-              '</div>' +
-            '</div>'
-          );
+          return buildCohortListRowsHtml([c]);
         }).join('');
+        if (_activeCohortId != null) renderDetailCohortList();
       }
 
       function renderCohortListLoading() {
@@ -2317,6 +2357,7 @@
           if (seq !== _cohortsLoadSeq) return;
           var cohorts = (data && data.cohorts) ? data.cohorts : [];
           renderCohortList(cohorts);
+          if (_activeCohortMeta && isDefaultCohort(_activeCohortMeta)) renderDetailCohortList();
         } catch (err) {
           if (seq !== _cohortsLoadSeq) return;
           if (_cohortsCache.length) {
@@ -2359,7 +2400,7 @@
         if (delBtn) {
           delBtn.hidden = !!isDefaultCohort(c);
         }
-        renderMembersTable();
+        updateDetailBottomSections();
         updateCohortActionUI();
         updateAddCohortNamePreviews();
         setCohortTab(opts.forceTab || loadStoredCohortTab());
@@ -2761,7 +2802,7 @@
         await submitCreateCohort(members);
       });
 
-      document.getElementById('cohortList').addEventListener('click', function (e) {
+      function handleCohortListClick(e) {
         var delBtn = e.target.closest('[data-cohort-delete]');
         if (delBtn) {
           e.preventDefault();
@@ -2773,7 +2814,10 @@
           e.preventDefault();
           openCohort(parseInt(openBtn.getAttribute('data-cohort-open'), 10));
         }
-      });
+      }
+
+      document.getElementById('cohortList').addEventListener('click', handleCohortListClick);
+      document.getElementById('detailCohortList').addEventListener('click', handleCohortListClick);
 
       document.getElementById('btnBackList').addEventListener('click', showList);
       document.getElementById('btnDeleteCohort').addEventListener('click', function () {
