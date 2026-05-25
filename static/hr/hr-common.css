@@ -502,6 +502,26 @@
       outline: 3px solid var(--nhsuk-focus-colour, #ffeb3b);
       outline-offset: 1px;
     }
+    .hr-members-bulk-bar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      margin: 0 0 0.75rem 0;
+    }
+    .hr-members-bulk-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+    .hr-table .hr-member-select-cell {
+      width: 2.5rem;
+      vertical-align: middle;
+    }
+    .hr-table .hr-member-select-cell input[type="checkbox"] {
+      margin: 0;
+    }
     .hr-cohort-stats { margin: 0.35rem 0 0 0; font-size: 0.9375rem; color: var(--nhsuk-secondary-text); line-height: 1.5; }
     .hr-cohort-stats strong { color: var(--nhsuk-text); font-weight: 700; }
     .hr-cohort-members-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem; margin: 1.5rem 0 0.5rem 0; }

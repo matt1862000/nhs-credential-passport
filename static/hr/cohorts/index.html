@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#005eb8">
   <title>All Groups &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
-  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260525-15">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260525-16">
   <link rel="stylesheet" href="/static/shared/training-add-form.css?v=20260526-2">
   <link rel="stylesheet" href="/static/shared/messages-compose.css?v=20260528-1">
 </head>
@@ -462,11 +462,18 @@
         </div>
 
         <div id="panelCohortMembers" class="hr-bulk-panel hr-cohort-panel" role="tabpanel" aria-labelledby="tabCohortMembers" hidden>
-          <p class="hr-cohort-legend">Click a name to edit details or remove someone from this group. Status shows sign-in and whether their welcome message has been sent.</p>
+          <p class="hr-cohort-legend">Select doctors to remove in bulk, or click a name to edit details. Status shows sign-in and whether their welcome message has been sent.</p>
           <div id="detailMembersSection">
+            <div class="hr-members-bulk-bar" id="membersBulkBar" hidden>
+              <span class="hr-muted" id="membersBulkCount" aria-live="polite">0 selected</span>
+              <div class="hr-members-bulk-actions">
+                <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small cohort-delete-btn" id="btnMembersRemoveSelected" disabled>Remove selected</button>
+                <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small cohort-delete-btn" id="btnMembersRemoveAll">Remove all from group</button>
+              </div>
+            </div>
             <div class="hr-table-wrap">
               <table class="hr-table" aria-label="Group members">
-                <thead><tr><th>Name</th><th>Personal email</th><th>GMC</th><th>Status</th></tr></thead>
+                <thead><tr><th class="hr-member-select-cell"><input type="checkbox" id="membersSelectAll" aria-label="Select all members"></th><th>Name</th><th>Personal email</th><th>GMC</th><th>Status</th></tr></thead>
                 <tbody id="membersTbody"></tbody>
               </table>
             </div>
@@ -638,6 +645,7 @@
       var _addWizardStep = 1;
       var _addMethod = null;
       var _editingMemberId = null;
+      var _memberRemoveSelected = null;
       var _activeCohortMeta = null;
       var _cohortListFilter = '';
       var _cohortSearchWired = false;
@@ -1681,22 +1689,98 @@
         return _detailMembers.find(function (m) { return Number(m.user_id) === n; }) || null;
       }
 
+      function memberRemoveSelectedSet() {
+        if (!_memberRemoveSelected) _memberRemoveSelected = new Set();
+        return _memberRemoveSelected;
+      }
+
+      function resetMemberRemoveSelection() {
+        _memberRemoveSelected = null;
+      }
+
+      function syncMembersBulkBar() {
+        var bar = document.getElementById('membersBulkBar');
+        var countEl = document.getElementById('membersBulkCount');
+        var btnSelected = document.getElementById('btnMembersRemoveSelected');
+        var btnAll = document.getElementById('btnMembersRemoveAll');
+        var selectAll = document.getElementById('membersSelectAll');
+        var nMembers = (_detailMembers || []).length;
+        var selected = memberRemoveSelectedSet();
+        var nSelected = selected.size;
+        if (bar) bar.hidden = nMembers === 0;
+        if (countEl) {
+          countEl.textContent = nSelected === 0
+            ? (nMembers + ' member' + (nMembers === 1 ? '' : 's'))
+            : (nSelected + ' selected');
+        }
+        if (btnSelected) {
+          btnSelected.disabled = nSelected === 0;
+          btnSelected.textContent = nSelected > 0
+            ? ('Remove selected (' + nSelected + ')')
+            : 'Remove selected';
+        }
+        if (btnAll) {
+          btnAll.hidden = nMembers === 0;
+          btnAll.textContent = 'Remove all from group (' + nMembers + ')';
+        }
+        if (selectAll && nMembers > 0) {
+          selectAll.indeterminate = nSelected > 0 && nSelected < nMembers;
+          selectAll.checked = nSelected > 0 && nSelected === nMembers;
+        } else if (selectAll) {
+          selectAll.indeterminate = false;
+          selectAll.checked = false;
+        }
+      }
+
       function renderMembersTable() {
         var tb = document.getElementById('membersTbody');
         if (!tb) return;
         if (!_detailMembers.length) {
-          tb.innerHTML = '<tr><td colspan="4" class="hr-muted">No members yet. Use <strong>Add doctors</strong> to provision personal email accounts.</td></tr>';
+          tb.innerHTML = '<tr><td colspan="5" class="hr-muted">No members yet. Use <strong>Add doctors</strong> to provision personal email accounts.</td></tr>';
+          syncMembersBulkBar();
           return;
         }
+        var selected = memberRemoveSelectedSet();
         tb.innerHTML = _detailMembers.map(function (m) {
           var personal = m.personal_email || m.email || '—';
           var label = memberDisplayLabel(m);
+          var uid = Number(m.user_id);
+          var isChecked = selected.has(uid);
           return (
-            '<tr><td><button type="button" class="hr-member-name-btn" data-member-id="' + m.user_id + '">'
+            '<tr><td class="hr-member-select-cell">' +
+            '<input type="checkbox" data-member-select="' + uid + '"' + (isChecked ? ' checked' : '') + ' aria-label="Select ' + esc(label) + '">' +
+            '</td><td><button type="button" class="hr-member-name-btn" data-member-id="' + m.user_id + '">'
             + esc(label) + '</button></td><td>' + esc(personal) + '</td><td>' + esc(m.gmc_number || '—')
             + '</td><td>' + memberStatusPill(m) + '</td></tr>'
           );
         }).join('');
+        syncMembersBulkBar();
+      }
+
+      function confirmRemoveMembersFromGroup(count) {
+        return confirm(
+          'Remove ' + count + ' doctor' + (count === 1 ? '' : 's') + ' from this group?\n\n'
+          + 'Their DocPass accounts are not deleted — only this group membership.'
+        );
+      }
+
+      async function removeMembersFromGroup(userIds) {
+        if (_activeCohortId == null || !userIds.length) return;
+        try {
+          await apiJson(
+            '/api/hr/cohorts/' + encodeURIComponent(String(_activeCohortId)) + '/members/remove',
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ user_ids: userIds }),
+            }
+          );
+          resetMemberRemoveSelection();
+          await openCohort(_activeCohortId);
+          await loadCohorts({ showLoading: false });
+        } catch (err) {
+          alert(err.message || 'Could not remove from group');
+        }
       }
 
       function detailCohortEmptyHtml() {
@@ -2600,6 +2684,7 @@
       async function openCohort(id, opts) {
         opts = opts || {};
         _activeCohortId = id;
+        resetMemberRemoveSelection();
         var data = await apiJson('/api/hr/cohorts/' + encodeURIComponent(String(id)));
         var c = data.cohort;
         if (c && !_cohortsCache.find(function (x) { return Number(x.id) === Number(c.id); })) {
@@ -3108,9 +3193,50 @@
       });
 
       document.getElementById('membersTbody').addEventListener('click', function (e) {
+        if (e.target.closest('input[data-member-select]')) return;
         var btn = e.target.closest('[data-member-id]');
         if (!btn) return;
         openMemberModal(parseInt(btn.getAttribute('data-member-id'), 10));
+      });
+
+      document.getElementById('membersTbody').addEventListener('change', function (e) {
+        var inp = e.target.closest('input[data-member-select]');
+        if (!inp) return;
+        var uid = parseInt(inp.getAttribute('data-member-select'), 10);
+        if (!uid) return;
+        var selected = memberRemoveSelectedSet();
+        if (inp.checked) selected.add(uid);
+        else selected.delete(uid);
+        syncMembersBulkBar();
+      });
+
+      document.getElementById('membersSelectAll').addEventListener('change', function () {
+        var selectAll = document.getElementById('membersSelectAll');
+        var selected = memberRemoveSelectedSet();
+        selected.clear();
+        if (selectAll && selectAll.checked) {
+          _detailMembers.forEach(function (m) {
+            selected.add(Number(m.user_id));
+          });
+        }
+        document.querySelectorAll('#membersTbody input[data-member-select]').forEach(function (inp) {
+          inp.checked = !!(selectAll && selectAll.checked);
+        });
+        syncMembersBulkBar();
+      });
+
+      document.getElementById('btnMembersRemoveSelected').addEventListener('click', async function () {
+        var ids = Array.from(memberRemoveSelectedSet());
+        if (!ids.length) return;
+        if (!confirmRemoveMembersFromGroup(ids.length)) return;
+        await removeMembersFromGroup(ids);
+      });
+
+      document.getElementById('btnMembersRemoveAll').addEventListener('click', async function () {
+        if (!_detailMembers.length) return;
+        var ids = _detailMembers.map(function (m) { return Number(m.user_id); });
+        if (!confirmRemoveMembersFromGroup(ids.length)) return;
+        await removeMembersFromGroup(ids);
       });
 
       document.getElementById('btnWelcomeReviewEdit').addEventListener('click', function () {

@@ -3979,6 +3979,33 @@ def hr_cohort_member_remove(request: Request, cohort_id: int, doctor_user_id: in
     return {"ok": True, "removed_user_id": int(doctor_user_id)}
 
 
+@router.post("/hr/cohorts/{cohort_id}/members/remove")
+async def hr_cohort_members_remove_bulk(request: Request, cohort_id: int):
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    raw_ids = body.get("user_ids")
+    if not isinstance(raw_ids, list):
+        raise HTTPException(status_code=400, detail="user_ids must be a list")
+    user_ids: list[int] = []
+    for item in raw_ids:
+        try:
+            user_ids.append(int(item))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="user_ids must contain integers")
+    if not user_ids:
+        raise HTTPException(status_code=400, detail="Select at least one doctor to remove")
+    result = db.cohort_members_remove_bulk(int(cohort_id), user_ids, trust)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Group not found")
+    return {"ok": True, **result}
+
+
 @router.post("/hr/cohorts/{cohort_id}/members")
 async def hr_cohorts_add_members(request: Request, cohort_id: int):
     hr = require_premium_user(request)

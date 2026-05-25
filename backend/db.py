@@ -3701,6 +3701,50 @@ def cohort_member_remove(cohort_id: int, user_id: int, hr_trust: str) -> bool:
         return cur.rowcount > 0
 
 
+def cohort_members_remove_bulk(
+    cohort_id: int, user_ids: list[int], hr_trust: str
+) -> Optional[dict]:
+    """Remove multiple doctors from a cohort without deleting their accounts."""
+    if not cohort_get(cohort_id, hr_trust):
+        return None
+    ids: list[int] = []
+    seen: set[int] = set()
+    for uid in user_ids or []:
+        try:
+            n = int(uid)
+        except (TypeError, ValueError):
+            continue
+        if n <= 0 or n in seen:
+            continue
+        seen.add(n)
+        ids.append(n)
+    if not ids:
+        return {"removed_count": 0, "removed_user_ids": []}
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_hr_cohorts_tables(conn)
+        placeholders = ",".join("?" * len(ids))
+        rows = conn.execute(
+            f"""
+            SELECT user_id FROM hr_cohort_members
+            WHERE cohort_id = ? AND user_id IN ({placeholders})
+            """,
+            [int(cohort_id), *ids],
+        ).fetchall()
+        to_remove = [int(r[0]) for r in rows]
+        if not to_remove:
+            return {"removed_count": 0, "removed_user_ids": []}
+        rm_placeholders = ",".join("?" * len(to_remove))
+        conn.execute(
+            f"""
+            DELETE FROM hr_cohort_members
+            WHERE cohort_id = ? AND user_id IN ({rm_placeholders})
+            """,
+            [int(cohort_id), *to_remove],
+        )
+        conn.commit()
+        return {"removed_count": len(to_remove), "removed_user_ids": to_remove}
+
+
 def hr_doctor_delete(doctor_user_id: int, hr_trust: str) -> Optional[dict]:
     """
     Permanently delete a non-premium doctor account visible to hr_trust.
