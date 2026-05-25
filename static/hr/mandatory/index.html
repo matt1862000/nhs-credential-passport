@@ -122,17 +122,14 @@
             <div class="mand-fg">
               <label for="newCategory">Category</label>
               <select id="newCategory"></select>
-              <input type="text" id="newCategoryOther" class="mand-category-other" placeholder="e.g. Room 41" maxlength="200" autocomplete="off" hidden aria-label="New category name">
+              <input type="text" id="newCategoryOther" class="mand-category-other" placeholder="e.g. External compliance" maxlength="200" autocomplete="off" hidden aria-label="New category name">
             </div>
           </div>
           <div class="mand-form-row mand-form-row--bottom">
             <div class="mand-fg mand-fg--channel">
               <label for="newChannel">Where to complete</label>
-              <select id="newChannel">
-                <option value="">—</option>
-                <option value="jarvis">JARVIS</option>
-                <option value="esr">ESR</option>
-              </select>
+              <select id="newChannel"></select>
+              <input type="text" id="newChannelOther" class="mand-category-other" placeholder="e.g. Room 41" maxlength="200" autocomplete="off" hidden aria-label="Where to complete (other)">
             </div>
             <div class="mand-fg mand-fg--url">
               <label for="newUrl">Link (JARVIS page or ESR guides)</label>
@@ -194,6 +191,72 @@
         'Local — usually not portable'
       ];
       var CATEGORY_OTHER = '__other__';
+      var CHANNEL_OTHER = '__other__';
+
+      function isKnownChannel(ch) {
+        var k = (ch || '').trim().toLowerCase();
+        return k === 'jarvis' || k === 'esr';
+      }
+
+      function channelSelectOptionsHtml(selected) {
+        var sel = (selected || '').trim();
+        var useOther = !!sel && !isKnownChannel(sel);
+        var html = '<option value="">—</option>';
+        html += '<option value="jarvis"' + (!useOther && sel.toLowerCase() === 'jarvis' ? ' selected' : '') + '>JARVIS</option>';
+        html += '<option value="esr"' + (!useOther && sel.toLowerCase() === 'esr' ? ' selected' : '') + '>ESR</option>';
+        html += '<option value="' + CHANNEL_OTHER + '"' + (useOther ? ' selected' : '') + '>Other…</option>';
+        return html;
+      }
+
+      function syncChannelOtherVisibility(selectEl, otherEl, keepOtherValue) {
+        if (!selectEl || !otherEl) return;
+        var show = selectEl.value === CHANNEL_OTHER;
+        otherEl.hidden = !show;
+        if (!show && !keepOtherValue) otherEl.value = '';
+      }
+
+      function resolveChannelValue(selectEl, otherEl) {
+        if (!selectEl) return '';
+        if (selectEl.value === CHANNEL_OTHER) {
+          return (otherEl ? otherEl.value : '').trim();
+        }
+        return (selectEl.value || '').trim();
+      }
+
+      function wireChannelSelect(selectEl, otherEl) {
+        if (!selectEl) return;
+        selectEl.addEventListener('change', function () {
+          syncChannelOtherVisibility(selectEl, otherEl, false);
+          if (selectEl.value === CHANNEL_OTHER && otherEl) otherEl.focus();
+        });
+      }
+
+      function applyChannelSelectValue(selectEl, otherEl, channel) {
+        if (!selectEl) return;
+        var sel = (channel || '').trim();
+        selectEl.innerHTML = channelSelectOptionsHtml(sel);
+        if (!sel) {
+          selectEl.value = '';
+          if (otherEl) { otherEl.value = ''; otherEl.hidden = true; }
+          return;
+        }
+        if (isKnownChannel(sel)) {
+          selectEl.value = sel.toLowerCase();
+          if (otherEl) { otherEl.value = ''; otherEl.hidden = true; }
+          return;
+        }
+        selectEl.value = CHANNEL_OTHER;
+        if (otherEl) {
+          otherEl.value = sel;
+          otherEl.hidden = false;
+        }
+      }
+
+      function resetAddChannelSelect() {
+        var sel = document.getElementById('newChannel');
+        var other = document.getElementById('newChannelOther');
+        applyChannelSelectValue(sel, other, '');
+      }
 
       function mandCategoryOptions() {
         var seen = {};
@@ -280,9 +343,11 @@
       }
 
       function channelLabel(ch) {
-        if (ch === 'jarvis') return 'JARVIS';
-        if (ch === 'esr') return 'ESR';
-        return '—';
+        if (!ch) return '—';
+        var k = String(ch).trim();
+        if (k.toLowerCase() === 'jarvis') return 'JARVIS';
+        if (k.toLowerCase() === 'esr') return 'ESR';
+        return k;
       }
 
       function linkPreview(url) {
@@ -337,14 +402,13 @@
             '<select class="edit-category-select" aria-label="Category" style="width:100%;padding:0.35rem;">' +
               categorySelectOptionsHtml(t.category || '') +
             '</select>' +
-            '<input type="text" class="edit-category-other mand-category-other" maxlength="200" aria-label="New category name" style="width:100%;box-sizing:border-box;padding:0.35rem 0.55rem;border:2px solid var(--nhsuk-border);border-radius:4px;font-size:0.9375rem;">' +
+            '<input type="text" class="edit-category-other mand-category-other" placeholder="e.g. External compliance" maxlength="200" aria-label="New category name" style="width:100%;box-sizing:border-box;padding:0.35rem 0.55rem;border:2px solid var(--nhsuk-border);border-radius:4px;font-size:0.9375rem;">' +
           '</td>' +
           '<td style="white-space:normal;text-align:left;">' +
             '<select class="edit-channel" aria-label="Where to complete" style="width:100%;margin-bottom:0.35rem;padding:0.35rem;">' +
-              '<option value="">—</option>' +
-              '<option value="jarvis"' + (t.delivery_channel === 'jarvis' ? ' selected' : '') + '>JARVIS</option>' +
-              '<option value="esr"' + (t.delivery_channel === 'esr' ? ' selected' : '') + '>ESR</option>' +
+              channelSelectOptionsHtml(t.delivery_channel || '') +
             '</select>' +
+            '<input type="text" class="edit-channel-other mand-category-other" placeholder="e.g. Room 41" maxlength="200" aria-label="Where to complete (other)" style="width:100%;box-sizing:border-box;margin-bottom:0.35rem;padding:0.35rem 0.55rem;border:2px solid var(--nhsuk-border);border-radius:4px;font-size:0.9375rem;">' +
             '<input type="url" class="edit-url" value="' + esc(t.resource_url || '') + '" maxlength="500" aria-label="Link" style="width:100%;">' +
           '</td>' +
           '<td>' +
@@ -355,6 +419,10 @@
         var catOther = row.querySelector('.edit-category-other');
         applyCategorySelectValue(catSelect, catOther, t.category || '');
         wireCategorySelect(catSelect, catOther);
+        var chSelect = row.querySelector('.edit-channel');
+        var chOther = row.querySelector('.edit-channel-other');
+        applyChannelSelectValue(chSelect, chOther, t.delivery_channel || '');
+        wireChannelSelect(chSelect, chOther);
         var nameInput = row.querySelector('.edit-topic-name');
         if (nameInput) { nameInput.focus(); nameInput.select(); }
       }
@@ -363,16 +431,22 @@
         var nameInput = row.querySelector('.edit-topic-name');
         var catSelect = row.querySelector('.edit-category-select');
         var catOther = row.querySelector('.edit-category-other');
-        var chInput = row.querySelector('.edit-channel');
+        var chSelect = row.querySelector('.edit-channel');
+        var chOther = row.querySelector('.edit-channel-other');
         var urlInput = row.querySelector('.edit-url');
         var topicName = (nameInput ? nameInput.value : '').trim();
         var category = resolveCategoryValue(catSelect, catOther);
-        var channel = (chInput ? chInput.value : '').trim();
+        var channel = resolveChannelValue(chSelect, chOther);
         var url = (urlInput ? urlInput.value : '').trim();
         if (!topicName) { setStatus('listStatus', 'Topic name cannot be empty.', 'err'); return; }
         if (catSelect && catSelect.value === CATEGORY_OTHER && !category) {
           setStatus('listStatus', 'Enter a name for the new category.', 'err');
           if (catOther) catOther.focus();
+          return;
+        }
+        if (chSelect && chSelect.value === CHANNEL_OTHER && !channel) {
+          setStatus('listStatus', 'Enter where to complete this training.', 'err');
+          if (chOther) chOther.focus();
           return;
         }
         try {
@@ -513,9 +587,11 @@
         var topicInput = document.getElementById('newTopic');
         var catSelect = document.getElementById('newCategory');
         var catOther = document.getElementById('newCategoryOther');
+        var chSelect = document.getElementById('newChannel');
+        var chOther = document.getElementById('newChannelOther');
         var topicName = (topicInput ? topicInput.value : '').trim();
         var category = resolveCategoryValue(catSelect, catOther);
-        var channel = (document.getElementById('newChannel') || {}).value || '';
+        var channel = resolveChannelValue(chSelect, chOther);
         var url = (document.getElementById('newUrl') || {}).value || '';
         if (!topicName) {
           setStatus('addStatus', 'Topic name is required.', 'err');
@@ -524,6 +600,11 @@
         if (catSelect && catSelect.value === CATEGORY_OTHER && !category) {
           setStatus('addStatus', 'Enter a name for the new category.', 'err');
           if (catOther) catOther.focus();
+          return;
+        }
+        if (chSelect && chSelect.value === CHANNEL_OTHER && !channel) {
+          setStatus('addStatus', 'Enter where to complete this training.', 'err');
+          if (chOther) chOther.focus();
           return;
         }
         btnAdd.disabled = true;
@@ -548,9 +629,8 @@
           refreshAddCategorySelect();
           if (topicInput) topicInput.value = '';
           resetAddCategorySelect();
-          var chEl = document.getElementById('newChannel');
+          resetAddChannelSelect();
           var urlEl = document.getElementById('newUrl');
-          if (chEl) chEl.value = '';
           if (urlEl) urlEl.value = '';
           setStatus('addStatus', 'Topic added.', 'ok');
         } catch (err) {
@@ -629,6 +709,10 @@
         var addCatOther = document.getElementById('newCategoryOther');
         wireCategorySelect(addCatSelect, addCatOther);
         resetAddCategorySelect();
+        var addChSelect = document.getElementById('newChannel');
+        var addChOther = document.getElementById('newChannelOther');
+        wireChannelSelect(addChSelect, addChOther);
+        resetAddChannelSelect();
 
         await loadTopics();
       })();
