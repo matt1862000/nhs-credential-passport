@@ -111,13 +111,125 @@
           </div>
           <div id="cohortList" aria-live="polite"></div>
         </div>
+      </div>
 
-        <div class="hr-card" id="createCard" hidden>
+      <div id="detailView" class="hr-card" hidden>
+        <div class="hr-cohort-detail-top">
+          <div class="hr-cohort-detail-nav">
+            <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnBackList">&larr; All cohorts</button>
+            <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small cohort-delete-btn" id="btnDeleteCohort">Delete cohort</button>
+          </div>
+          <div class="hr-inbox-head" style="margin-top:0.75rem;">
+            <h2 id="detailTitle" style="margin:0;">Cohort</h2>
+          </div>
+          <p class="hr-cohort-stats" id="detailMeta" aria-live="polite"></p>
+        </div>
+
+        <h3 class="hr-cohort-actions-title">Actions</h3>
+        <div class="hr-segment" role="tablist" aria-label="Cohort actions">
+          <button type="button" class="active" id="tabCohortAdd" role="tab" aria-selected="true" aria-controls="panelCohortAdd" data-tab="add">Add doctors</button>
+          <button type="button" id="tabCohortCreate" role="tab" aria-selected="false" aria-controls="panelCohortCreate" data-tab="create">Add cohort</button>
+          <button type="button" id="tabCohortMessage" role="tab" aria-selected="false" aria-controls="panelCohortMessage" data-tab="message">Message cohort</button>
+          <button type="button" id="tabCohortCompliance" role="tab" aria-selected="false" aria-controls="panelCohortCompliance" data-tab="compliance">Compliance</button>
+        </div>
+
+        <div id="panelCohortAdd" class="hr-bulk-panel hr-cohort-panel" role="tabpanel" aria-labelledby="tabCohortAdd">
+          <div class="cohort-wizard-head">
+            <h2>Add doctors</h2>
+            <p class="cohort-wizard-step-label" id="addWizardStepLabel" aria-live="polite">Step 1 of 2 — How to add doctors</p>
+          </div>
+          <form id="formAddMembers" class="hr-bulk-form" novalidate>
+            <div id="addStepMethod" class="cohort-wizard-step-panel">
+              <p class="cohort-method-intro">How would you like to add doctors to <strong id="addCohortNamePreview">this cohort</strong>?</p>
+              <div class="cohort-method-grid" role="group" aria-label="How to add doctors">
+                <button type="button" class="cohort-method-card" data-add-method="manual">
+                  <span class="cohort-method-card__icon" aria-hidden="true">
+                    <svg width="22" height="22" viewBox="0 0 24 24" focusable="false"><path fill="currentColor" d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+                  </span>
+                  <span class="cohort-method-card__title">Add manually</span>
+                  <span class="cohort-method-card__desc">Enter personal email, full name, and GMC number one doctor at a time.</span>
+                </button>
+                <button type="button" class="cohort-method-card" data-add-method="upload">
+                  <span class="cohort-method-card__icon" aria-hidden="true">
+                    <svg width="22" height="22" viewBox="0 0 24 24" focusable="false"><path fill="currentColor" d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
+                  </span>
+                  <span class="cohort-method-card__title">Upload spreadsheet</span>
+                  <span class="cohort-method-card__desc">Import a CSV or Excel file with full name, GMC number, and personal email columns.</span>
+                </button>
+              </div>
+            </div>
+
+            <div id="addStepRoster" class="cohort-wizard-step-panel" hidden>
+              <p class="cohort-wizard-roster-title" id="addRosterTitle">Add doctors</p>
+              <div class="nhsuk-form-group" id="addEmailsGroup">
+                <div id="addPanelManual" hidden>
+                  <span class="nhsuk-hint nhsuk-hint--secondary">Personal email is required. Fill in the fields, then click <strong>Add</strong>. When you submit, anything still in the form is included automatically.</span>
+                  <div class="cohort-add-card" id="addAddCard" role="group" aria-labelledby="addAddCardTitle">
+                    <p id="addAddCardTitle" class="cohort-add-card__title">Add one doctor</p>
+                    <div class="cohort-add-card__primary">
+                      <div class="cohort-add-field cohort-add-field--grow">
+                        <label class="nhsuk-label" for="addPersonalEmailInput">Personal email</label>
+                        <input class="nhsuk-input" type="email" id="addPersonalEmailInput" name="add_personal_email" placeholder="jane.smith@gmail.com" spellcheck="false" autocapitalize="off" autocomplete="email" inputmode="email" aria-describedby="addEmailError addEmailsCount addAddOptionalHint">
+                      </div>
+                    </div>
+                    <p class="cohort-add-card__optional-hint" id="addAddOptionalHint">Optional — pre-fills their profile when they first sign in</p>
+                    <div class="cohort-add-card__grid">
+                      <div class="cohort-add-field">
+                        <label class="nhsuk-label nhsuk-label--s" for="addNameInput">Full name</label>
+                        <input class="nhsuk-input" type="text" id="addNameInput" name="add_full_name" placeholder="Jane Smith" autocomplete="name" maxlength="200">
+                      </div>
+                      <div class="cohort-add-field">
+                        <label class="nhsuk-label nhsuk-label--s" for="addGmcInput">GMC number</label>
+                        <input class="nhsuk-input" type="text" id="addGmcInput" name="add_gmc" placeholder="1234567" inputmode="numeric" maxlength="11" aria-describedby="addGmcHint">
+                        <span class="nhsuk-hint nhsuk-hint--secondary" id="addGmcHint">Seven digits</span>
+                      </div>
+                    </div>
+                    <div class="cohort-add-card__actions">
+                      <button type="button" class="nhsuk-button cohort-add-card__btn" id="btnAddEmailAdd">Add</button>
+                    </div>
+                  </div>
+                  <p class="cohort-email-error" id="addEmailError" hidden role="alert"></p>
+                </div>
+
+                <div id="addPanelUpload" hidden>
+                  <div id="addUploadPicker" class="hr-roster-upload">
+                    <label class="nhsuk-label" for="addEmailsFile">CSV or Excel file</label>
+                    <span class="nhsuk-hint">Upload <strong>.csv</strong> or <strong>.xlsx</strong>. Columns in order: <strong>full name</strong>, <strong>GMC number</strong>, <strong>personal email</strong> (header row recommended). Empty cells are OK.</span>
+                    <div class="hr-bulk-file">
+                      <input class="nhsuk-input" type="file" id="addEmailsFile" accept=".txt,.csv,.xlsx,.xls,text/plain,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" aria-describedby="addEmailsFileStatus">
+                    </div>
+                    <span class="hr-roster-file-name" id="addEmailsFileName" aria-live="polite">No file chosen</span>
+                    <p class="hr-roster-upload-status" id="addEmailsFileStatus" hidden role="status"></p>
+                    <div id="addEmailsFileViz" class="hr-provision-viz-wrap hr-provision-viz-wrap--compact" aria-live="polite"></div>
+                  </div>
+                  <p id="addUploadDone" class="cohort-upload-done" hidden role="status">
+                    <strong>Roster imported.</strong> Review the doctors below, then add them to the cohort.
+                  </p>
+                  <p class="cohort-email-error" id="addUploadError" hidden role="alert"></p>
+                </div>
+
+                <div class="cohort-roster-added">
+                  <p class="cohort-roster-added__heading">Added doctors</p>
+                  <span class="cohort-email-count cohort-email-count--empty" id="addEmailsCount" aria-live="polite">0 doctors</span>
+                  <p class="cohort-list-empty" id="addEmailsListEmpty">No doctors added yet — use the form above or upload a file.</p>
+                  <div id="addEmailsList" class="cohort-email-list" aria-live="polite"></div>
+                </div>
+              </div>
+              <div class="cohort-wizard-actions cohort-wizard-actions--split">
+                <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnAddBackMethod">Back</button>
+                <button type="submit" class="nhsuk-button cohort-roster-submit cohort-roster-submit--empty" id="btnAddSubmit" disabled>Add to cohort</button>
+              </div>
+            </div>
+          </form>
+          <div id="addProvisionResult" class="hr-provision-viz-wrap" aria-live="polite"></div>
+          <p id="addStatus" class="hr-cohort-status-msg hr-muted" role="status" aria-live="polite" hidden></p>
+        </div>
+
+        <div id="panelCohortCreate" class="hr-bulk-panel hr-cohort-panel" role="tabpanel" aria-labelledby="tabCohortCreate" hidden>
           <div class="cohort-wizard-head">
             <h2 id="createWizardTitle">Create cohort</h2>
             <p class="cohort-wizard-step-label" id="createWizardStepLabel" aria-live="polite">Step 1 of 3 — Name your cohort</p>
           </div>
-          <div class="hr-bulk-panel">
             <form id="formCreateCohort" class="hr-bulk-form" novalidate>
               <div id="createStepName" class="cohort-wizard-step-panel">
                 <div class="nhsuk-form-group" id="cohortNameGroup">
@@ -249,7 +361,6 @@
                 </div>
               </div>
             </form>
-          </div>
           <div id="createProvisionResult" class="hr-provision-viz-wrap" aria-live="polite"></div>
           <p id="createStatus" class="hr-muted" style="min-height:1.25rem;margin-top:0.75rem;" hidden aria-live="polite"></p>
           <div id="createResultsWrap" hidden>
@@ -261,134 +372,6 @@
               </table>
             </div>
           </div>
-        </div>
-      </div>
-
-      <div id="detailView" class="hr-card" hidden>
-        <div class="hr-cohort-detail-top">
-          <div class="hr-cohort-detail-nav">
-            <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnBackList">&larr; All cohorts</button>
-            <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small cohort-delete-btn" id="btnDeleteCohort">Delete cohort</button>
-          </div>
-          <div class="hr-inbox-head" style="margin-top:0.75rem;">
-            <h2 id="detailTitle" style="margin:0;">Cohort</h2>
-          </div>
-          <p class="hr-cohort-stats" id="detailMeta" aria-live="polite"></p>
-        </div>
-
-        <div class="hr-cohort-members-head">
-          <h3>Members</h3>
-        </div>
-        <p class="hr-cohort-legend">Click a name to edit details or remove someone from this cohort. Status shows sign-in and whether their welcome message has been sent.</p>
-        <div class="hr-table-wrap">
-          <table class="hr-table" aria-label="Cohort members">
-            <thead><tr><th>Name</th><th>Personal email</th><th>GMC</th><th>Status</th></tr></thead>
-            <tbody id="membersTbody"></tbody>
-          </table>
-        </div>
-
-        <div id="cohortWelcomePendingBanner" class="cohort-welcome-pending-banner" hidden role="region" aria-label="Pending welcome messages">
-          <p class="cohort-welcome-pending-banner__text" id="cohortWelcomePendingText"></p>
-          <button type="button" class="nhsuk-button" id="btnOpenWelcomeReviewPending">Review and send welcome</button>
-        </div>
-
-        <h3 class="hr-cohort-actions-title">Actions</h3>
-        <div class="hr-segment" role="tablist" aria-label="Cohort actions">
-          <button type="button" class="active" id="tabCohortAdd" role="tab" aria-selected="true" aria-controls="panelCohortAdd" data-tab="add">Add doctors</button>
-          <button type="button" id="tabCohortMessage" role="tab" aria-selected="false" aria-controls="panelCohortMessage" data-tab="message">Message cohort</button>
-          <button type="button" id="tabCohortCompliance" role="tab" aria-selected="false" aria-controls="panelCohortCompliance" data-tab="compliance">Compliance</button>
-        </div>
-
-        <div id="panelCohortAdd" class="hr-bulk-panel hr-cohort-panel" role="tabpanel" aria-labelledby="tabCohortAdd">
-          <div class="cohort-wizard-head">
-            <h2>Add doctors</h2>
-            <p class="cohort-wizard-step-label" id="addWizardStepLabel" aria-live="polite">Step 1 of 2 — How to add doctors</p>
-          </div>
-          <form id="formAddMembers" class="hr-bulk-form" novalidate>
-            <div id="addStepMethod" class="cohort-wizard-step-panel">
-              <p class="cohort-method-intro">How would you like to add doctors to <strong id="addCohortNamePreview">this cohort</strong>?</p>
-              <div class="cohort-method-grid" role="group" aria-label="How to add doctors">
-                <button type="button" class="cohort-method-card" data-add-method="manual">
-                  <span class="cohort-method-card__icon" aria-hidden="true">
-                    <svg width="22" height="22" viewBox="0 0 24 24" focusable="false"><path fill="currentColor" d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
-                  </span>
-                  <span class="cohort-method-card__title">Add manually</span>
-                  <span class="cohort-method-card__desc">Enter personal email, full name, and GMC number one doctor at a time.</span>
-                </button>
-                <button type="button" class="cohort-method-card" data-add-method="upload">
-                  <span class="cohort-method-card__icon" aria-hidden="true">
-                    <svg width="22" height="22" viewBox="0 0 24 24" focusable="false"><path fill="currentColor" d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
-                  </span>
-                  <span class="cohort-method-card__title">Upload spreadsheet</span>
-                  <span class="cohort-method-card__desc">Import a CSV or Excel file with full name, GMC number, and personal email columns.</span>
-                </button>
-              </div>
-            </div>
-
-            <div id="addStepRoster" class="cohort-wizard-step-panel" hidden>
-              <p class="cohort-wizard-roster-title" id="addRosterTitle">Add doctors</p>
-              <div class="nhsuk-form-group" id="addEmailsGroup">
-                <div id="addPanelManual" hidden>
-                  <span class="nhsuk-hint nhsuk-hint--secondary">Personal email is required. Fill in the fields, then click <strong>Add</strong>. When you submit, anything still in the form is included automatically.</span>
-                  <div class="cohort-add-card" id="addAddCard" role="group" aria-labelledby="addAddCardTitle">
-                    <p id="addAddCardTitle" class="cohort-add-card__title">Add one doctor</p>
-                    <div class="cohort-add-card__primary">
-                      <div class="cohort-add-field cohort-add-field--grow">
-                        <label class="nhsuk-label" for="addPersonalEmailInput">Personal email</label>
-                        <input class="nhsuk-input" type="email" id="addPersonalEmailInput" name="add_personal_email" placeholder="jane.smith@gmail.com" spellcheck="false" autocapitalize="off" autocomplete="email" inputmode="email" aria-describedby="addEmailError addEmailsCount addAddOptionalHint">
-                      </div>
-                    </div>
-                    <p class="cohort-add-card__optional-hint" id="addAddOptionalHint">Optional — pre-fills their profile when they first sign in</p>
-                    <div class="cohort-add-card__grid">
-                      <div class="cohort-add-field">
-                        <label class="nhsuk-label nhsuk-label--s" for="addNameInput">Full name</label>
-                        <input class="nhsuk-input" type="text" id="addNameInput" name="add_full_name" placeholder="Jane Smith" autocomplete="name" maxlength="200">
-                      </div>
-                      <div class="cohort-add-field">
-                        <label class="nhsuk-label nhsuk-label--s" for="addGmcInput">GMC number</label>
-                        <input class="nhsuk-input" type="text" id="addGmcInput" name="add_gmc" placeholder="1234567" inputmode="numeric" maxlength="11" aria-describedby="addGmcHint">
-                        <span class="nhsuk-hint nhsuk-hint--secondary" id="addGmcHint">Seven digits</span>
-                      </div>
-                    </div>
-                    <div class="cohort-add-card__actions">
-                      <button type="button" class="nhsuk-button cohort-add-card__btn" id="btnAddEmailAdd">Add</button>
-                    </div>
-                  </div>
-                  <p class="cohort-email-error" id="addEmailError" hidden role="alert"></p>
-                </div>
-
-                <div id="addPanelUpload" hidden>
-                  <div id="addUploadPicker" class="hr-roster-upload">
-                    <label class="nhsuk-label" for="addEmailsFile">CSV or Excel file</label>
-                    <span class="nhsuk-hint">Upload <strong>.csv</strong> or <strong>.xlsx</strong>. Columns in order: <strong>full name</strong>, <strong>GMC number</strong>, <strong>personal email</strong> (header row recommended). Empty cells are OK.</span>
-                    <div class="hr-bulk-file">
-                      <input class="nhsuk-input" type="file" id="addEmailsFile" accept=".txt,.csv,.xlsx,.xls,text/plain,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" aria-describedby="addEmailsFileStatus">
-                    </div>
-                    <span class="hr-roster-file-name" id="addEmailsFileName" aria-live="polite">No file chosen</span>
-                    <p class="hr-roster-upload-status" id="addEmailsFileStatus" hidden role="status"></p>
-                    <div id="addEmailsFileViz" class="hr-provision-viz-wrap hr-provision-viz-wrap--compact" aria-live="polite"></div>
-                  </div>
-                  <p id="addUploadDone" class="cohort-upload-done" hidden role="status">
-                    <strong>Roster imported.</strong> Review the doctors below, then add them to the cohort.
-                  </p>
-                  <p class="cohort-email-error" id="addUploadError" hidden role="alert"></p>
-                </div>
-
-                <div class="cohort-roster-added">
-                  <p class="cohort-roster-added__heading">Added doctors</p>
-                  <span class="cohort-email-count cohort-email-count--empty" id="addEmailsCount" aria-live="polite">0 doctors</span>
-                  <p class="cohort-list-empty" id="addEmailsListEmpty">No doctors added yet — use the form above or upload a file.</p>
-                  <div id="addEmailsList" class="cohort-email-list" aria-live="polite"></div>
-                </div>
-              </div>
-              <div class="cohort-wizard-actions cohort-wizard-actions--split">
-                <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnAddBackMethod">Back</button>
-                <button type="submit" class="nhsuk-button cohort-roster-submit cohort-roster-submit--empty" id="btnAddSubmit" disabled>Add to cohort</button>
-              </div>
-            </div>
-          </form>
-          <div id="addProvisionResult" class="hr-provision-viz-wrap" aria-live="polite"></div>
-          <p id="addStatus" class="hr-cohort-status-msg hr-muted" role="status" aria-live="polite" hidden></p>
         </div>
 
         <div id="panelCohortMessage" class="hr-bulk-panel hr-cohort-panel" role="tabpanel" aria-labelledby="tabCohortMessage" hidden>
@@ -449,6 +432,22 @@
             </table>
           </div>
           <p id="cohortCompStatus" class="hr-muted" role="status" aria-live="polite"></p>
+        </div>
+
+        <div class="hr-cohort-members-head">
+          <h3>Members</h3>
+        </div>
+        <p class="hr-cohort-legend">Click a name to edit details or remove someone from this cohort. Status shows sign-in and whether their welcome message has been sent.</p>
+        <div class="hr-table-wrap">
+          <table class="hr-table" aria-label="Cohort members">
+            <thead><tr><th>Name</th><th>Personal email</th><th>GMC</th><th>Status</th></tr></thead>
+            <tbody id="membersTbody"></tbody>
+          </table>
+        </div>
+
+        <div id="cohortWelcomePendingBanner" class="cohort-welcome-pending-banner" hidden role="region" aria-label="Pending welcome messages">
+          <p class="cohort-welcome-pending-banner__text" id="cohortWelcomePendingText"></p>
+          <button type="button" class="nhsuk-button" id="btnOpenWelcomeReviewPending">Review and send welcome</button>
         </div>
       </div>
     </div>
@@ -1793,7 +1792,7 @@
       function loadStoredCohortTab() {
         try {
           var v = localStorage.getItem(LS_COHORT_TAB);
-          if (v === 'add' || v === 'compliance' || v === 'message') return v;
+          if (v === 'add' || v === 'compliance' || v === 'message' || v === 'create') return v;
         } catch (e) { /* ignore */ }
         return 'add';
       }
@@ -1837,12 +1836,15 @@
         var isMsg = tab === 'message';
         var isAdd = tab === 'add';
         var isComp = tab === 'compliance';
+        var isCreate = tab === 'create';
         var tabMsg = document.getElementById('tabCohortMessage');
         var tabAdd = document.getElementById('tabCohortAdd');
         var tabComp = document.getElementById('tabCohortCompliance');
+        var tabCreate = document.getElementById('tabCohortCreate');
         var panelMsg = document.getElementById('panelCohortMessage');
         var panelAdd = document.getElementById('panelCohortAdd');
         var panelComp = document.getElementById('panelCohortCompliance');
+        var panelCreate = document.getElementById('panelCohortCreate');
         if (tabMsg) {
           tabMsg.classList.toggle('active', isMsg);
           tabMsg.setAttribute('aria-selected', isMsg ? 'true' : 'false');
@@ -1855,12 +1857,27 @@
           tabComp.classList.toggle('active', isComp);
           tabComp.setAttribute('aria-selected', isComp ? 'true' : 'false');
         }
+        if (tabCreate) {
+          tabCreate.classList.toggle('active', isCreate);
+          tabCreate.setAttribute('aria-selected', isCreate ? 'true' : 'false');
+        }
         show(panelMsg, isMsg);
         show(panelAdd, isAdd);
         show(panelComp, isComp);
+        show(panelCreate, isCreate);
         if (isAdd) {
           updateAddCohortNamePreviews();
           resetAddWizard();
+        }
+        if (isCreate) {
+          var createStatus = document.getElementById('createStatus');
+          if (createStatus) {
+            createStatus.textContent = '';
+            show(createStatus, false);
+          }
+          clearProvisionResult(document.getElementById('createProvisionResult'));
+          show(document.getElementById('createResultsWrap'), false);
+          resetCreateWizard();
         }
         if (isComp) void loadCohortCompliance();
       }
@@ -2373,9 +2390,6 @@
         if (exportBtn) {
           exportBtn.href = '/api/hr/cohorts/' + encodeURIComponent(String(id)) + '/compliance-export';
         }
-        if (opts.scrollToAdd) {
-          scrollToAddDoctorsPanel();
-        }
       }
 
       function cohortsUrlSearchMode() {
@@ -2400,23 +2414,12 @@
         return null;
       }
 
-      function scrollToAddDoctorsPanel() {
-        function run() {
-          var el = document.getElementById('panelCohortAdd') || document.querySelector('.hr-cohort-actions-title');
-          if (!el) return;
-          el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }
-        requestAnimationFrame(function () {
-          requestAnimationFrame(run);
-        });
-      }
-
       async function maybeOpenAddDoctorsDeepLink() {
         if (cohortDeepLinkAction() !== 'add') return;
         var cohort = defaultCohortFromCache();
         if (!cohort) return;
         try {
-          await openCohort(cohort.id, { forceTab: 'add', scrollToAdd: true });
+          await openCohort(cohort.id, { forceTab: 'add' });
         } catch (e) {
           console.error('add doctors deep link', e);
         }
@@ -2508,21 +2511,26 @@
         if (uploadErr) { uploadErr.hidden = true; uploadErr.textContent = ''; }
       }
 
-      function openCreateWizard() {
-        show(document.getElementById('createCard'), true);
-        document.getElementById('createStatus').textContent = '';
-        show(document.getElementById('createStatus'), false);
-        clearProvisionResult(document.getElementById('createProvisionResult'));
-        show(document.getElementById('createResultsWrap'), false);
-        resetCreateWizard();
-        document.getElementById('createCard').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      async function openCreateWizard() {
+        var detailEl = document.getElementById('detailView');
+        if (detailEl && !detailEl.hidden && _activeCohortId != null) {
+          setCohortTab('create');
+          return;
+        }
+        var cohort = defaultCohortFromCache();
+        if (!cohort && _cohortsCache.length) cohort = _cohortsCache[0];
+        if (!cohort) return;
+        await openCohort(cohort.id, { forceTab: 'create' });
       }
 
-      document.getElementById('btnShowCreate').addEventListener('click', openCreateWizard);
+      document.getElementById('btnShowCreate').addEventListener('click', function () {
+        void openCreateWizard();
+      });
       document.getElementById('btnCancelCreate').addEventListener('click', function () {
-        show(document.getElementById('createCard'), false);
         resetCreateWizard();
         clearProvisionResult(document.getElementById('createProvisionResult'));
+        show(document.getElementById('createResultsWrap'), false);
+        setCohortTab('add');
       });
 
       document.getElementById('btnCreateNextName').addEventListener('click', function () {
@@ -2610,9 +2618,8 @@
             cohort = cohortById(_allDoctorsCohortId);
           }
           if (!cohort) return;
-          show(document.getElementById('createCard'), false);
           resetCreateWizard();
-          openCohort(cohort.id);
+          openCohort(cohort.id, { forceTab: 'add' });
         });
       }
 
@@ -2680,7 +2687,6 @@
           var cohortName = (data.cohort && data.cohort.name) || cohortNameValue();
           if (data.cohort) upsertCohortInCache(data.cohort);
           resetCreateWizard();
-          show(document.getElementById('createCard'), false);
           renderCohortList(_cohortsCache);
           await loadCohorts({ showLoading: false });
           try {

@@ -467,7 +467,7 @@
     .hr-cohort-members-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0.5rem; margin: 1.5rem 0 0.5rem 0; }
     .hr-cohort-members-head h3 { margin: 0; font-size: 1.125rem; }
     .hr-cohort-legend { font-size: 0.8125rem; color: var(--nhsuk-secondary-text); margin: 0 0 0.75rem 0; max-width: 42rem; }
-    .hr-cohort-actions-title { margin: 1.75rem 0 0.75rem 0; font-size: 1.125rem; }
+    .hr-cohort-actions-title { margin: 0 0 0.75rem 0; font-size: 1.125rem; }
     .hr-cohort-panel { margin-top: 0; }
     .hr-cohort-panel .nhsuk-form-group:last-of-type { margin-bottom: 0; }
 

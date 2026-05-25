@@ -1714,7 +1714,6 @@
         function setCohortsGroupsVisible(on) {
           if (HR_PAGE !== 'cohorts') return;
           show(document.getElementById('groupsCard'), on);
-          if (!on) show(document.getElementById('createCard'), false);
         }
 
         function isCohortsSearchMode() {
