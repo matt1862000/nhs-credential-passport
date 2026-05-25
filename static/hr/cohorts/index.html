@@ -1740,6 +1740,17 @@
         titleEl.textContent = String(name).trim() + ' Members';
       }
 
+      function cohortWelcomePendingCount() {
+        return _detailMembers.filter(function (m) {
+          return m.welcome_pending && !m.welcome_sent_at;
+        }).length;
+      }
+
+      function isCohortBrowseVisible() {
+        var wrap = document.getElementById('cohortBrowseWrap');
+        return !!(wrap && !wrap.hidden);
+      }
+
       function autoExpandMembersSection() {
         if (_cohortDetailFoldSetters.members) {
           _cohortDetailFoldSetters.members(true);
@@ -1747,10 +1758,24 @@
       }
 
       function maybeAutoExpandMembersForBanner() {
+        if (!isCohortBrowseVisible() || !_cohortDetailFoldSetters.members) return;
         var banner = document.getElementById('cohortWelcomePendingBanner');
-        if (banner && !banner.hidden && _cohortDetailFoldSetters.members) {
+        if (banner && !banner.hidden) {
           _cohortDetailFoldSetters.members(true);
         }
+      }
+
+      function finalizeMembersFoldForOpen(browseOnly) {
+        autoExpandMembersSection();
+        if (browseOnly || cohortWelcomePendingCount() > 0) {
+          maybeAutoExpandMembersForBanner();
+        }
+        requestAnimationFrame(function () {
+          autoExpandMembersSection();
+          if (browseOnly || cohortWelcomePendingCount() > 0) {
+            maybeAutoExpandMembersForBanner();
+          }
+        });
       }
 
       function renderDetailCohortList() {
@@ -2034,7 +2059,7 @@
 
       function updateCohortActionUI() {
         var n = _detailMembers.length;
-        var queued = _detailMembers.filter(function (m) { return m.welcome_pending && !m.welcome_sent_at; }).length;
+        var queued = cohortWelcomePendingCount();
         var awaiting = _detailMembers.filter(function (m) { return m.must_change_password; }).length;
         var parts = ['<strong>' + n + '</strong> doctor' + (n === 1 ? '' : 's')];
         if (awaiting) parts.push('<strong>' + awaiting + '</strong> awaiting first sign-in');
@@ -2483,7 +2508,6 @@
           delBtn.hidden = !!isDefaultCohort(c);
         }
         updateDetailBottomSections();
-        updateCohortActionUI();
         updateAddCohortNamePreviews();
         setCohortTab(opts.forceTab || loadStoredCohortTab());
         void refreshCohortPendingVerifyBanner();
@@ -2523,7 +2547,8 @@
         }
         show(document.getElementById('cohortBrowseWrap'), true);
         syncBrowseLayout();
-        autoExpandMembersSection();
+        updateCohortActionUI();
+        finalizeMembersFoldForOpen(browseOnly);
         if (browseOnly) {
           renderCohortList(_cohortsCache);
           requestAnimationFrame(function () {
