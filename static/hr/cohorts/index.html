@@ -245,7 +245,7 @@
               </div>
 
               <div id="createStepMethod" class="cohort-wizard-step-panel" hidden>
-                <p class="cohort-method-intro">How would you like to add doctors to <strong id="createCohortNamePreview">this cohort</strong>?</p>
+                <p class="cohort-method-intro">How would you like to add doctors to <strong id="createCohortNamePreview">this cohort</strong>? You can skip this step and add doctors later.</p>
                 <div class="cohort-method-grid" role="group" aria-label="How to add doctors">
                   <button type="button" class="cohort-method-card" data-create-method="manual">
                     <span class="cohort-method-card__icon" aria-hidden="true">
@@ -269,8 +269,9 @@
                     <span class="cohort-method-card__desc">Copy doctors from your default All Doctors group into this cohort.</span>
                   </button>
                 </div>
-                <div class="cohort-wizard-actions">
+                <div class="cohort-wizard-actions cohort-wizard-actions--split">
                   <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnCreateBackMethod">Back</button>
+                  <button type="button" class="nhsuk-button" id="btnCreateSkipDoctors">Skip for now</button>
                 </div>
               </div>
 
@@ -2564,6 +2565,10 @@
         setCreateWizardStep(1);
       });
 
+      document.getElementById('btnCreateSkipDoctors').addEventListener('click', function () {
+        void submitCreateCohort([]);
+      });
+
       document.getElementById('btnCreateBackRoster').addEventListener('click', function () {
         setCreateWizardStep(2);
       });
@@ -2623,11 +2628,96 @@
         });
       }
 
+      async function submitCreateCohort(members) {
+        members = members || [];
+        var status = document.getElementById('createStatus');
+        var vizEl = document.getElementById('createProvisionResult');
+        var submitBtn = document.getElementById('btnCreateSubmit');
+        var skipBtn = document.getElementById('btnCreateSkipDoctors');
+        var name = cohortNameValue();
+        if (!name) {
+          setCohortNameError('Enter a cohort name to continue.');
+          setCreateWizardStep(1);
+          document.getElementById('cohortName').focus();
+          return;
+        }
+        if (isReservedDefaultCohortName(name)) {
+          setCohortNameError('“All Doctors” is reserved for the default group. Choose a different name.');
+          setCreateWizardStep(1);
+          document.getElementById('cohortName').focus();
+          return;
+        }
+        var uploadErrHide = document.getElementById('cohortUploadError');
+        if (uploadErrHide) uploadErrHide.hidden = true;
+        show(status, false);
+        clearProvisionResult(vizEl);
+        if (viz()) {
+          viz().showLoading(
+            vizEl,
+            members.length ? 'Creating cohort and provisioning accounts…' : 'Creating cohort…'
+          );
+        }
+        if (submitBtn) submitBtn.disabled = true;
+        if (skipBtn) skipBtn.disabled = true;
+        try {
+          var data = await apiJsonWithProgress(
+            '/api/hr/cohorts',
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name: name, members: members }),
+            },
+            vizEl
+          );
+          var cohortName = (data.cohort && data.cohort.name) || name;
+          if (data.cohort) upsertCohortInCache(data.cohort);
+          resetCreateWizard();
+          renderCohortList(_cohortsCache);
+          await loadCohorts({ showLoading: false });
+          try {
+            if (viz()) viz().cohortProvision(vizEl, data, { createdCohort: cohortName });
+          } catch (vizErr) {
+            console.warn('cohort result viz', vizErr);
+          }
+          var wrap = document.getElementById('createResultsWrap');
+          var tb = document.getElementById('createResultsTbody');
+          var results = data.results || [];
+          tb.innerHTML = results.map(function (r) {
+            var pref = (r.prefilled && r.prefilled.length) ? r.prefilled.join(', ') : '—';
+            return '<tr><td>' + esc(r.email) + '</td><td>' + esc(r.status) + '</td><td>' + esc(pref) + '</td><td>' + esc(r.error || '') + '</td></tr>';
+          }).join('');
+          show(wrap, !!results.length);
+          if (data.cohort && data.cohort.id) {
+            var reviewIds = userIdsAwaitingWelcomeFromResults(results);
+            var openOpts = {};
+            if (reviewIds.length) {
+              openOpts = {
+                welcomeReview: {
+                  userIds: reviewIds,
+                  results: results,
+                  cohort: data.cohort,
+                },
+              };
+            } else if (!members.length) {
+              openOpts = { forceTab: 'add' };
+            }
+            setTimeout(function () {
+              openCohort(data.cohort.id, openOpts);
+            }, 400);
+          }
+        } catch (err) {
+          clearProvisionResult(vizEl);
+          show(status, true);
+          status.textContent = err.message || 'Failed';
+        } finally {
+          if (submitBtn) submitBtn.disabled = false;
+          if (skipBtn) skipBtn.disabled = false;
+        }
+      }
+
       document.getElementById('formCreateCohort').addEventListener('submit', async function (e) {
         e.preventDefault();
         var status = document.getElementById('createStatus');
-        var vizEl = document.getElementById('createProvisionResult');
-        var submitBtn = e.target.querySelector('button[type="submit"]');
         var members;
         if (_createMethod === 'all_doctors') {
           members = getSelectedAllDoctorsMembers();
@@ -2668,58 +2758,7 @@
             return;
           }
         }
-        var uploadErrHide = document.getElementById('cohortUploadError');
-        if (uploadErrHide) uploadErrHide.hidden = true;
-        show(status, false);
-        clearProvisionResult(vizEl);
-        if (viz()) viz().showLoading(vizEl, 'Creating cohort and provisioning accounts…');
-        if (submitBtn) submitBtn.disabled = true;
-        try {
-          var data = await apiJsonWithProgress(
-            '/api/hr/cohorts',
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ name: cohortNameValue(), members: members }),
-            },
-            vizEl
-          );
-          var cohortName = (data.cohort && data.cohort.name) || cohortNameValue();
-          if (data.cohort) upsertCohortInCache(data.cohort);
-          resetCreateWizard();
-          renderCohortList(_cohortsCache);
-          await loadCohorts({ showLoading: false });
-          try {
-            if (viz()) viz().cohortProvision(vizEl, data, { createdCohort: cohortName });
-          } catch (vizErr) {
-            console.warn('cohort result viz', vizErr);
-          }
-          var wrap = document.getElementById('createResultsWrap');
-          var tb = document.getElementById('createResultsTbody');
-          tb.innerHTML = (data.results || []).map(function (r) {
-            var pref = (r.prefilled && r.prefilled.length) ? r.prefilled.join(', ') : '—';
-            return '<tr><td>' + esc(r.email) + '</td><td>' + esc(r.status) + '</td><td>' + esc(pref) + '</td><td>' + esc(r.error || '') + '</td></tr>';
-          }).join('');
-          show(wrap, true);
-          if (data.cohort && data.cohort.id) {
-            var reviewIds = userIdsAwaitingWelcomeFromResults(data.results);
-            setTimeout(function () {
-              openCohort(data.cohort.id, reviewIds.length ? {
-                welcomeReview: {
-                  userIds: reviewIds,
-                  results: data.results,
-                  cohort: data.cohort,
-                },
-              } : {});
-            }, 400);
-          }
-        } catch (err) {
-          clearProvisionResult(vizEl);
-          show(status, true);
-          status.textContent = err.message || 'Failed';
-        } finally {
-          if (submitBtn) submitBtn.disabled = false;
-        }
+        await submitCreateCohort(members);
       });
 
       document.getElementById('cohortList').addEventListener('click', function (e) {
