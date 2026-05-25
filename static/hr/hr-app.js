@@ -1609,6 +1609,11 @@
             show(document.getElementById('searchView'), false);
             show(document.getElementById('searchDoctorView'), false);
           }
+          if (HR_PAGE === 'cohorts') {
+            show(document.getElementById('searchView'), false);
+            show(document.getElementById('searchDoctorView'), false);
+            setCohortsGroupsVisible(false);
+          }
           if (HR_PAGE === 'bulk') {
             show(document.getElementById('bulkView'), false);
           }
@@ -1704,6 +1709,12 @@
           if (addTr) addTr.hidden = true;
           var delTr = document.getElementById('btnSearchDoctorDelete');
           if (delTr) delTr.hidden = true;
+        }
+
+        function setCohortsGroupsVisible(on) {
+          if (HR_PAGE !== 'cohorts') return;
+          show(document.getElementById('groupsCard'), on);
+          if (!on) show(document.getElementById('createCard'), false);
         }
 
         var bulkMod = document.getElementById('bulkModule');
@@ -2287,6 +2298,7 @@
             hideSearchDoctorDetailActions();
             show(document.getElementById('searchDoctorView'), false);
             show(document.getElementById('searchView'), true);
+            setCohortsGroupsVisible(true);
             var statusEl = document.getElementById('searchStatus');
             if (statusEl) statusEl.textContent = 'Doctor deleted.';
             if (HR_PAGE === 'search') {
@@ -2555,6 +2567,7 @@
             hideSearchDoctorDetailActions();
             show(document.getElementById('searchDoctorView'), false);
             show(document.getElementById('searchView'), true);
+            setCohortsGroupsVisible(true);
             if (HR_PAGE === 'search') {
               try {
                 window.history.replaceState({}, '', '/static/hr/search.html');
@@ -2619,6 +2632,7 @@
           }
           show(document.getElementById('searchView'), false);
           show(document.getElementById('searchDoctorView'), true);
+          setCohortsGroupsVisible(false);
           var titleEl = document.getElementById('searchDoctorTitle');
           if (titleEl) titleEl.textContent = 'Verified training — ' + (doctorName || 'Doctor');
           var addTr = document.getElementById('btnSearchDoctorAddTraining');
@@ -2736,6 +2750,23 @@
         if (HR_PAGE === 'bulk') {
           show(document.getElementById('bulkView'), true);
           await fillHrIssuingTrustFieldsIfEmpty();
+          return;
+        }
+
+        if (HR_PAGE === 'cohorts') {
+          show(document.getElementById('searchView'), true);
+          show(document.getElementById('searchDoctorView'), false);
+          setCohortsGroupsVisible(true);
+          if (doctorId) {
+            await openSearchDoctorView(doctorId, qs().get('name') || 'Doctor');
+          } else {
+            var qParamCohort = (qs().get('q') || '').trim();
+            if (qParamCohort) {
+              var inpCohort = document.getElementById('doctorSearchInput');
+              if (inpCohort) inpCohort.value = qParamCohort;
+              await runDoctorSearch({ autoOpenSingle: true });
+            }
+          }
           return;
         }
 
