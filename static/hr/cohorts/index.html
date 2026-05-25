@@ -117,7 +117,7 @@
       <div id="detailView" class="hr-card" hidden>
         <div class="hr-cohort-detail-top">
           <div class="hr-cohort-detail-nav">
-            <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnBackList">&larr; All groups</button>
+            <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnBackList" aria-controls="detailGroupsSection">&larr; All groups</button>
             <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small cohort-delete-btn" id="btnDeleteCohort">Delete group</button>
           </div>
           <div class="hr-inbox-head" style="margin-top:0.75rem;">
@@ -454,12 +454,14 @@
           <button type="button" class="nhsuk-button" id="btnOpenWelcomeReviewPending">Review and send welcome</button>
         </div>
 
+        <div id="detailGroupsSection">
         <div class="hr-cohort-members-head">
-          <h3>Groups</h3>
+          <h3 id="detailGroupsHeading">Groups</h3>
         </div>
         <p class="hr-cohort-legend">Open a group to add doctors, send messages, or check compliance.</p>
         <div id="detailCohortsSection" aria-live="polite">
           <div id="detailCohortList"></div>
+        </div>
         </div>
       </div>
     </div>
@@ -2830,10 +2832,21 @@
         }
       }
 
+      function scrollToDetailGroupsSection() {
+        var section = document.getElementById('detailGroupsSection');
+        if (!section) return;
+        section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        var heading = document.getElementById('detailGroupsHeading');
+        if (heading && typeof heading.focus === 'function') {
+          if (!heading.hasAttribute('tabindex')) heading.setAttribute('tabindex', '-1');
+          heading.focus({ preventScroll: true });
+        }
+      }
+
       document.getElementById('cohortList').addEventListener('click', handleCohortListClick);
       document.getElementById('detailCohortList').addEventListener('click', handleCohortListClick);
 
-      document.getElementById('btnBackList').addEventListener('click', showList);
+      document.getElementById('btnBackList').addEventListener('click', scrollToDetailGroupsSection);
       document.getElementById('btnDeleteCohort').addEventListener('click', function () {
         if (_activeCohortId != null) deleteCohort(_activeCohortId);
       });
