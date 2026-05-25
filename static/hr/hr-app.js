@@ -1717,6 +1717,33 @@
           if (!on) show(document.getElementById('createCard'), false);
         }
 
+        function isCohortsSearchMode() {
+          if (HR_PAGE !== 'cohorts') return false;
+          var q = qs();
+          if (q.get('search') === '1') return true;
+          if (q.get('doctor')) return true;
+          if ((q.get('q') || '').trim()) return true;
+          return false;
+        }
+
+        function setCohortsSearchSectionVisible(on) {
+          if (HR_PAGE !== 'cohorts') return;
+          show(document.getElementById('doctorSearchSection'), on);
+        }
+
+        function cohortsSearchHistoryPath(paramObj) {
+          var p = new URLSearchParams();
+          p.set('search', '1');
+          if (paramObj) {
+            Object.keys(paramObj).forEach(function (k) {
+              if (paramObj[k] != null && String(paramObj[k]).trim() !== '') {
+                p.set(k, String(paramObj[k]));
+              }
+            });
+          }
+          return '/static/hr/cohorts/?' + p.toString();
+        }
+
         var bulkMod = document.getElementById('bulkModule');
         if (bulkMod) fillHrModuleSelect(bulkMod);
 
@@ -2280,7 +2307,11 @@
                 show(document.getElementById('searchDoctorView'), false);
                 show(document.getElementById('searchView'), true);
                 if (HR_PAGE === 'search' || HR_PAGE === 'cohorts') {
-                  try { window.history.replaceState({}, '', '/static/hr/cohorts/'); } catch (eHistDel) {}
+                  try {
+                    window.history.replaceState({}, '', HR_PAGE === 'cohorts'
+                      ? cohortsSearchHistoryPath()
+                      : '/static/hr/cohorts/?search=1');
+                  } catch (eHistDel) {}
                 }
               }
             }
@@ -2302,7 +2333,11 @@
             var statusEl = document.getElementById('searchStatus');
             if (statusEl) statusEl.textContent = 'Doctor deleted.';
             if (HR_PAGE === 'search' || HR_PAGE === 'cohorts') {
-              try { window.history.replaceState({}, '', '/static/hr/cohorts/'); } catch (eHistDel2) {}
+              try {
+                window.history.replaceState({}, '', HR_PAGE === 'cohorts'
+                  ? cohortsSearchHistoryPath()
+                  : '/static/hr/cohorts/?search=1');
+              } catch (eHistDel2) {}
             }
           });
         }
@@ -2570,7 +2605,9 @@
             setCohortsGroupsVisible(true);
             if (HR_PAGE === 'search' || HR_PAGE === 'cohorts') {
               try {
-                window.history.replaceState({}, '', '/static/hr/cohorts/');
+                window.history.replaceState({}, '', HR_PAGE === 'cohorts'
+                  ? cohortsSearchHistoryPath()
+                  : '/static/hr/cohorts/?search=1');
               } catch (eHist2) {}
             }
           });
@@ -2627,9 +2664,14 @@
           searchDoctorViewName = doctorName || '';
           if (HR_PAGE === 'search' || HR_PAGE === 'cohorts') {
             try {
-              window.history.replaceState({}, '', '/static/hr/cohorts/?doctor=' + encodeURIComponent(String(doctorId)));
+              var histParams = { doctor: String(doctorId) };
+              if (doctorName) histParams.name = doctorName;
+              window.history.replaceState({}, '', HR_PAGE === 'cohorts'
+                ? cohortsSearchHistoryPath(histParams)
+                : '/static/hr/cohorts/?search=1&doctor=' + encodeURIComponent(String(doctorId)));
             } catch (eHist) {}
           }
+          setCohortsSearchSectionVisible(true);
           show(document.getElementById('searchView'), false);
           show(document.getElementById('searchDoctorView'), true);
           setCohortsGroupsVisible(false);
@@ -2715,8 +2757,8 @@
           if (legQ.get('search')) {
             var uLeg = new URL(window.location.href);
             uLeg.pathname = '/static/hr/cohorts/';
-            uLeg.searchParams.delete('search');
-            window.location.replace(uLeg.pathname + (uLeg.search || '') + uLeg.hash);
+            uLeg.searchParams.set('search', '1');
+            window.location.replace(uLeg.pathname + uLeg.search + uLeg.hash);
             return;
           }
           if (legQ.get('bulk')) {
@@ -2754,9 +2796,12 @@
         }
 
         if (HR_PAGE === 'cohorts') {
-          show(document.getElementById('searchView'), true);
+          var searchMode = isCohortsSearchMode();
+          setCohortsSearchSectionVisible(searchMode);
+          show(document.getElementById('searchView'), searchMode);
           show(document.getElementById('searchDoctorView'), false);
           setCohortsGroupsVisible(true);
+          if (typeof window.syncCohortsPageHead === 'function') window.syncCohortsPageHead();
           if (doctorId) {
             await openSearchDoctorView(doctorId, qs().get('name') || 'Doctor');
           } else {

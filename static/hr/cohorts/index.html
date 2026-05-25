@@ -36,9 +36,15 @@
   </header>
 
   <main class="nhsuk-main hr-wrap" id="maincontent" role="main">
-    <h1 class="nhsuk-page-heading">Add doctors</h1>
-    <p class="nhsuk-lead">Create doctor accounts using each person&rsquo;s <strong>personal email</strong> as their login, group them into cohorts, and send the same message to everyone (each replies in their own thread).</p>
-    <p class="hr-muted" style="margin:0 0 1rem 0;font-size:0.875rem;">HR never sees passwords here. Send login details to each person&rsquo;s personal email outside DocPass. Demo accounts use a standard initial password; doctors must change it on first sign-in.</p>
+    <div id="addDoctorsPageHead">
+      <h1 class="nhsuk-page-heading">Add doctors</h1>
+      <p class="nhsuk-lead">Create doctor accounts using each person&rsquo;s <strong>personal email</strong> as their login, group them into cohorts, and send the same message to everyone (each replies in their own thread).</p>
+      <p class="hr-muted" style="margin:0 0 1rem 0;font-size:0.875rem;">HR never sees passwords here. Send login details to each person&rsquo;s personal email outside DocPass. Demo accounts use a standard initial password; doctors must change it on first sign-in.</p>
+    </div>
+    <div id="searchDoctorsPageHead" hidden>
+      <h1 class="nhsuk-page-heading">Search doctors</h1>
+      <p class="nhsuk-lead">Look up permitted doctors, view verified e-learning, or add training on their behalf.</p>
+    </div>
 
     <div id="notPremium" class="hr-card" hidden>
       <p style="margin:0;font-weight:700;">This page is only for HR accounts.</p>
@@ -46,6 +52,7 @@
 
     <div id="mainContent" hidden>
       <div id="listView">
+        <div id="doctorSearchSection" hidden>
         <div id="searchView" class="hr-card">
           <div class="hr-inbox-head">
             <h2>Search for a doctor</h2>
@@ -86,6 +93,7 @@
               <tbody id="searchDoctorItemsTbody"></tbody>
             </table>
           </div>
+        </div>
         </div>
 
         <div class="hr-card" id="groupsCard">
@@ -576,7 +584,7 @@
   <script src="/static/shared/ods-trust-suggest.js"></script>
   <script src="/static/shared/messages-common.js?v=20260524-2"></script>
   <script>window.__HR_PAGE__ = 'cohorts';</script>
-  <script src="/static/hr/hr-app.js?v=20260530-2"></script>
+  <script src="/static/hr/hr-app.js?v=20260530-3"></script>
   <script>
     (function () {
       var _activeCohortId = null;
@@ -1737,9 +1745,9 @@
           membersTb.innerHTML = members.map(function (m) {
             var s = m.summary || {};
             var searchUrl = m.user_id != null && m.user_id !== ''
-              ? '/static/hr/cohorts/?doctor=' + encodeURIComponent(String(m.user_id))
+              ? '/static/hr/cohorts/?search=1&doctor=' + encodeURIComponent(String(m.user_id))
                 + (m.display_name ? '&name=' + encodeURIComponent(m.display_name) : '')
-              : '/static/hr/cohorts/?q=' + encodeURIComponent(m.email || m.display_name || '');
+              : '/static/hr/cohorts/?search=1&q=' + encodeURIComponent(m.email || m.display_name || '');
             return '<tr><td>' + esc(memberDisplayLabel(m)) + '</td><td>' + esc(s.met || 0)
               + '</td><td>' + esc(s.expiring || 0) + '</td><td>' + esc(s.needs_review || 0)
               + '</td><td>' + esc(s.gap || 0)
@@ -2088,9 +2096,12 @@
       function showList() {
         show(document.getElementById('detailView'), false);
         show(document.getElementById('listView'), true);
+        var searchMode = cohortsUrlSearchMode();
         show(document.getElementById('searchDoctorView'), false);
-        show(document.getElementById('searchView'), true);
+        show(document.getElementById('doctorSearchSection'), searchMode);
+        show(document.getElementById('searchView'), searchMode);
         show(document.getElementById('groupsCard'), true);
+        syncCohortsPageHead();
         _activeCohortId = null;
         _activeCohortMeta = null;
         clearProvisionResult(document.getElementById('addProvisionResult'));
@@ -2149,6 +2160,22 @@
           scrollToAddDoctorsPanel();
         }
       }
+
+      function cohortsUrlSearchMode() {
+        var q = new URLSearchParams(window.location.search);
+        if (q.get('search') === '1') return true;
+        if (q.get('doctor')) return true;
+        if ((q.get('q') || '').trim()) return true;
+        return false;
+      }
+
+      function syncCohortsPageHead() {
+        var searchMode = cohortsUrlSearchMode();
+        show(document.getElementById('addDoctorsPageHead'), !searchMode);
+        show(document.getElementById('searchDoctorsPageHead'), searchMode);
+        document.title = (searchMode ? 'Search doctors' : 'Add doctors') + ' \u2014 DocPass';
+      }
+      window.syncCohortsPageHead = syncCohortsPageHead;
 
       function cohortDeepLinkAction() {
         var h = (window.location.hash || '').replace(/^#/, '').trim().toLowerCase();
@@ -2790,6 +2817,7 @@
           return;
         }
         show(document.getElementById('mainContent'), true);
+        syncCohortsPageHead();
         try {
         _createEmailRoster = wireEmailRoster({
           listId: 'cohortEmailsList',

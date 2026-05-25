@@ -6,11 +6,15 @@
   <title>Search doctors &mdash; DocPass</title>
   <script>
     (function () {
-      window.location.replace('/static/hr/cohorts/' + window.location.search + window.location.hash);
+      var u = new URL('/static/hr/cohorts/', window.location.origin);
+      var incoming = new URLSearchParams(window.location.search);
+      incoming.forEach(function (v, k) { u.searchParams.set(k, v); });
+      u.searchParams.set('search', '1');
+      window.location.replace(u.pathname + '?' + u.searchParams.toString() + window.location.hash);
     })();
   </script>
 </head>
 <body>
-  <p><a href="/static/hr/cohorts/">Continue to Search doctors</a></p>
+  <p><a href="/static/hr/cohorts/?search=1">Continue to Search doctors</a></p>
 </body>
 </html>
