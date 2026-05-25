@@ -2309,8 +2309,22 @@
           if (!c || c.id == null) return;
           hideSuggest();
           inputEl.value = c.name || '';
+          if (cohortsUrlSearchMode()) {
+            applyFilter(c.name || '');
+            void openCohort(c.id);
+            return;
+          }
           _cohortListFilter = '';
           void openCohort(c.id);
+        }
+
+        function openSingleCohortSearchMatch(query) {
+          var exact = cohortSuggestMatches(query, 2);
+          if (exact.length === 1) {
+            void openCohort(exact[0].id);
+            return true;
+          }
+          return false;
         }
 
         function applySuggestIndex(idx) {
@@ -2368,7 +2382,9 @@
             e.preventDefault();
             applyFilter(qEnter);
             hideSuggest();
-            hideCohortDetailForSearchBrowse();
+            if (!openSingleCohortSearchMatch(qEnter)) {
+              hideCohortDetailForSearchBrowse();
+            }
             return;
           }
           if (e.key === 'Escape') {
@@ -2405,15 +2421,27 @@
             hideCohortDetailForSearchBrowse();
             return;
           }
-          hideCohortDetailForSearchBrowse();
-          var exact = cohortSuggestMatches(q, 2);
-          if (exact.length !== 1) refreshSuggest();
+          if (!openSingleCohortSearchMatch(q)) {
+            hideCohortDetailForSearchBrowse();
+            refreshSuggest();
+          }
         }
 
         var btnCohortSearch = document.getElementById('btnCohortSearch');
         if (btnCohortSearch) {
           btnCohortSearch.addEventListener('click', submitCohortListSearch);
         }
+      }
+
+      function cohortListSearchQuery() {
+        var inp = document.getElementById('cohortSearchInput');
+        var fromInput = inp ? String(inp.value || '').trim() : '';
+        var fromFilter = String(_cohortListFilter || '').trim();
+        return fromFilter || fromInput;
+      }
+
+      function cohortListUsesGroupedView() {
+        return !cohortListSearchQuery();
       }
 
       function cohortEmptyHtml() {
@@ -2426,8 +2454,15 @@
         var el = document.getElementById('cohortList');
         if (!el) return;
         if (Array.isArray(cohorts)) _cohortsCache = cohorts;
+        if (cohortsUrlSearchMode()) {
+          el.innerHTML = '';
+          el.hidden = true;
+          return;
+        }
+        el.hidden = false;
+        var q = cohortListSearchQuery();
         var filtered = (_cohortsCache || []).filter(function (c) {
-          return cohortMatchesFilter(c, _cohortListFilter);
+          return cohortMatchesFilter(c, q);
         });
         if (!_cohortsCache.length) {
           el.innerHTML = cohortEmptyHtml();
@@ -2435,14 +2470,12 @@
           return;
         }
         if (!filtered.length) {
-          var q = String(_cohortListFilter || '').trim();
           el.innerHTML = '<p class="hr-muted" style="margin:0;">No groups match '
             + (q ? ('“' + esc(q) + '”') : 'your search') + '.</p>';
           if (_activeCohortId != null) renderDetailCohortList();
           return;
         }
-        var q = String(_cohortListFilter || '').trim();
-        if (!q) {
+        if (cohortListUsesGroupedView()) {
           el.innerHTML = buildGroupedCohortListHtml(filtered, _activeCohortId);
         } else {
           el.innerHTML = buildCohortListRowsHtml(filtered, _activeCohortId);
@@ -2452,7 +2485,14 @@
 
       function renderCohortListLoading() {
         var el = document.getElementById('cohortList');
-        if (el) el.innerHTML = '<p class="hr-muted" style="margin:0;">Loading groups&hellip;</p>';
+        if (!el) return;
+        if (cohortsUrlSearchMode()) {
+          el.innerHTML = '';
+          el.hidden = true;
+          return;
+        }
+        el.hidden = false;
+        el.innerHTML = '<p class="hr-muted" style="margin:0;">Loading groups&hellip;</p>';
       }
 
       function renderCohortListError(message) {
@@ -2615,8 +2655,8 @@
         syncCohortOpenLayout();
         updateCohortActionUI();
         finalizeGroupsFoldForOpen(browseOnly);
+        renderCohortList(_cohortsCache);
         if (browseOnly) {
-          renderCohortList(_cohortsCache);
           requestAnimationFrame(function () {
             var detail = document.getElementById('detailView');
             if (detail) detail.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
