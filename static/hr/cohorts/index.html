@@ -438,6 +438,22 @@
           <p id="cohortCompStatus" class="hr-muted" role="status" aria-live="polite"></p>
         </div>
 
+        <section class="hr-cohort-fold" aria-labelledby="btnToggleGroupsSection">
+          <div class="hr-cohort-members-head hr-cohort-fold-head">
+            <button type="button" class="hr-cohort-fold-toggle" id="btnToggleGroupsSection" aria-expanded="false" aria-controls="detailGroupsPanel">
+              <span class="hr-cohort-fold-chevron" aria-hidden="true"></span>
+              <span class="hr-cohort-fold-title">Groups</span>
+            </button>
+            <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnBackList">All Groups</button>
+          </div>
+          <div id="detailGroupsPanel" class="hr-cohort-fold-panel" hidden>
+            <p class="hr-cohort-legend">Open a group to add doctors, send messages, or check compliance.</p>
+            <div id="detailCohortsSection" aria-live="polite">
+              <div id="detailCohortList"></div>
+            </div>
+          </div>
+        </section>
+
         <section class="hr-cohort-fold" aria-labelledby="btnToggleMembersSection">
           <div class="hr-cohort-members-head hr-cohort-fold-head">
             <button type="button" class="hr-cohort-fold-toggle" id="btnToggleMembersSection" aria-expanded="false" aria-controls="detailMembersPanel">
@@ -458,22 +474,6 @@
             <div id="cohortWelcomePendingBanner" class="cohort-welcome-pending-banner" hidden role="region" aria-label="Pending welcome messages">
               <p class="cohort-welcome-pending-banner__text" id="cohortWelcomePendingText"></p>
               <button type="button" class="nhsuk-button" id="btnOpenWelcomeReviewPending">Review and send welcome</button>
-            </div>
-          </div>
-        </section>
-
-        <section class="hr-cohort-fold" aria-labelledby="btnToggleGroupsSection">
-          <div class="hr-cohort-members-head hr-cohort-fold-head">
-            <button type="button" class="hr-cohort-fold-toggle" id="btnToggleGroupsSection" aria-expanded="false" aria-controls="detailGroupsPanel">
-              <span class="hr-cohort-fold-chevron" aria-hidden="true"></span>
-              <span class="hr-cohort-fold-title">Groups</span>
-            </button>
-            <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnBackList">All Groups</button>
-          </div>
-          <div id="detailGroupsPanel" class="hr-cohort-fold-panel" hidden>
-            <p class="hr-cohort-legend">Open a group to add doctors, send messages, or check compliance.</p>
-            <div id="detailCohortsSection" aria-live="polite">
-              <div id="detailCohortList"></div>
             </div>
           </div>
         </section>
