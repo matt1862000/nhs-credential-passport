@@ -2260,6 +2260,16 @@
           }
         }
 
+        function hideCohortDetailForSearchBrowse() {
+          if (!cohortsUrlSearchMode()) return;
+          show(document.getElementById('detailView'), false);
+          show(document.getElementById('cohortBrowseWrap'), false);
+          _activeCohortId = null;
+          _activeCohortMeta = null;
+          syncCohortsPageHead();
+          syncCohortOpenLayout();
+        }
+
         function applyFilter(query) {
           _cohortListFilter = String(query || '').trim();
           renderCohortList(_cohortsCache);
@@ -2353,13 +2363,12 @@
               applySuggestIndex(active);
               return;
             }
-            var q = String(inputEl.value || '').trim();
-            if (!q) return;
-            var exact = cohortSuggestMatches(q, 2);
-            if (exact.length === 1) {
-              e.preventDefault();
-              pickCohort(exact[0]);
-            }
+            var qEnter = String(inputEl.value || '').trim();
+            if (!qEnter) return;
+            e.preventDefault();
+            applyFilter(qEnter);
+            hideSuggest();
+            hideCohortDetailForSearchBrowse();
             return;
           }
           if (e.key === 'Escape') {
@@ -2391,13 +2400,14 @@
           }
           var q = String(inputEl.value || '').trim();
           applyFilter(q);
-          if (!q) return;
-          var exact = cohortSuggestMatches(q, 2);
-          if (exact.length === 1) {
-            pickCohort(exact[0]);
+          hideSuggest();
+          if (!q) {
+            hideCohortDetailForSearchBrowse();
             return;
           }
-          refreshSuggest();
+          hideCohortDetailForSearchBrowse();
+          var exact = cohortSuggestMatches(q, 2);
+          if (exact.length !== 1) refreshSuggest();
         }
 
         var btnCohortSearch = document.getElementById('btnCohortSearch');
