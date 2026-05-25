@@ -235,7 +235,9 @@
     .hr-search-result-row--active {
       background: rgba(0, 94, 184, 0.08);
       border-radius: 4px;
-      box-shadow: inset 3px 0 0 var(--nhsuk-link);
+      border-left: 3px solid var(--nhsuk-link);
+      padding-left: 0.85rem;
+      padding-right: 0.85rem;
     }
     .hr-search-result-row--active .hr-search-result-name { color: var(--nhsuk-link); }
     .hr-search-result-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; justify-content: flex-end; }
