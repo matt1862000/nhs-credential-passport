@@ -203,22 +203,6 @@
       max-width: none;
       box-sizing: border-box;
     }
-    .cohort-welcome-pending-banner {
-      margin: 1rem 0 1.25rem 0;
-      padding: 0.85rem 1rem;
-      background: #f0f7fb;
-      border: 1px solid var(--nhsuk-border);
-      border-left: 4px solid var(--nhsuk-link);
-      border-radius: 4px;
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      justify-content: space-between;
-      gap: 0.65rem 1rem;
-    }
-    .cohort-welcome-pending-banner[hidden] { display: none !important; }
-    .cohort-welcome-pending-banner__text { margin: 0; font-size: 0.9375rem; flex: 1; min-width: 12rem; }
-    .cohort-welcome-pending-banner .nhsuk-button { margin: 0; flex-shrink: 0; }
     .hr-modal__title { margin: 0 0 0.75rem 0; font-size: 1.125rem; }
     .hr-cert-img { max-width: 100%; height: auto; display: block; margin: 0 auto; }
     .hr-cert-iframe { width: 100%; min-height: 70vh; border: 1px solid #d8dde0; border-radius: 4px; }

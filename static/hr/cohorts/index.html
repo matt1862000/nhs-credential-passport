@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#005eb8">
   <title>All Groups &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
-  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260525-16">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260525-17">
   <link rel="stylesheet" href="/static/shared/training-add-form.css?v=20260526-2">
   <link rel="stylesheet" href="/static/shared/messages-compose.css?v=20260528-1">
 </head>
@@ -478,10 +478,6 @@
               </table>
             </div>
           </div>
-          <div id="cohortWelcomePendingBanner" class="cohort-welcome-pending-banner" hidden role="region" aria-label="Pending welcome messages">
-            <p class="cohort-welcome-pending-banner__text" id="cohortWelcomePendingText"></p>
-            <button type="button" class="nhsuk-button" id="btnOpenWelcomeReviewPending">Review and send welcome</button>
-          </div>
         </div>
       </div>
     </div>
@@ -491,7 +487,7 @@
     <div class="hr-modal__panel hr-modal__panel--welcome-review">
       <h3 id="welcomeReviewModalTitle" class="hr-modal__title">Review welcome message</h3>
       <p class="nhsuk-hint" id="welcomeReviewIntro" style="margin-top:0;">Before a welcome is sent, check the message below. Each person gets their own private DocPass thread.</p>
-      <p class="nhsuk-hint nhsuk-hint--secondary" id="welcomeReviewLaterHint" style="margin-top:0.35rem;">If you choose <strong>Decide later</strong>, use <strong>Review and send welcome</strong> on this group page when you are ready, or the message sends automatically when each doctor finishes their profile.</p>
+      <p class="nhsuk-hint nhsuk-hint--secondary" id="welcomeReviewLaterHint" style="margin-top:0.35rem;">If you choose <strong>Decide later</strong>, the message sends automatically when each doctor finishes their profile.</p>
       <p class="nhsuk-hint nhsuk-hint--secondary" id="welcomeReviewRecipients" aria-live="polite"></p>
       <div id="welcomeReviewPreviewBlock">
         <p class="cohort-welcome-block__title" style="margin:0.75rem 0 0.35rem;">Message</p>
@@ -1165,23 +1161,6 @@
             renderWelcomeTemplate(ta.value, (_welcomeReviewState && _welcomeReviewState.previewName) || 'Jane Smith', trustLabelForWelcome())
           );
         }
-      }
-
-      function openWelcomeReviewForPending() {
-        if (!_activeCohortMeta) return;
-        var pending = _detailMembers.filter(function (m) {
-          return m.welcome_pending && !m.welcome_sent_at;
-        });
-        if (!pending.length) return;
-        var userIds = pending.map(function (m) { return m.user_id; });
-        var results = pending.map(function (m) {
-          return {
-            user_id: m.user_id,
-            email: m.personal_email || m.email,
-            display_name: m.display_name,
-          };
-        });
-        openWelcomeReviewModal(_activeCohortMeta, userIds, results);
       }
 
       function openWelcomeReviewModal(cohort, userIds, results) {
@@ -1884,29 +1863,15 @@
         renderDetailCohortList();
       }
 
-      function cohortWelcomePendingCount() {
-        return _detailMembers.filter(function (m) {
-          return m.welcome_pending && !m.welcome_sent_at;
-        }).length;
-      }
-
       function collapseGroupsSection() {
         if (_cohortDetailFoldSetters.groups) {
           _cohortDetailFoldSetters.groups(false);
         }
       }
 
-      function maybeSwitchToMembersTabForBanner() {
-        var banner = document.getElementById('cohortWelcomePendingBanner');
-        if (banner && !banner.hidden) {
-          setCohortTab('members');
-        }
-      }
-
       function finalizeGroupsFoldForOpen(browseOnly) {
         collapseGroupsSection();
-        var hasBanner = cohortWelcomePendingCount() > 0;
-        if (browseOnly || hasBanner) {
+        if (browseOnly) {
           setCohortTab('members');
         }
       }
@@ -2197,23 +2162,10 @@
 
       function updateCohortActionUI() {
         var n = _detailMembers.length;
-        var queued = cohortWelcomePendingCount();
         var awaiting = _detailMembers.filter(function (m) { return m.must_change_password; }).length;
         var parts = ['<strong>' + n + '</strong> doctor' + (n === 1 ? '' : 's')];
         if (awaiting) parts.push('<strong>' + awaiting + '</strong> awaiting first sign-in');
-        if (queued) parts.push('<strong>' + queued + '</strong> welcome' + (queued === 1 ? '' : 's') + ' not sent yet');
         document.getElementById('detailMeta').innerHTML = parts.join(' · ');
-
-        var banner = document.getElementById('cohortWelcomePendingBanner');
-        var bannerText = document.getElementById('cohortWelcomePendingText');
-        if (banner && bannerText) {
-          show(banner, queued > 0);
-          if (queued > 0) {
-            bannerText.textContent = queued + ' doctor' + (queued === 1 ? ' has' : 's have')
-              + ' a welcome message ready to review and send.';
-          }
-        }
-        maybeSwitchToMembersTabForBanner();
 
         var btn = document.getElementById('btnSendCohort');
         if (btn) btn.textContent = n ? ('Send to ' + n + ' doctor' + (n === 1 ? '' : 's')) : 'Send message';
@@ -3255,7 +3207,6 @@
         closeWelcomeReviewModal();
         updateCohortActionUI();
       });
-      document.getElementById('btnOpenWelcomeReviewPending').addEventListener('click', openWelcomeReviewForPending);
       document.getElementById('welcomeReviewModal').addEventListener('click', function (e) {
         if (e.target === document.getElementById('welcomeReviewModal')) closeWelcomeReviewModal();
       });
