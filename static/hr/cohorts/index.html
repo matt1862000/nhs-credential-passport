@@ -440,12 +440,12 @@
 
         <section class="hr-cohort-fold" aria-labelledby="btnToggleMembersSection">
           <div class="hr-cohort-members-head hr-cohort-fold-head">
-            <button type="button" class="hr-cohort-fold-toggle" id="btnToggleMembersSection" aria-expanded="true" aria-controls="detailMembersPanel">
+            <button type="button" class="hr-cohort-fold-toggle" id="btnToggleMembersSection" aria-expanded="false" aria-controls="detailMembersPanel">
               <span class="hr-cohort-fold-chevron" aria-hidden="true"></span>
               <span class="hr-cohort-fold-title">Members</span>
             </button>
           </div>
-          <div id="detailMembersPanel" class="hr-cohort-fold-panel">
+          <div id="detailMembersPanel" class="hr-cohort-fold-panel" hidden>
             <p class="hr-cohort-legend">Click a name to edit details or remove someone from this group. Status shows sign-in and whether their welcome message has been sent.</p>
             <div id="detailMembersSection">
               <div class="hr-table-wrap">
@@ -464,13 +464,13 @@
 
         <section class="hr-cohort-fold" aria-labelledby="btnToggleGroupsSection">
           <div class="hr-cohort-members-head hr-cohort-fold-head">
-            <button type="button" class="hr-cohort-fold-toggle" id="btnToggleGroupsSection" aria-expanded="true" aria-controls="detailGroupsPanel">
+            <button type="button" class="hr-cohort-fold-toggle" id="btnToggleGroupsSection" aria-expanded="false" aria-controls="detailGroupsPanel">
               <span class="hr-cohort-fold-chevron" aria-hidden="true"></span>
               <span class="hr-cohort-fold-title">Groups</span>
             </button>
             <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnBackList">All Groups</button>
           </div>
-          <div id="detailGroupsPanel" class="hr-cohort-fold-panel">
+          <div id="detailGroupsPanel" class="hr-cohort-fold-panel" hidden>
             <p class="hr-cohort-legend">Open a group to add doctors, send messages, or check compliance.</p>
             <div id="detailCohortsSection" aria-live="polite">
               <div id="detailCohortList"></div>
@@ -2879,7 +2879,7 @@
         }
         try {
           var stored = sessionStorage.getItem(storageKey);
-          if (stored === '0') setExpanded(false);
+          if (stored === '1') setExpanded(true);
         } catch (e) {}
         btn.addEventListener('click', function () {
           setExpanded(btn.getAttribute('aria-expanded') !== 'true');
