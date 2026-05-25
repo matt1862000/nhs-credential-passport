@@ -5,7 +5,7 @@
 #   frame-src    … PDF/image evidence previews (blob/data) + ESR help YouTube embed
 #   img-src      … certificate image previews (blob/data)
 #   script/style … inline handlers in static HTML + same-origin JS (no third-party CDNs)
-#   object-src   … none (we use iframe/img, not <object>)
+#   object-src   … PDF evidence previews via <object>/<embed>
 #   form-action  … login, profile, HR forms post to docpass.co.uk only
 
 (csp_docpass) {
@@ -13,7 +13,7 @@
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Frame-Options "DENY"
 		X-Content-Type-Options "nosniff"
-		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' https://directory.spineservices.nhs.uk; frame-src 'self' data: blob: https://www.youtube-nocookie.com https://www.youtube.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' https://directory.spineservices.nhs.uk; frame-src 'self' data: blob: https://www.youtube-nocookie.com https://www.youtube.com; object-src 'self' blob:; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
 		Referrer-Policy "strict-origin-when-cross-origin"
 	}
 }

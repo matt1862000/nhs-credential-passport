@@ -1029,15 +1029,13 @@ async def me_shares_post(request: Request, background_tasks: BackgroundTasks):
                 )
 
     items = []
-    batch_cert_attached = False
     for cid in ids:
         w = wallet_by_id.get(cid) or {}
         b64 = w.get("certificate_base64")
         fn = w.get("certificate_filename")
-        if not b64 and fallback_b64 and not batch_cert_attached:
+        if not b64 and fallback_b64:
             b64 = fallback_b64
             fn = fallback_fn
-            batch_cert_attached = True
         issuing = _issuing_trust_from_wallet_entry(w)
         entry = {
             "credential_id": cid,

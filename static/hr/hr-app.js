@@ -950,6 +950,61 @@
         if (modal) modal.hidden = true;
       }
 
+      function evidenceMimeFromBytes(bytes, filename) {
+        if (bytes.length >= 4 && bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46) {
+          return 'application/pdf';
+        }
+        if (bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) {
+          return 'image/png';
+        }
+        if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+          return 'image/jpeg';
+        }
+        if (bytes.length >= 12 && bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
+            bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50) {
+          return 'image/webp';
+        }
+        var fn = String(filename || '').toLowerCase();
+        var ext = (fn.split('.').pop() || '').toLowerCase();
+        if (ext === 'pdf') return 'application/pdf';
+        if (ext === 'png') return 'image/png';
+        if (ext === 'webp') return 'image/webp';
+        return 'image/jpeg';
+      }
+
+      function resolveHrEvidenceItem(payload, cid, sid) {
+        var items = (payload && payload.items) || [];
+        var base = items.find(function (x) { return String(x.credential_id) === String(cid); }) || null;
+        if (base && base.certificate_base64 && String(base.certificate_base64).trim()) {
+          return base;
+        }
+        if (sid) {
+          var sameSession = items.find(function (x) {
+            return String(x.session_id) === String(sid) &&
+              x.certificate_base64 &&
+              String(x.certificate_base64).trim();
+          });
+          if (sameSession) {
+            return Object.assign({}, base || {}, {
+              module_name: (base && base.module_name) || sameSession.module_name,
+              certificate_base64: sameSession.certificate_base64,
+              certificate_filename: sameSession.certificate_filename || 'evidence',
+            });
+          }
+        }
+        var any = items.find(function (x) {
+          return x.certificate_base64 && String(x.certificate_base64).trim();
+        });
+        if (any) {
+          return Object.assign({}, base || {}, {
+            module_name: (base && base.module_name) || any.module_name,
+            certificate_base64: any.certificate_base64,
+            certificate_filename: any.certificate_filename || 'evidence',
+          });
+        }
+        return base;
+      }
+
       function renderHrCertificatePreview(body, b64, mime, filename) {
         if (body && body.dataset.certBlobUrl) {
           try { URL.revokeObjectURL(body.dataset.certBlobUrl); } catch (e) {}
@@ -960,6 +1015,7 @@
         var bin = atob(clean);
         var bytes = new Uint8Array(bin.length);
         for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        mime = evidenceMimeFromBytes(bytes, filename);
         var blob = new Blob([bytes], { type: mime });
         var url = URL.createObjectURL(blob);
         body.dataset.certBlobUrl = url;
@@ -967,9 +1023,12 @@
         if (mime === 'application/pdf') {
           body.innerHTML =
             '<p class="hr-muted" style="margin:0 0 0.75rem 0;">' +
-            '<a href="' + url + '" download="' + safeName + '" target="_blank" rel="noopener">Open or download PDF</a>' +
+            '<a href="' + url + '" target="_blank" rel="noopener">Open PDF in new tab</a>' +
+            ' · <a href="' + url + '" download="' + safeName + '">Download</a>' +
             '</p>' +
-            '<iframe class="hr-cert-iframe" title="Uploaded evidence" src="' + url + '"></iframe>';
+            '<object class="hr-cert-iframe" type="application/pdf" data="' + url + '">' +
+            '<iframe class="hr-cert-iframe" title="Uploaded evidence" src="' + url + '"></iframe>' +
+            '</object>';
         } else {
           body.innerHTML = '<img class="hr-cert-img" alt="Uploaded evidence" src="' + url + '" />';
         }
@@ -983,10 +1042,9 @@
         if (!modal || !body || !it || !it.certificate_base64) return;
         var name = (it.module_name || it.credential_id || 'Evidence').trim();
         if (title) title.textContent = name;
-        var fn = String(it.certificate_filename || 'evidence').toLowerCase();
-        var ext = (fn.split('.').pop() || '').toLowerCase();
-        var mime = ext === 'pdf' ? 'application/pdf' : (ext === 'png' ? 'image/png' : (ext === 'webp' ? 'image/webp' : 'image/jpeg'));
-        if (!renderHrCertificatePreview(body, it.certificate_base64, mime, it.certificate_filename || 'evidence')) return;
+        var fn = String(it.certificate_filename || 'evidence');
+        var mime = evidenceMimeFromBytes(new Uint8Array(0), fn);
+        if (!renderHrCertificatePreview(body, it.certificate_base64, mime, fn)) return;
         modal.hidden = false;
       }
 
@@ -1317,10 +1375,6 @@
               esc(it.credential_id) +
               '" data-sid="' +
               esc(sidForApi) +
-              '" data-fallback-any="' +
-              esc(fallbackAnyCert) +
-              '" data-fallback-fn="' +
-              esc(fallbackAnyFilename) +
               '" title="View evidence uploaded with this record">' +
               modLabel +
               '</button>'
@@ -1374,24 +1428,7 @@
             e.preventDefault();
             var cid = viewCert.getAttribute('data-cid');
             var sid = viewCert.getAttribute('data-sid');
-            var it = (lastSessionPayload.items || []).find(function (x) {
-              return String(x.credential_id) === String(cid);
-            });
-            if ((!it || !it.certificate_base64) && sid) {
-              var fallback = (lastSessionPayload.items || []).find(function (x) {
-                return String(x.session_id) === String(sid) &&
-                  x.certificate_base64 &&
-                  String(x.certificate_base64).trim();
-              });
-              if (fallback) it = fallback;
-            }
-            if ((!it || !it.certificate_base64) && viewCert.getAttribute('data-fallback-any')) {
-              it = {
-                module_name: (it && it.module_name) || 'Evidence',
-                certificate_base64: viewCert.getAttribute('data-fallback-any'),
-                certificate_filename: viewCert.getAttribute('data-fallback-fn') || 'evidence',
-              };
-            }
+            var it = resolveHrEvidenceItem(lastSessionPayload, cid, sid);
             if (it && it.certificate_base64) openHrCertModal(it);
             return;
           }
