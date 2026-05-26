@@ -224,6 +224,26 @@
       <p id="visibilityStatus" role="status" aria-live="polite"></p>
       </div><!-- /visibilitySection -->
 
+      <hr style="border:none; border-top:1px solid var(--nhsuk-border); margin:1.25rem 0;">
+      <h2 style="font-size:1.125rem; font-weight:700; margin:0 0 0.35rem 0;">Change password</h2>
+      <p class="nhsuk-body-s" style="color:var(--nhsuk-secondary-text); margin:0 0 0.75rem 0;">Enter your current password and choose a new one (at least 8 characters).</p>
+      <form id="formChangePassword" novalidate autocomplete="off">
+        <div class="nhsuk-form-group">
+          <label class="nhsuk-label" for="cpCurrent">Current password</label>
+          <input class="nhsuk-input" type="password" id="cpCurrent" name="current_password" autocomplete="current-password" required>
+        </div>
+        <div class="nhsuk-form-group">
+          <label class="nhsuk-label" for="cpNew">New password</label>
+          <input class="nhsuk-input" type="password" id="cpNew" name="new_password" autocomplete="new-password" required minlength="8">
+        </div>
+        <div class="nhsuk-form-group">
+          <label class="nhsuk-label" for="cpConfirm">Confirm new password</label>
+          <input class="nhsuk-input" type="password" id="cpConfirm" autocomplete="new-password" required minlength="8">
+        </div>
+        <button type="submit" class="nhsuk-button nhsuk-button--secondary" id="btnChangePassword">Update password</button>
+        <p id="changePwStatus" role="status" aria-live="polite" style="min-height:1.1rem; font-size:0.875rem; margin-top:0.5rem;"></p>
+      </form>
+
       <button type="button" class="nhsuk-button" id="btnSaveAll" style="margin-top:1.25rem;">Save and go to dashboard</button>
       <p id="saveAllStatus" role="status" aria-live="polite" style="min-height:1.1rem; font-size:0.875rem;"></p>
     </section>
@@ -649,6 +669,48 @@
         // 3. Navigate to dashboard
         window.location.assign('/static/dashboard/');
       });
+
+      // ── Change password ────────────────────────────────────────────────────────
+      (function wireChangePassword() {
+        var form = document.getElementById('formChangePassword');
+        if (!form) return;
+        var statusEl = document.getElementById('changePwStatus');
+        function setCpStatus(msg, kind) {
+          if (!statusEl) return;
+          statusEl.textContent = msg || '';
+          statusEl.className = kind ? kind : '';
+        }
+        form.addEventListener('submit', async function (e) {
+          e.preventDefault();
+          setCpStatus('');
+          var cur = document.getElementById('cpCurrent').value || '';
+          var neu = document.getElementById('cpNew').value || '';
+          var conf = document.getElementById('cpConfirm').value || '';
+          if (!cur || !neu) {
+            setCpStatus('Enter your current password and a new password.', 'err');
+            return;
+          }
+          if (neu.length < 8) {
+            setCpStatus('New password must be at least 8 characters.', 'err');
+            return;
+          }
+          if (neu !== conf) {
+            setCpStatus('New passwords do not match.', 'err');
+            return;
+          }
+          var btn = document.getElementById('btnChangePassword');
+          if (btn) btn.disabled = true;
+          try {
+            await NHSAuth.changePassword(cur, neu);
+            setCpStatus('Password updated.', 'ok');
+            form.reset();
+          } catch (err) {
+            setCpStatus(err.message || 'Could not change password.', 'err');
+          } finally {
+            if (btn) btn.disabled = false;
+          }
+        });
+      })();
 
       // ── Visibility panel ──────────────────────────────────────────────────────
       var _visAllowlist = []; // [{trust_name, trust_ods}]

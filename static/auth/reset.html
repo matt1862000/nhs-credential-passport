@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="application-name" content="DocPass">
+  <meta name="theme-color" content="#005eb8">
+
+  <title>Reset password &mdash; DocPass</title>
+  <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
+  <style>
+    .auth-card { max-width: 28rem; }
+    .auth-card .nhsuk-hint { display: block; font-size: 0.875rem; color: var(--nhsuk-secondary-text); margin-top: 0.35rem; line-height: 1.45; }
+    .auth-success {
+      margin: 0.5rem 0 0 0;
+      padding: 0.85rem 1rem;
+      background: #f0f7eb;
+      border: 1px solid #c5d8b7;
+      border-left: 4px solid #007f3b;
+      border-radius: 4px;
+      font-size: 0.9375rem;
+    }
+  </style>
+</head>
+<body>
+  <header class="nhsuk-header" role="banner">
+    <div class="nhsuk-header__container">
+      <div class="nhsuk-header__service">
+        <a class="nhsuk-header__service-logo nhsuk-header__service-logo--docpass" href="/" aria-label="DocPass home">
+          <img class="docpass-header-logo" src="/static/shared/docpass-logo.png?v=20260519-1" alt="DocPass &mdash; professional credential wallet" width="420" height="146">
+        </a>
+      </div>
+      <nav class="nhsuk-topnav" aria-label="Top">
+        <a href="/static/auth/">Back to sign in</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="nhsuk-main" id="maincontent" role="main">
+    <h1 class="nhsuk-page-heading">Choose a new password</h1>
+    <p class="nhsuk-lead">Set a new password for your DocPass account. Use at least 8 characters.</p>
+
+    <section class="nhsuk-card auth-card" id="resetCard">
+      <form id="formReset" novalidate>
+        <div class="nhsuk-form-group">
+          <label class="nhsuk-label" for="newPassword">New password</label>
+          <input class="nhsuk-input" type="password" id="newPassword" name="new_password" autocomplete="new-password" required minlength="8">
+        </div>
+        <div class="nhsuk-form-group">
+          <label class="nhsuk-label" for="confirmPassword">Confirm new password</label>
+          <input class="nhsuk-input" type="password" id="confirmPassword" autocomplete="new-password" required minlength="8">
+        </div>
+        <button type="submit" class="nhsuk-button">Save new password</button>
+      </form>
+      <p class="nhsuk-error-msg" id="resetError" hidden role="alert"></p>
+      <div class="auth-success" id="resetSuccess" hidden role="status" aria-live="polite"></div>
+      <p style="margin:1rem 0 0 0; font-size:0.9375rem;">
+        <a href="/static/auth/">Back to sign in</a>
+      </p>
+    </section>
+  </main>
+
+  <script>
+    (function () {
+      var params = new URLSearchParams(window.location.search);
+      var token = (params.get('token') || '').trim();
+
+      function showErr(msg) {
+        var el = document.getElementById('resetError');
+        if (!el) return;
+        el.textContent = msg || '';
+        el.hidden = !msg;
+      }
+      function showOk(msg) {
+        var el = document.getElementById('resetSuccess');
+        if (!el) return;
+        el.innerHTML = msg || '';
+        el.hidden = !msg;
+      }
+      function setBusy(busy) {
+        var form = document.getElementById('formReset');
+        var btn = form.querySelector('button[type="submit"]');
+        if (!btn) return;
+        if (busy) {
+          if (btn.dataset.defaultSubmitLabel === undefined) btn.dataset.defaultSubmitLabel = btn.textContent;
+          btn.disabled = true;
+          btn.setAttribute('aria-busy', 'true');
+          btn.textContent = 'Saving\u2026';
+        } else {
+          btn.disabled = false;
+          btn.removeAttribute('aria-busy');
+          if (btn.dataset.defaultSubmitLabel !== undefined) btn.textContent = btn.dataset.defaultSubmitLabel;
+        }
+      }
+
+      if (!token) {
+        showErr("This reset link is missing its token. Request a new one from the sign-in page.");
+        var form = document.getElementById('formReset');
+        if (form) form.querySelector('button[type="submit"]').disabled = true;
+      }
+
+      document.getElementById('formReset').addEventListener('submit', async function (e) {
+        e.preventDefault();
+        showErr('');
+        showOk('');
+        if (!token) return;
+        var neu = document.getElementById('newPassword').value || '';
+        var conf = document.getElementById('confirmPassword').value || '';
+        if (neu.length < 8) {
+          showErr('New password must be at least 8 characters.');
+          return;
+        }
+        if (neu !== conf) {
+          showErr('New passwords do not match.');
+          return;
+        }
+        setBusy(true);
+        try {
+          var res = await fetch('/api/auth/reset-password', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: token, new_password: neu }),
+          });
+          var data = null;
+          try { data = await res.json(); } catch (e2) { data = null; }
+          if (!res.ok) {
+            var d = data && data.detail;
+            throw new Error(typeof d === 'string' ? d : 'Could not reset password');
+          }
+          showOk('Password updated. <a href="/static/auth/">Sign in</a> with your new password.');
+          document.getElementById('formReset').reset();
+          var btn = document.querySelector('#formReset button[type="submit"]');
+          if (btn) btn.disabled = true;
+        } catch (err) {
+          showErr(err.message || 'Could not reset password');
+        } finally {
+          setBusy(false);
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

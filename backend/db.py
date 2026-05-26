@@ -132,6 +132,7 @@ def init_db():
         _ensure_hr_audit_log_table(conn)
         _ensure_hr_verifier_links_table(conn)
         _ensure_hr_welcome_templates_table(conn)
+        _ensure_password_resets_table(conn)
         _ensure_seed_privileged_user(conn)
         _ensure_seed_rotherham_user(conn)
         _ensure_default_cohorts_for_premium_hr(conn)
@@ -4512,6 +4513,95 @@ def _ensure_hr_welcome_templates_table(conn: sqlite3.Connection) -> None:
             updated_at TEXT NOT NULL
         )
     """)
+
+
+def _ensure_password_resets_table(conn: sqlite3.Connection) -> None:
+    """One-time reset tokens for forgot-password flow.
+
+    The token shown to the user is a high-entropy random string sent by email;
+    we only persist its SHA-256 hash so a DB leak does not let an attacker
+    consume outstanding tokens.
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS password_resets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            token_hash TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            used_at TEXT,
+            ip_hint TEXT
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_password_resets_user_id ON password_resets(user_id)"
+    )
+
+
+def password_reset_create(
+    user_id: int,
+    token_hash: str,
+    expires_at: str,
+    ip_hint: Optional[str] = None,
+) -> int:
+    """Insert a new reset token. Returns the row id."""
+    now = datetime.utcnow().isoformat()
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_password_resets_table(conn)
+        cur = conn.execute(
+            """
+            INSERT INTO password_resets (user_id, token_hash, created_at, expires_at, ip_hint)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (int(user_id), token_hash, now, expires_at, ip_hint),
+        )
+        conn.commit()
+        return int(cur.lastrowid or 0)
+
+
+def password_reset_consume(token_hash: str) -> Optional[int]:
+    """Atomically claim an unused, unexpired token. Returns user_id or None."""
+    if not token_hash:
+        return None
+    now_iso = datetime.utcnow().isoformat()
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_password_resets_table(conn)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            """
+            SELECT id, user_id, expires_at, used_at
+            FROM password_resets
+            WHERE token_hash = ?
+            """,
+            (token_hash,),
+        ).fetchone()
+        if not row:
+            return None
+        if row["used_at"]:
+            return None
+        if (row["expires_at"] or "") <= now_iso:
+            return None
+        cur = conn.execute(
+            "UPDATE password_resets SET used_at = ? WHERE id = ? AND used_at IS NULL",
+            (now_iso, int(row["id"])),
+        )
+        if cur.rowcount != 1:
+            return None
+        conn.commit()
+        return int(row["user_id"])
+
+
+def password_reset_invalidate_outstanding(user_id: int) -> int:
+    """Mark all unused tokens for this user as consumed (called after a successful reset)."""
+    now_iso = datetime.utcnow().isoformat()
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_password_resets_table(conn)
+        cur = conn.execute(
+            "UPDATE password_resets SET used_at = ? WHERE user_id = ? AND used_at IS NULL",
+            (now_iso, int(user_id)),
+        )
+        conn.commit()
+        return int(cur.rowcount or 0)
 
 
 def hr_welcome_templates_list(hr_trust: str) -> list[dict]:

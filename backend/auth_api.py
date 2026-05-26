@@ -735,6 +735,147 @@ async def auth_change_password(request: Request):
     return {"ok": True}
 
 
+# ── Forgot / reset password ────────────────────────────────────────────────
+#
+# Self-serve flow:
+#   1) User submits email on /static/auth/forgot.html → POST /auth/forgot-password
+#      Server always returns 200 (never confirms whether the email exists) and,
+#      when the address matches a user, emails a short-lived single-use link.
+#   2) User opens the link /static/auth/reset.html?token=… and submits a new
+#      password → POST /auth/reset-password { token, new_password }.
+#
+# Tokens are random 32-byte url-safe strings; only their SHA-256 hash is stored.
+# Tokens expire after 15 minutes and are single-use; any outstanding tokens for
+# the user are invalidated after a successful reset.
+
+PASSWORD_RESET_TTL_MINUTES = 15
+
+
+def _password_reset_token_hash(raw_token: str) -> str:
+    import hashlib
+
+    return hashlib.sha256((raw_token or "").encode("utf-8")).hexdigest()
+
+
+def _password_reset_link(request: Request, raw_token: str) -> str:
+    base = _public_app_base(request)
+    return f"{base}/static/auth/reset.html?token={raw_token}"
+
+
+def _send_password_reset_email(*, request: Request, to_email: str, raw_token: str) -> None:
+    """Best-effort send of a reset link. Never raises — email failures must not
+    leak whether the address exists to the caller."""
+    from . import email_service
+
+    link = _password_reset_link(request, raw_token)
+    subject = "DocPass password reset"
+    text_body = (
+        "We received a request to reset the password for your DocPass account.\n\n"
+        f"Use the link below to set a new password (valid for {PASSWORD_RESET_TTL_MINUTES} minutes):\n\n"
+        f"{link}\n\n"
+        "If you didn't request this, you can ignore this email — your password will not change.\n"
+    )
+    html_body = (
+        "<p>We received a request to reset the password for your DocPass account.</p>"
+        f"<p>Use the link below to set a new password (valid for <strong>{PASSWORD_RESET_TTL_MINUTES} minutes</strong>):</p>"
+        f'<p><a href="{link}">{link}</a></p>'
+        "<p>If you didn't request this, you can ignore this email — your password will not change.</p>"
+    )
+    try:
+        email_service.send_email(
+            to=to_email, subject=subject, text_body=text_body, html_body=html_body
+        )
+    except Exception:
+        # email_service.send_email already swallows its own errors, but be defensive.
+        pass
+
+
+def _client_ip_hint(request: Request) -> Optional[str]:
+    try:
+        client = request.client
+        return client.host if client else None
+    except Exception:
+        return None
+
+
+@router.post("/auth/forgot-password")
+@limiter.limit("5/minute")
+def auth_forgot_password(request: Request, body: dict, background_tasks: BackgroundTasks):
+    """Generate (when the account exists) a single-use reset token and email it."""
+    import secrets
+    from datetime import timedelta
+
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Expected a JSON object")
+    email = _normalize_email(body.get("email") or "")
+    # Never tell the caller whether the address exists.
+    generic_ok = {
+        "ok": True,
+        "message": (
+            "If that account exists, we've sent reset instructions to its email. "
+            "The link is valid for 15 minutes."
+        ),
+    }
+    if not email or not EMAIL_RE.match(email):
+        return generic_ok
+
+    u = db.user_get_by_email(email)
+    if u and u.get("id"):
+        raw_token = secrets.token_urlsafe(32)
+        token_hash = _password_reset_token_hash(raw_token)
+        expires_at = (datetime.utcnow() + timedelta(minutes=PASSWORD_RESET_TTL_MINUTES)).isoformat()
+        try:
+            db.password_reset_create(
+                user_id=int(u["id"]),
+                token_hash=token_hash,
+                expires_at=expires_at,
+                ip_hint=_client_ip_hint(request),
+            )
+            background_tasks.add_task(
+                _send_password_reset_email,
+                request=request,
+                to_email=email,
+                raw_token=raw_token,
+            )
+        except Exception:
+            # Swallow — still return generic success so we don't leak account existence.
+            pass
+
+    return generic_ok
+
+
+@router.post("/auth/reset-password")
+@limiter.limit("5/minute")
+def auth_reset_password(request: Request, body: dict):
+    """Consume a reset token and set a new password."""
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Expected a JSON object")
+    raw_token = str(body.get("token") or "").strip()
+    new_pw = str(body.get("new_password") or "")
+    if not raw_token:
+        raise HTTPException(status_code=400, detail="Missing reset token")
+    if len(new_pw) < 8:
+        raise HTTPException(status_code=400, detail="New password must be at least 8 characters")
+
+    token_hash = _password_reset_token_hash(raw_token)
+    user_id = db.password_reset_consume(token_hash)
+    if not user_id:
+        raise HTTPException(
+            status_code=400,
+            detail="This reset link has expired or already been used. Request a new one.",
+        )
+
+    u = db.user_get_by_id(user_id)
+    if not u:
+        # Token referenced a now-deleted account.
+        raise HTTPException(status_code=400, detail="This reset link is no longer valid.")
+
+    h = bcrypt.hashpw(new_pw.encode("utf-8"), bcrypt.gensalt()).decode("ascii")
+    db.user_set_password(int(user_id), h, clear_must_change=True)
+    db.password_reset_invalidate_outstanding(int(user_id))
+    return {"ok": True}
+
+
 @router.put("/me/profile")
 async def me_profile_put(request: Request):
     uid = require_user_id(request)
