@@ -1176,6 +1176,44 @@
       }
     }
 
+    var STAFF_POLL_MS = 30000;
+    var _staffPollTimer = null;
+    var _staffPollInFlight = false;
+
+    function staffPollPaused() {
+      if (document.hidden) return true;
+      var fixModal = document.getElementById('fixReshareModal');
+      if (fixModal && !fixModal.hidden) return true;
+      var addBusy = document.querySelector('#addForm button[type="submit"][data-busy="1"]');
+      if (addBusy) return true;
+      return false;
+    }
+
+    async function staffPollTick() {
+      if (_staffPollInFlight) return;
+      if (staffPollPaused()) return;
+      if (!window.NHSAuth || !NHSAuth.user) return;
+      _staffPollInFlight = true;
+      try {
+        await pullMergeFromServer();
+        await refreshVerifiedMap();
+        renderList();
+      } catch (e) {
+        console.warn('My training poll failed', e);
+      } finally {
+        _staffPollInFlight = false;
+      }
+    }
+
+    function startStaffPolling() {
+      if (_staffPollTimer) clearInterval(_staffPollTimer);
+      _staffPollTimer = setInterval(staffPollTick, STAFF_POLL_MS);
+    }
+
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden) void staffPollTick();
+    });
+
     function staffHasAnyTrainingRecord() {
       return getStored().some(function (c) {
         return !!(c && !c.revoked);
@@ -3830,6 +3868,7 @@
       await applyProfileToAddForm();
       applyProfileGateUi();
       renderList();
+      startStaffPolling();
 
       if (/^#(list|add|import|bulk)$/.test(window.location.hash)) {
         var tab = document.querySelector('.nhsuk-tabs button[data-tab="' + window.location.hash.slice(1) + '"]');
