@@ -2896,9 +2896,21 @@
       return mode === 'expiry' ? 'expiry' : 'name';
     }
 
+    function isCredentialDeclined(c) {
+      if (!c) return false;
+      var v = (verifiedMap && verifiedMap[String(c.credential_id || '').trim()]) || null;
+      var st = v && v.status ? String(v.status).toUpperCase().trim() : '';
+      return !!(v && v.shared && st === 'DECLINED');
+    }
+
     function sortTrainingRecords(items) {
       var mode = getTrainingSortMode();
       return (items || []).slice().sort(function (a, b) {
+        // Always float HR-declined records to the top so the doctor sees them
+        // without scrolling and can Fix and reshare quickly.
+        var ad = isCredentialDeclined(a) ? 0 : 1;
+        var bd = isCredentialDeclined(b) ? 0 : 1;
+        if (ad !== bd) return ad - bd;
         if (mode === 'expiry') {
           var ae = String(a.expiry_date || '').trim();
           var be = String(b.expiry_date || '').trim();
