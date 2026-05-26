@@ -37,8 +37,8 @@
   </header>
 
   <main class="nhsuk-main" id="maincontent" role="main">
-    <h1 class="nhsuk-page-heading">Choose a new password</h1>
-    <p class="nhsuk-lead">Set a new password for your DocPass account. Use at least 8 characters.</p>
+    <h1 class="nhsuk-page-heading" id="resetPageTitle">Choose a new password</h1>
+    <p class="nhsuk-lead" id="resetPageLead">Set a new password for your DocPass account. Use at least 8 characters.</p>
 
     <section class="nhsuk-card auth-card" id="resetCard">
       <form id="formReset" novalidate>
@@ -54,7 +54,7 @@
       </form>
       <p class="nhsuk-error-msg" id="resetError" hidden role="alert"></p>
       <div class="auth-success" id="resetSuccess" hidden role="status" aria-live="polite"></div>
-      <p style="margin:1rem 0 0 0; font-size:0.9375rem;">
+      <p id="resetBackLink" style="margin:1rem 0 0 0; font-size:0.9375rem;">
         <a href="/static/auth/">Back to sign in</a>
       </p>
     </section>
@@ -128,10 +128,16 @@
             var d = data && data.detail;
             throw new Error(typeof d === 'string' ? d : 'Could not reset password');
           }
+          var title = document.getElementById('resetPageTitle');
+          if (title) title.textContent = 'Password changed';
+          document.title = 'Password changed — DocPass';
+          var lead = document.getElementById('resetPageLead');
+          if (lead) lead.hidden = true;
+          var formEl = document.getElementById('formReset');
+          if (formEl) formEl.hidden = true;
+          var backLink = document.getElementById('resetBackLink');
+          if (backLink) backLink.hidden = true;
           showOk('Password updated. <a href="/static/auth/">Sign in</a> with your new password.');
-          document.getElementById('formReset').reset();
-          var btn = document.querySelector('#formReset button[type="submit"]');
-          if (btn) btn.disabled = true;
         } catch (err) {
           showErr(err.message || 'Could not reset password');
         } finally {
