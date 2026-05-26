@@ -71,6 +71,7 @@
         var doctorId = payload && payload.doctor_user_id;
         var rows = [];
         (payload && payload.items || []).forEach(function (it) {
+          if (String(it.status || '').toUpperCase() !== 'VERIFIED') return;
           (it.mandatory_needs_review || []).forEach(function (t) {
             rows.push({ item: it, topic: t });
           });
@@ -1398,10 +1399,16 @@
             : portfolioSession;
           var pill = evidenceStatusPill(it);
           var isArchived = st === 'VERIFIED' || st === 'DECLINED';
-          var fitHint =
-            (it.mandatory_needs_review || []).length
-              ? '<p class="hr-evidence-fit-hint">Also in requirement fit review below — decide whether it satisfies each trust requirement.</p>'
-              : '';
+          var fitHint = '';
+          if ((it.mandatory_needs_review || []).length) {
+            if (st === 'VERIFIED') {
+              fitHint =
+                '<p class="hr-evidence-fit-hint">Also in requirement fit review below — decide whether it satisfies each trust requirement.</p>';
+            } else if (st !== 'DECLINED' && st !== 'NOT_SHARED') {
+              fitHint =
+                '<p class="hr-evidence-fit-hint">Verify the evidence to decide whether it satisfies a trust requirement (requirement fit review).</p>';
+            }
+          }
           var notSharedHint =
             st === 'NOT_SHARED'
               ? '<p class="hr-evidence-fit-hint">Not shared with HR yet — ask the doctor to share before you can verify evidence.</p>'
