@@ -650,10 +650,46 @@
       var lastInboxGroups = [];
       var lastSessionPayload = null;
       var lastItemsFixedSessionId = null;
-      var HR_SESSION_POLL_MS = 15000;
+      var HR_POLL_MS = 15000;
       var _hrSessionPollTimer = null;
       var _hrSessionPollInFlight = false;
       var _hrSessionActionInFlight = false;
+      var _hrInboxPollTimer = null;
+      var _hrInboxPollInFlight = false;
+
+      function stopInboxPoll() {
+        if (_hrInboxPollTimer) {
+          clearInterval(_hrInboxPollTimer);
+          _hrInboxPollTimer = null;
+        }
+      }
+
+      function startInboxPoll() {
+        stopInboxPoll();
+        var inboxView = document.getElementById('inboxView');
+        if (!inboxView || inboxView.hidden) return;
+        _hrInboxPollTimer = setInterval(function () {
+          if (document.hidden) return;
+          if (_hrInboxPollInFlight) return;
+          var iv = document.getElementById('inboxView');
+          if (!iv || iv.hidden) {
+            stopInboxPoll();
+            return;
+          }
+          void pollInboxQuiet();
+        }, HR_POLL_MS);
+      }
+
+      async function pollInboxQuiet() {
+        _hrInboxPollInFlight = true;
+        try {
+          await loadInbox(true);
+        } catch (e) {
+          console.warn('HR inbox poll failed', e);
+        } finally {
+          _hrInboxPollInFlight = false;
+        }
+      }
 
       function stopSessionViewPoll() {
         if (_hrSessionPollTimer) {
@@ -675,7 +711,7 @@
             return;
           }
           void pollSessionViewQuiet(fixedSessionId);
-        }, HR_SESSION_POLL_MS);
+        }, HR_POLL_MS);
       }
 
       async function pollSessionViewQuiet(fixedSessionId) {
@@ -1239,12 +1275,7 @@
         });
       }
 
-      async function loadInbox() {
-        var tbody = document.getElementById('sessionsTbody');
-        var summaryEl = document.getElementById('inboxSummary');
-        tbody.innerHTML = '<tr><td colspan="4" class="hr-muted">Loading…</td></tr>';
-        if (summaryEl) summaryEl.textContent = '';
-        var data = await apiJson('/api/hr/shares?limit=200');
+      function ingestInboxSharesData(data) {
         var all = (data.sessions || []);
         var sessions = all.filter(function (s) {
           var sk = String(s.share_kind || 'review').toLowerCase();
@@ -1255,57 +1286,21 @@
         });
         lastInboxGroups = aggregateDoctorGroups(sessions);
         fillInboxModuleSelect(lastInboxGroups);
-        var groups = filterInboxGroups(lastInboxGroups);
-        if (summaryEl) {
-          if (inboxTab === 'new') {
-            if (groups.length === 0) {
-              summaryEl.innerHTML = 'Nothing waiting — <strong>all caught up</strong> for now.';
-            } else if (groups.length === 1) {
-              summaryEl.innerHTML = '<strong>1</strong> doctor still has records to verify.';
-            } else {
-              summaryEl.innerHTML = '<strong>' + String(groups.length) + '</strong> doctors still have records to verify.';
-            }
-          } else {
-            summaryEl.innerHTML = groups.length === 0
-              ? 'No completed sets in this list yet.'
-              : '<strong>' + String(groups.length) + '</strong> doctor(s) with every submission fully verified or declined.';
-          }
+      }
+
+      async function loadInbox(quiet) {
+        var tbody = document.getElementById('sessionsTbody');
+        var summaryEl = document.getElementById('inboxSummary');
+        if (!quiet) {
+          if (tbody) tbody.innerHTML = '<tr><td colspan="4" class="hr-muted">Loading…</td></tr>';
+          if (summaryEl) summaryEl.textContent = '';
         }
-        var rows = groups.map(function (g) {
-          var when = formatSharedAt(g.created_at);
-          var sub = '';
-          if ((g._session_count || 0) > 1) {
-            sub = '<div class="hr-date-sub">' + String(g._session_count) + ' submissions · latest below</div>';
-          }
-          var reviewHref =
-            g.doctor_user_id != null && g.doctor_user_id !== ''
-              ? '/static/hr/?doctor=' + encodeURIComponent(String(g.doctor_user_id))
-              : '/static/hr/?session=' + encodeURIComponent(String((g.sessions && g.sessions[0] && g.sessions[0].session_id) || ''));
-          return (
-            '<tr>' +
-              '<td>' + doctorCellHtml(g) + '</td>' +
-              '<td><div class="hr-date-main">' + esc(when) + '</div>' + sub + '</td>' +
-              '<td>' + statusPillsHtml(g) + '</td>' +
-              '<td class="hr-open-wrap"><a class="hr-open-btn" href="' + reviewHref + '">Review</a></td>' +
-            '</tr>'
-          );
-        }).join('');
-        tbody.innerHTML =
-          rows ||
-          '<tr><td colspan="4" class="hr-muted">' +
-            (inboxTab === 'new' ? 'No sets need action right now.' : 'No completed sets to show.') +
-            (lastInboxGroups.length && groups.length < lastInboxGroups.length
-              ? ' (filters hide ' + (lastInboxGroups.length - groups.length) + ' doctor' +
-                (lastInboxGroups.length - groups.length === 1 ? '' : 's') + '.)'
-              : '') +
-            '</td></tr>';
+        var data = await apiJson('/api/hr/shares?limit=200');
+        ingestInboxSharesData(data);
+        rerenderInboxFromCache();
       }
 
       function rerenderInboxFromCache() {
-        if (!lastInboxGroups.length) {
-          void loadInbox();
-          return;
-        }
         var tbody = document.getElementById('sessionsTbody');
         var summaryEl = document.getElementById('inboxSummary');
         fillInboxModuleSelect(lastInboxGroups);
@@ -3042,6 +3037,7 @@
         wireItemsBulkHandlers();
 
         if (doctorId) {
+          stopInboxPoll();
           show(document.getElementById('sessionView'), true);
           show(document.getElementById('inboxView'), false);
           itemsTab = loadStoredTab(LS_ITEMS_TAB, 'new');
@@ -3052,6 +3048,7 @@
           });
           await loadDoctorQueue(doctorId);
         } else if (sessionId) {
+          stopInboxPoll();
           show(document.getElementById('sessionView'), true);
           show(document.getElementById('inboxView'), false);
           itemsTab = loadStoredTab(LS_ITEMS_TAB, 'new');
@@ -3072,6 +3069,7 @@
             await loadInbox();
           });
           await loadInbox();
+          startInboxPoll();
         }
       })();
 })();
