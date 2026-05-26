@@ -3070,7 +3070,7 @@
         var declinedBlock = isDeclined
           ? ('<div class="staff-declined-box"><strong>HR declined this record.</strong>'
             + (v.decline_reason ? ' ' + escapeHtml(v.decline_reason) : '')
-            + ' Use <strong>Fix and reshare</strong> to update the evidence or any details (module, dates, issuing trust) and send it back to HR as <em>Pending verification</em>. Use <strong>Renew</strong> instead if this completion has expired and you have a new one to log.</div>')
+            + ' Use <strong>Fix and reshare</strong> to update the evidence or any details (module, dates, issuing trust).</div>')
           : '';
         return `
           <div class="nhsuk-card ${c.revoked ? 'revoked' : ''}" data-id="${c.credential_id}">
