@@ -3081,7 +3081,7 @@
                 <div class="nhsuk-card__meta">Expires ${c.expiry_date}${c.revoked ? ' · Revoked' : ''}</div>
                 <span class="nhsuk-tag nhsuk-tag--${status}">${expiryStatusLabel(status)}</span>${verifiedTag}${pendingTag}${declinedTag}
                 ${actionsHtml}
-                ${isExpired && !alreadyVerified && !alreadyPending ? '<p class="nhsuk-hint" style="margin:0.5rem 0 0 0;">Expired training isn\'t sent to HR. Tap <strong>Renew</strong> to log a new completion — that will be shared with HR automatically.</p>' : ''}
+                ${isExpired && !alreadyVerified && !alreadyPending ? '<div class="staff-declined-box">Expired training isn\'t sent to HR. Tap <strong>Renew</strong> to log a new completion — that will be shared with HR automatically.</div>' : ''}
                 ${!isExpired && !alreadyVerified && !alreadyPending && !c.import_evidence_batch && !c.import_evidence_id ? '<p class="nhsuk-hint" style="margin:0.5rem 0 0 0;">Sent to HR automatically when added. Downloadable proof is available after verification — use the <strong>Download</strong> tab.</p>' : ''}
                 ${declinedBlock || declinedNote}
               </div>
