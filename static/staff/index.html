@@ -679,13 +679,6 @@
         </div>
         <ul id="esrNeedsFixList" class="staff-esr-needs-fix__list"></ul>
       </div>
-      <div id="verifyAllHrBanner" class="staff-verify-all-banner" hidden>
-        <div class="staff-verify-all-banner__text">
-          <p class="staff-verify-all-banner__title">Send outstanding records to HR</p>
-          <p class="staff-verify-all-banner__desc">Some records were not sent to HR automatically (for example if sending failed or they were added before automatic sending was enabled). Send them in one go.</p>
-        </div>
-        <button type="button" class="nhsuk-button" id="btnVerifyAllHrList" disabled title="Add training first">Send outstanding to HR</button>
-      </div>
       <div id="sendAllCurrentTrustBanner" class="staff-verify-all-banner" hidden>
         <div class="staff-verify-all-banner__text">
           <p class="staff-verify-all-banner__title">Send all to HR at your current trust</p>
@@ -1527,8 +1520,6 @@
     }
     var btnExport = document.getElementById('btnExportSelected');
     if (btnExport) btnExport.addEventListener('click', function () { closeBulkActionsMenu(); exportSelectedAsZip(); });
-    var btnVerifyAllHrList = document.getElementById('btnVerifyAllHrList');
-    if (btnVerifyAllHrList) btnVerifyAllHrList.addEventListener('click', function () { verifyAllWithHr(); });
     var btnSendAllCurrentTrustHr = document.getElementById('btnSendAllCurrentTrustHr');
     if (btnSendAllCurrentTrustHr) btnSendAllCurrentTrustHr.addEventListener('click', function () { sendAllToCurrentTrustHr(); });
     document.getElementById('btnBulkSelectAll').addEventListener('click', function() {
@@ -1558,31 +1549,6 @@
       if (btnExport) btnExport.disabled = n === 0;
     }
 
-    async function verifyAllWithHr() {
-      if (!canRequestHrVerification()) return;
-      var list = getStored().filter(function (c) { return c && c.credential_id && !c.revoked; });
-      var ids = list.filter(function (c) { return isAwaitingHrShare(c, list); }).map(function (c) { return c.credential_id; });
-      if (!ids.length) {
-        alert('No training records left to send to HR.');
-        return;
-      }
-      var btnList = document.getElementById('btnVerifyAllHrList');
-      function setBusy(busy) {
-        if (btnList) { btnList.disabled = busy || !isProfileComplete() || ids.length === 0; btnList.textContent = busy ? 'Sending…' : 'Verify all with HR'; }
-      }
-      try {
-        setBusy(true);
-        await shareCredentialsWithHr(ids, { throwOnError: true });
-      } catch (e) {
-        alert(e.message || e);
-        renderList();
-      } finally {
-        if (btnList) btnList.textContent = 'Verify all with HR';
-        updateVerifyAllHrControls();
-        updateSendAllCurrentTrustControls();
-      }
-    }
-
     async function sendAllToCurrentTrustHr() {
       if (!canRequestHrVerification()) return;
       var candidates = listSendToCurrentTrustCandidates();
@@ -1609,6 +1575,7 @@
         updateSendAllCurrentTrustControls();
       }
     }
+
     document.getElementById('certificate_upload').addEventListener('change', function() {
       const nameEl = document.getElementById('certificate_filename');
       nameEl.textContent = this.files.length ? 'Chosen: ' + this.files[0].name : '';
@@ -3062,7 +3029,6 @@
       const bulkActions = document.querySelector('#bulkExportPanel .nhsuk-bulk-export-panel__actions');
       if (bulkActions) bulkActions.style.display = (filtered.length > 0 && bulkFiltered.length === 0) ? 'none' : '';
       updateBulkExportState();
-      updateVerifyAllHrControls();
       updateSendAllCurrentTrustControls();
       syncStaffOnboardingNudge();
     }
@@ -3466,21 +3432,6 @@
       });
     }
 
-    function updateVerifyAllHrControls() {
-      var list = getStored().filter(function (c) { return c && c.credential_id && !c.revoked; });
-      var unverified = list.filter(function (c) { return isAwaitingHrShare(c, list); });
-      var count = unverified.length;
-      var ok = isProfileComplete();
-      var btnList = document.getElementById('btnVerifyAllHrList');
-      var banner = document.getElementById('verifyAllHrBanner');
-      if (banner) banner.hidden = list.length === 0 || count <= 1;
-      var disable = !ok || count <= 1;
-      if (btnList) {
-        btnList.disabled = disable;
-        btnList.title = !ok ? 'Complete your profile first' : 'Send all outstanding records to HR for verification';
-      }
-    }
-
     function updateSendAllCurrentTrustControls() {
       var candidates = listSendToCurrentTrustCandidates();
       var count = candidates.length;
@@ -3504,7 +3455,6 @@
       var n = document.getElementById('profileGateNotice');
       if (n) n.hidden = ok;
       updateBulkExportState();
-      updateVerifyAllHrControls();
       updateSendAllCurrentTrustControls();
     }
 
