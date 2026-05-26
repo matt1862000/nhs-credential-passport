@@ -650,6 +650,45 @@
       var lastInboxGroups = [];
       var lastSessionPayload = null;
       var lastItemsFixedSessionId = null;
+      var HR_SESSION_POLL_MS = 15000;
+      var _hrSessionPollTimer = null;
+      var _hrSessionPollInFlight = false;
+      var _hrSessionActionInFlight = false;
+
+      function stopSessionViewPoll() {
+        if (_hrSessionPollTimer) {
+          clearInterval(_hrSessionPollTimer);
+          _hrSessionPollTimer = null;
+        }
+      }
+
+      function startSessionViewPoll(fixedSessionId) {
+        stopSessionViewPoll();
+        var sessionView = document.getElementById('sessionView');
+        if (!sessionView || sessionView.hidden) return;
+        _hrSessionPollTimer = setInterval(function () {
+          if (document.hidden) return;
+          if (_hrSessionActionInFlight || _hrSessionPollInFlight) return;
+          var sv = document.getElementById('sessionView');
+          if (!sv || sv.hidden) {
+            stopSessionViewPoll();
+            return;
+          }
+          void pollSessionViewQuiet(fixedSessionId);
+        }, HR_SESSION_POLL_MS);
+      }
+
+      async function pollSessionViewQuiet(fixedSessionId) {
+        _hrSessionPollInFlight = true;
+        try {
+          await refreshPayloadAfterAction(fixedSessionId);
+          renderMandatoryFitSection(lastSessionPayload);
+        } catch (e) {
+          console.warn('HR verify view poll failed', e);
+        } finally {
+          _hrSessionPollInFlight = false;
+        }
+      }
 
       function itemsTableColspan(showSelectCol) {
         return showSelectCol ? 5 : 4;
@@ -730,6 +769,7 @@
           btn.disabled = true;
           btn.textContent = 'Verifying…';
         }
+        _hrSessionActionInFlight = true;
         var failed = 0;
         try {
           for (var i = 0; i < entries.length; i++) {
@@ -750,6 +790,7 @@
           notifyHrInboxChanged();
           if (failed) alert('Could not verify ' + failed + ' record(s). The rest were updated.');
         } finally {
+          _hrSessionActionInFlight = false;
           if (btn) btn.textContent = 'Verify selected';
           syncItemsBulkBarCounts();
         }
@@ -764,6 +805,7 @@
           btn.disabled = true;
           btn.textContent = 'Declining…';
         }
+        _hrSessionActionInFlight = true;
         var failed = 0;
         try {
           for (var i = 0; i < entries.length; i++) {
@@ -788,6 +830,7 @@
           notifyHrInboxChanged();
           if (failed) alert('Could not decline ' + failed + ' record(s). The rest were updated.');
         } finally {
+          _hrSessionActionInFlight = false;
           if (btn) btn.textContent = 'Decline selected';
           syncItemsBulkBarCounts();
         }
@@ -1516,13 +1559,13 @@
         lastSessionPayload = await apiJson('/api/hr/doctors/' + encodeURIComponent(String(doctorUserId)) + '/queue');
         renderItemsTable(lastSessionPayload, null);
         attachItemsRowHandler(null);
+        startSessionViewPoll(null);
       }
 
       function attachItemsRowHandler(fixedSessionId) {
         lastItemsFixedSessionId = fixedSessionId;
         var sessionView = document.getElementById('sessionView');
         if (!sessionView) return;
-        var actionInFlight = false;
         sessionView.onclick = async function (e) {
           var viewCert = e.target && e.target.closest('[data-view-cert="1"]');
           if (viewCert) {
@@ -1533,7 +1576,7 @@
             if (it && it.certificate_base64) openHrCertModal(it);
             return;
           }
-          if (actionInFlight) return;
+          if (_hrSessionActionInFlight) return;
           var fitAccept = e.target && e.target.closest('button[data-fit-accept="1"]');
           var fitReject = e.target && e.target.closest('button[data-fit-reject="1"]');
           if (fitAccept || fitReject) {
@@ -1556,7 +1599,7 @@
               ? 'Record that "' + moduleLabel + '" satisfies "' + topicName + '"?'
               : 'Record that "' + moduleLabel + '" does not satisfy "' + topicName + '"?';
             if (!confirm(confirmMsg)) return;
-            actionInFlight = true;
+            _hrSessionActionInFlight = true;
             fitBtn.disabled = true;
             try {
               var body = {
@@ -1579,7 +1622,7 @@
               alert(err.message || err);
               fitBtn.disabled = false;
             } finally {
-              actionInFlight = false;
+              _hrSessionActionInFlight = false;
             }
             return;
           }
@@ -1590,7 +1633,7 @@
           var cid2 = (v || d || u).getAttribute('data-cid');
           var sidAttr = (v || d || u).getAttribute('data-sid');
           var sessionIdForApi = sidAttr || (fixedSessionId != null ? String(fixedSessionId) : '');
-          actionInFlight = true;
+          _hrSessionActionInFlight = true;
           try {
             if (u) {
               if (
@@ -1598,12 +1641,12 @@
                   'Revert this record to awaiting decision? The doctor will no longer see it as verified by HR at your trust.'
                 )
               ) {
-                actionInFlight = false;
+                _hrSessionActionInFlight = false;
                 return;
               }
               if (!sessionIdForApi) {
                 alert('Missing session for this action.');
-                actionInFlight = false;
+                _hrSessionActionInFlight = false;
                 return;
               }
               u.disabled = true;
@@ -1619,7 +1662,7 @@
             } else if (v) {
               if (!sessionIdForApi) {
                 alert('Missing session for this action.');
-                actionInFlight = false;
+                _hrSessionActionInFlight = false;
                 return;
               }
               v.disabled = true;
@@ -1635,14 +1678,14 @@
             } else {
               if (!sessionIdForApi) {
                 alert('Missing session for this action.');
-                actionInFlight = false;
+                _hrSessionActionInFlight = false;
                 return;
               }
               var reason = (
                 prompt('Why are you declining this record? (This will be sent back to the doctor)') || ''
               ).trim();
               if (!reason) {
-                actionInFlight = false;
+                _hrSessionActionInFlight = false;
                 return;
               }
               d.disabled = true;
@@ -1666,7 +1709,7 @@
             alert(err.message || err);
             await refreshPayloadAfterAction(fixedSessionId);
           } finally {
-            actionInFlight = false;
+            _hrSessionActionInFlight = false;
           }
         };
       }
@@ -1698,6 +1741,7 @@
         }
         renderItemsTable(lastSessionPayload, sessionId);
         attachItemsRowHandler(sessionId);
+        startSessionViewPoll(sessionId);
       }
 
       (async function boot() {
@@ -3018,6 +3062,7 @@
           });
           await loadSession(sessionId);
         } else {
+          stopSessionViewPoll();
           show(document.getElementById('inboxView'), true);
           show(document.getElementById('sessionView'), false);
           inboxTab = loadStoredTab(LS_INBOX_TAB, 'new');
