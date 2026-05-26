@@ -873,7 +873,10 @@
       </div>
       <div class="nhsuk-form-group" style="margin:0 0 0.75rem 0;">
         <label class="nhsuk-label" for="fixReshareTrustName">Issuing organisation</label>
-        <input class="nhsuk-input" id="fixReshareTrustName" type="text" placeholder="NHS trust or organisation name" autocomplete="off">
+        <div class="nhs-ac-wrap" id="fixReshareTrustAcWrap" style="max-width:none;">
+          <input class="nhsuk-input" id="fixReshareTrustName" type="text" placeholder="NHS trust or organisation name" autocomplete="off" spellcheck="false" role="combobox" aria-autocomplete="list" aria-controls="fixReshareTrustSuggestList" aria-expanded="false">
+          <ul id="fixReshareTrustSuggestList" class="nhs-suggest-list" role="listbox" hidden aria-label="Matching NHS trusts and health boards"></ul>
+        </div>
       </div>
       <div class="nhsuk-form-group" style="margin:0 0 1rem 0;">
         <label class="nhsuk-label" for="fixReshareTrustOds">Issuing organisation ODS code</label>
@@ -3291,6 +3294,8 @@
       var trust = issuingTrustFromCredential(c);
       if (trustNameEl) trustNameEl.value = trust.name || '';
       if (trustOdsEl) trustOdsEl.value = trust.ods || '';
+      fixReshareLastAutoOds = { name: trust.name || '', ods: trust.ods || '' };
+      fixReshareHideTrustSuggest();
       fixReshareState.credentialId = c.credential_id;
       fixReshareState.original = {
         module_code: match ? match.code : 'non_cstf',
@@ -3319,7 +3324,189 @@
       if (modal) modal.hidden = true;
       fixReshareState.credentialId = null;
       fixReshareState.original = null;
+      fixReshareHideTrustSuggest();
     }
+
+    // ---- Fix-and-reshare: Issuing organisation autosuggest ----
+    var fixReshareTrustItems = [];
+    var fixReshareTrustActive = -1;
+    var fixReshareTrustDebounce = null;
+    var fixReshareLastAutoOds = { name: '', ods: '' };
+
+    function fixReshareHideTrustSuggest() {
+      var list = document.getElementById('fixReshareTrustSuggestList');
+      var inp = document.getElementById('fixReshareTrustName');
+      if (list) { list.hidden = true; list.innerHTML = ''; }
+      fixReshareTrustItems = [];
+      fixReshareTrustActive = -1;
+      if (inp) {
+        inp.setAttribute('aria-expanded', 'false');
+        inp.removeAttribute('aria-activedescendant');
+      }
+    }
+
+    function fixReshareApplyTrustIndex(idx) {
+      var inp = document.getElementById('fixReshareTrustName');
+      var odsEl = document.getElementById('fixReshareTrustOds');
+      if (!inp || idx < 0 || idx >= fixReshareTrustItems.length) return;
+      var it = fixReshareTrustItems[idx];
+      inp.value = it.name || inp.value;
+      if (odsEl && it.ods) {
+        var curOds = String(odsEl.value || '').trim();
+        var shouldReplace = !curOds || curOds === fixReshareLastAutoOds.ods;
+        if (shouldReplace) odsEl.value = it.ods;
+        fixReshareLastAutoOds = { name: String(inp.value || '').trim(), ods: it.ods };
+      }
+      fixReshareHideTrustSuggest();
+    }
+
+    function fixReshareUpdateTrustHighlight() {
+      var list = document.getElementById('fixReshareTrustSuggestList');
+      var inp = document.getElementById('fixReshareTrustName');
+      if (!list) return;
+      var lis = list.querySelectorAll('li[role="option"]');
+      for (var j = 0; j < lis.length; j++) {
+        lis[j].setAttribute('aria-selected', j === fixReshareTrustActive ? 'true' : 'false');
+      }
+      if (fixReshareTrustActive >= 0 && lis[fixReshareTrustActive] && inp) {
+        inp.setAttribute('aria-activedescendant', lis[fixReshareTrustActive].id);
+        try { lis[fixReshareTrustActive].scrollIntoView({ block: 'nearest' }); } catch (e2) {}
+      } else if (inp) {
+        inp.removeAttribute('aria-activedescendant');
+      }
+    }
+
+    function fixReshareRenderTrustSuggest(items) {
+      var list = document.getElementById('fixReshareTrustSuggestList');
+      var inp = document.getElementById('fixReshareTrustName');
+      if (!list || !inp) return;
+      fixReshareTrustItems = items || [];
+      list.innerHTML = '';
+      fixReshareTrustActive = -1;
+      if (!fixReshareTrustItems.length) {
+        fixReshareHideTrustSuggest();
+        return;
+      }
+      for (var i = 0; i < fixReshareTrustItems.length; i++) {
+        var it = fixReshareTrustItems[i];
+        var li = document.createElement('li');
+        li.setAttribute('role', 'option');
+        li.id = 'fix-reshare-trust-opt-' + i;
+        li.dataset.index = String(i);
+        var nameSpan = document.createElement('span');
+        nameSpan.textContent = it.name;
+        li.appendChild(nameSpan);
+        if (it.ods) {
+          var meta = document.createElement('span');
+          meta.className = 'nhs-suggest-meta';
+          meta.textContent = 'ODS ' + it.ods;
+          li.appendChild(meta);
+        }
+        list.appendChild(li);
+      }
+      list.hidden = false;
+      inp.setAttribute('aria-expanded', 'true');
+    }
+
+    async function fixReshareRunTrustSuggest() {
+      if (!window.NHSOdsTrustSuggest) return;
+      var inp = document.getElementById('fixReshareTrustName');
+      if (!inp) return;
+      var q = String(inp.value || '').trim();
+      if (q.length < 2) { fixReshareHideTrustSuggest(); return; }
+      try {
+        var items = await NHSOdsTrustSuggest.search(q, { minLength: 2, limit: 8 });
+        fixReshareRenderTrustSuggest(items);
+      } catch (e) {
+        fixReshareHideTrustSuggest();
+      }
+    }
+
+    async function fixReshareRunTrustOdsLookup() {
+      var nameEl = document.getElementById('fixReshareTrustName');
+      var odsEl = document.getElementById('fixReshareTrustOds');
+      if (!nameEl || !odsEl) return;
+      var t = nameEl.value.trim();
+      if (t.length < 2) return;
+      var curOds = odsEl.value.trim();
+      var shouldReplace = !curOds || curOds === fixReshareLastAutoOds.ods;
+      if (!shouldReplace) return;
+      try {
+        if (!window.NHSOdsTrustSuggest) return;
+        var org = await NHSOdsTrustSuggest.resolveFromServer(t);
+        if (!org || !org.OrgId) {
+          org = await NHSOdsTrustSuggest.pickBestOrg(t, { minLength: 3 });
+        }
+        if (!org || !org.OrgId) return;
+        fixReshareLastAutoOds = { name: t, ods: org.OrgId };
+        odsEl.value = org.OrgId;
+        if (org.Name && nameEl.value.trim() === t) {
+          nameEl.value = org.Name;
+          fixReshareLastAutoOds.name = org.Name;
+        }
+      } catch (e) {
+        console.warn('Fix-reshare trust ODS lookup failed', e);
+      }
+    }
+
+    function fixReshareScheduleTrustWork() {
+      if (fixReshareTrustDebounce) clearTimeout(fixReshareTrustDebounce);
+      fixReshareTrustDebounce = setTimeout(function () {
+        fixReshareTrustDebounce = null;
+        void fixReshareRunTrustSuggest();
+        void fixReshareRunTrustOdsLookup();
+      }, 320);
+    }
+
+    (function wireFixReshareTrustUi() {
+      var inp = document.getElementById('fixReshareTrustName');
+      var odsEl = document.getElementById('fixReshareTrustOds');
+      var wrap = document.getElementById('fixReshareTrustAcWrap');
+      var list = document.getElementById('fixReshareTrustSuggestList');
+      if (!inp) return;
+      inp.addEventListener('input', function () {
+        if (!String(inp.value || '').trim()) fixReshareLastAutoOds = { name: '', ods: '' };
+        fixReshareScheduleTrustWork();
+      });
+      inp.addEventListener('change', function () { void fixReshareRunTrustOdsLookup(); });
+      if (odsEl) {
+        odsEl.addEventListener('input', function () {
+          var v = String(odsEl.value || '').trim();
+          if (!v || v !== fixReshareLastAutoOds.ods) fixReshareLastAutoOds = { name: '', ods: '' };
+        });
+      }
+      if (list) {
+        list.addEventListener('mousedown', function (ev) {
+          if (ev.target.closest('li[role="option"]')) ev.preventDefault();
+        });
+        list.addEventListener('click', function (ev) {
+          var li = ev.target.closest('li[role="option"]');
+          if (!li) return;
+          fixReshareApplyTrustIndex(parseInt(li.dataset.index, 10));
+        });
+      }
+      inp.addEventListener('keydown', function (e) {
+        if (!list || list.hidden || !fixReshareTrustItems.length) return;
+        if (e.key === 'Escape') { e.preventDefault(); fixReshareHideTrustSuggest(); return; }
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          fixReshareTrustActive = Math.min(fixReshareTrustActive + 1, fixReshareTrustItems.length - 1);
+          if (fixReshareTrustActive < 0) fixReshareTrustActive = 0;
+          fixReshareUpdateTrustHighlight();
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          fixReshareTrustActive = Math.max(fixReshareTrustActive - 1, 0);
+          fixReshareUpdateTrustHighlight();
+        } else if (e.key === 'Enter' && fixReshareTrustActive >= 0) {
+          e.preventDefault();
+          fixReshareApplyTrustIndex(fixReshareTrustActive);
+        }
+      });
+      inp.addEventListener('blur', function () { setTimeout(fixReshareHideTrustSuggest, 200); });
+      document.addEventListener('click', function (e) {
+        if (wrap && !wrap.contains(e.target)) fixReshareHideTrustSuggest();
+      });
+    })();
 
     window.startFixAndReshare = function (credentialId) {
       var c = getStored().find(function (x) { return x.credential_id === credentialId; });
