@@ -58,6 +58,10 @@ class IssueRequest(BaseModel):
     records: list[CompletionRecord]
     certificate_base64: Optional[str] = None   # optional uploaded certificate (PDF/image)
     certificate_filename: Optional[str] = None
+    # Credentials explicitly being replaced (e.g. Fix-and-reshare of a declined record,
+    # or renewal that happens to share the same dates). Their dedupe keys are exempted
+    # so the wallet duplicate guard does not block the replacement.
+    replaces_credential_ids: Optional[list[str]] = None
 
 
 class IssueResponse(BaseModel):

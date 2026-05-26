@@ -1050,12 +1050,18 @@
       if (!sid || !mc || !cd || !ed || !ods) return null;
       return sid + '|' + mc + '|' + cd + '|' + ed + '|' + ods;
     }
-    function localCompletionDedupeKeys() {
+    function localCompletionDedupeKeys(excludeIds) {
+      var skip = {};
+      (excludeIds || []).forEach(function (id) {
+        var s = String(id || '').trim();
+        if (s) skip[s] = true;
+      });
       var map = {};
       var list = getStored();
       for (var i = 0; i < list.length; i++) {
         var it = list[i];
         if (!it || !it.jwt) continue;
+        if (skip[String(it.credential_id || '').trim()]) continue;
         var k = dedupeKeyFromJwtClaims(parseJwtPayloadNoVerify(it.jwt));
         if (k) map[k] = true;
       }
@@ -3345,8 +3351,12 @@
           return;
         }
       }
+      const renewFromForGuard = (document.getElementById('addRenewFromId').value || '').trim();
+      const fixFromForGuard = (document.getElementById('addFixFromId').value || '').trim();
+      const replacesIds = [renewFromForGuard, fixFromForGuard].filter(Boolean);
+      if (replacesIds.length) body.replaces_credential_ids = replacesIds;
       var dedupeKey = completionDedupeKeyFromAddForm(fd, module_code);
-      if (localCompletionDedupeKeys()[dedupeKey]) {
+      if (localCompletionDedupeKeys(replacesIds)[dedupeKey]) {
         alert('This training is already in your list (same module, completion/expiry dates, and trust).');
         setAddBusy(false);
         return;

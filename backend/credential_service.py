@@ -72,6 +72,43 @@ def wallet_dedupe_keys(wallet_json: str) -> set[str]:
     return keys
 
 
+def wallet_dedupe_keys_for_credentials(wallet_json: str, credential_ids: set[str]) -> set[str]:
+    """Dedupe keys of the wallet entries whose credential_id is in `credential_ids`.
+
+    Used to exempt explicitly-replaced credentials (e.g. Fix-and-reshare of a declined
+    record) from the duplicate guard so the replacement can be issued with the same dates.
+    """
+    keys: set[str] = set()
+    if not credential_ids:
+        return keys
+    wanted = {str(cid).strip() for cid in credential_ids if cid}
+    if not wanted:
+        return keys
+    try:
+        arr = json.loads(wallet_json)
+    except Exception:
+        return keys
+    if not isinstance(arr, list):
+        return keys
+    for item in arr:
+        if not isinstance(item, dict):
+            continue
+        cid = str(item.get("credential_id") or "").strip()
+        if not cid or cid not in wanted:
+            continue
+        jwt_str = item.get("jwt")
+        if not jwt_str:
+            continue
+        try:
+            claims = jose_jwt.get_unverified_claims(jwt_str)
+        except Exception:
+            continue
+        k = _dedupe_key_from_claims(claims)
+        if k:
+            keys.add(k)
+    return keys
+
+
 def get_verification_url_base(base_url: str) -> str:
     base = base_url.rstrip("/")
     return f"{base}/api/credentials/verify"

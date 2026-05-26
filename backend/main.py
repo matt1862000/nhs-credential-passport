@@ -29,6 +29,7 @@ from .credential_service import (
     revoke_credential,
     get_verification_url_base,
     wallet_dedupe_keys,
+    wallet_dedupe_keys_for_credentials,
 )
 from .models import (
     CompletionRecord,
@@ -147,6 +148,9 @@ def api_issue(request: Request, body: IssueRequest):
     base = str(request.base_url).rstrip("/")
     wallet_raw = db.user_wallet_get(uid)
     existing_keys = wallet_dedupe_keys(wallet_raw)
+    replaces_ids = {str(cid).strip() for cid in (body.replaces_credential_ids or []) if cid}
+    if replaces_ids:
+        existing_keys = existing_keys - wallet_dedupe_keys_for_credentials(wallet_raw, replaces_ids)
     results, skipped = issue_credentials(body.records, base, skip_duplicate_keys=existing_keys)
     credentials_out = []
     cert_used = False
