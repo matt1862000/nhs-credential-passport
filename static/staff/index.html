@@ -2628,7 +2628,11 @@
       }).length;
     }
 
-    /** Same rules as auto-send: skip superseded rows and duplicate copies already sent. */
+    /** Same rules as auto-send: skip superseded rows and duplicate copies already sent.
+     *  DECLINED records are treated as settled — the doctor must explicitly use
+     *  Fix and reshare (which resets the existing share row) rather than the page
+     *  silently re-sharing them on load.
+     */
     function isAwaitingHrShare(c, list) {
       list = list || getStored();
       if (!c || !c.credential_id || c.revoked) return false;
@@ -2642,13 +2646,13 @@
           if (String(other.expiry_date || '') !== exp) return false;
           var ov = (verifiedMap && verifiedMap[String(other.credential_id).trim()]) || null;
           var ost = ov && ov.status ? String(ov.status).toUpperCase().trim() : '';
-          return !!(ov && ov.shared && (ost === 'VERIFIED' || ost === 'PENDING'));
+          return !!(ov && ov.shared && (ost === 'VERIFIED' || ost === 'PENDING' || ost === 'DECLINED'));
         });
         if (dupSent) return false;
       }
       var v = (verifiedMap && verifiedMap[String(c.credential_id).trim()]) || null;
       var st = v && v.status ? String(v.status).toUpperCase().trim() : '';
-      return !(v && v.shared && (st === 'VERIFIED' || st === 'PENDING'));
+      return !(v && v.shared && (st === 'VERIFIED' || st === 'PENDING' || st === 'DECLINED'));
     }
 
     function trainingModuleIndex(list) {
