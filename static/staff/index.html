@@ -703,6 +703,7 @@
       </div>
       <form id="addForm">
         <input type="hidden" id="addRenewFromId" value="">
+        <input type="hidden" id="addFixFromId" value="">
         <input type="hidden" id="addFromEsrNeedsFixId" value="">
         <div class="nhsuk-form-group"><label class="nhsuk-label" for="staff_full_name">Your full name</label><input class="nhsuk-input" id="staff_full_name" type="text" name="staff_full_name" required placeholder="Jane Smith" autocomplete="name"></div>
         <div class="nhsuk-form-group"><label class="nhsuk-label" for="staff_identifier">GMC number</label><input class="nhsuk-input" id="staff_identifier" type="text" name="staff_identifier" inputmode="numeric" required placeholder="1234567" maxlength="11" autocomplete="off"></div>
@@ -2964,9 +2965,11 @@
         var verifyBtnAttrs = canVerifyWithHr ? '' : ' disabled';
         var verifyBtnTitle = !profileOk
           ? 'Complete your profile to verify with HR'
-          : (isDeclined ? 'Send again after updating dates or evidence' : (allowResend ? 'You previously sent this to a different trust. Send again to your current trust HR.' : (alreadyPending ? 'Already sent to HR' : (alreadyVerified ? 'Decision already recorded' : ''))));
+          : (isDeclined ? 'Update dates or evidence, then add and reshare to HR' : (allowResend ? 'You previously sent this to a different trust. Send again to your current trust HR.' : (alreadyPending ? 'Already sent to HR' : (alreadyVerified ? 'Decision already recorded' : ''))));
         if (verifyBtnTitle) verifyBtnAttrs += ' title="' + verifyBtnTitle.replace(/"/g, '&quot;') + '"';
-        var verifyBtnOnclick = profileOk ? `onclick="shareCred('${c.credential_id}')"` : `onclick="return openProfileForVerification();"`;
+        var verifyBtnOnclick = isDeclined
+          ? `onclick="startFixAndReshare('${c.credential_id}')"`
+          : (profileOk ? `onclick="shareCred('${c.credential_id}')"` : `onclick="return openProfileForVerification();"`);
         var showVerifyHrButton = !replacedByRenewal && !alreadyVerified && (isDeclined || allowResend);
         var renewButtonHtml = '';
         if (!c.revoked && (status === 'expiring' || status === 'expired')) {
@@ -3091,9 +3094,11 @@
 
     function clearRenewal() {
       var hid = document.getElementById('addRenewFromId');
+      var fixHid = document.getElementById('addFixFromId');
       var panel = document.getElementById('addRenewPanel');
       var titleEl = document.getElementById('customModuleTitle');
       if (hid) hid.value = '';
+      if (fixHid) fixHid.value = '';
       if (panel) panel.hidden = true;
       if (titleEl) titleEl.value = '';
       lastAutoExpiryFromCompletion = '';
@@ -3102,12 +3107,29 @@
       if (submitBtn) submitBtn.textContent = 'Add training';
     }
 
-    window.startRenewal = function (credentialId) {
-      var c = getStored().find(function (x) { return x.credential_id === credentialId; });
+    function completionDateFromCredential(c) {
+      if (!c) return '';
+      if (c.completion_date) return String(c.completion_date).slice(0, 10);
+      var payload = parseJwtPayloadNoVerify(c.jwt);
+      return payload && payload.completion_date ? String(payload.completion_date).slice(0, 10) : '';
+    }
+
+    function issuingTrustFromCredential(c) {
+      if (!c) return { name: '', ods: '' };
+      var payload = parseJwtPayloadNoVerify(c.jwt);
+      return {
+        name: String(c.issuing_trust_name || (payload && payload.issuing_trust_name) || '').trim(),
+        ods: String(
+          c.issuing_trust_ods_code
+          || (payload && (payload.issuing_trust_ods || payload.issuing_trust_ods_code))
+          || ''
+        ).trim(),
+      };
+    }
+
+    function prefillAddFormForCredential(c, opts) {
+      opts = opts || {};
       if (!c) return;
-      document.getElementById('addRenewFromId').value = credentialId;
-      document.getElementById('addRenewModuleLabel').textContent = c.module_name || 'training';
-      document.getElementById('addRenewPanel').hidden = false;
       var modSel = document.getElementById('moduleSelect');
       var titleEl = document.getElementById('customModuleTitle');
       var match = MODULES.find(function (m) { return m.name === c.module_name; });
@@ -3119,18 +3141,63 @@
         if (titleEl) titleEl.value = c.module_name || '';
       }
       syncCustomModuleTitleField();
+      var compEl = document.getElementById('completion_date');
+      var expEl = document.getElementById('expiry_date');
+      var comp = opts.completionDate || completionDateFromCredential(c);
+      var exp = opts.expiryDate || String(c.expiry_date || '').slice(0, 10);
+      if (comp && compEl) compEl.value = comp;
+      if (exp && expEl) {
+        expEl.value = exp;
+        lastAutoExpiryFromCompletion = exp;
+      }
+      var trust = issuingTrustFromCredential(c);
+      var nameEl = document.getElementById('issuing_trust_name');
+      var odsEl = document.getElementById('issuing_trust_ods_code');
+      if (trust.name && nameEl) nameEl.value = trust.name;
+      if (trust.ods && odsEl) odsEl.value = trust.ods;
+      if (trust.name && trust.ods) lastAutoOdsSuggested = { name: trust.name, ods: trust.ods };
+      void applyProfileToAddForm();
+    }
+
+    function goToAddTrainingTab(submitLabel) {
+      document.querySelector('.nhsuk-tabs button[data-tab="add"]').click();
+      var submitBtn = document.querySelector('#addForm button[type="submit"]');
+      if (submitBtn && submitLabel) submitBtn.textContent = submitLabel;
+      var form = document.getElementById('addForm');
+      if (form) form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    window.startFixAndReshare = function (credentialId) {
+      var c = getStored().find(function (x) { return x.credential_id === credentialId; });
+      if (!c) return;
+      var fixHid = document.getElementById('addFixFromId');
+      if (fixHid) fixHid.value = credentialId;
+      if (document.getElementById('addRenewFromId')) document.getElementById('addRenewFromId').value = '';
+      if (document.getElementById('addRenewPanel')) document.getElementById('addRenewPanel').hidden = true;
+      prefillAddFormForCredential(c, {});
+      var certName = document.getElementById('certificate_filename');
+      if (certName) certName.textContent = '';
+      var certInput = document.getElementById('certificate_upload');
+      if (certInput) certInput.value = '';
+      goToAddTrainingTab('Fix and reshare');
+    };
+
+    window.startRenewal = function (credentialId) {
+      var c = getStored().find(function (x) { return x.credential_id === credentialId; });
+      if (!c) return;
+      if (document.getElementById('addFixFromId')) document.getElementById('addFixFromId').value = '';
+      document.getElementById('addRenewFromId').value = credentialId;
+      document.getElementById('addRenewModuleLabel').textContent = c.module_name || 'training';
+      document.getElementById('addRenewPanel').hidden = false;
       var today = new Date();
       var comp = today.toISOString().slice(0, 10);
       var exp = new Date(today);
       exp.setFullYear(exp.getFullYear() + 1);
-      document.getElementById('completion_date').value = comp;
-      document.getElementById('expiry_date').value = exp.toISOString().slice(0, 10);
-      lastAutoExpiryFromCompletion = exp.toISOString().slice(0, 10);
-      void applyProfileToAddForm();
-      document.querySelector('.nhsuk-tabs button[data-tab="add"]').click();
-      var submitBtn = document.querySelector('#addForm button[type="submit"]');
-      if (submitBtn) submitBtn.textContent = 'Add renewal';
-      document.getElementById('addForm').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      prefillAddFormForCredential(c, {
+        completionDate: comp,
+        expiryDate: exp.toISOString().slice(0, 10),
+      });
+      goToAddTrainingTab('Add renewal');
     };
 
     document.getElementById('btnCancelRenew').addEventListener('click', clearRenewal);
@@ -3342,6 +3409,7 @@
         }
         const issued = credsOut[0];
         const renewFrom = (document.getElementById('addRenewFromId').value || '').trim();
+        const fixFrom = (document.getElementById('addFixFromId').value || '').trim();
         const list = getStored();
         var entry = {
           credential_id: issued.credential_id,
@@ -3355,6 +3423,7 @@
           certificate_filename: issued.certificate_filename || null
         };
         if (renewFrom) entry.supersedes_credential_id = renewFrom;
+        else if (fixFrom) entry.supersedes_credential_id = fixFrom;
         list.push(entry);
         setStored(list);
         resolveEsrNeedsFixAfterAdd(module_name);
