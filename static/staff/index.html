@@ -3353,32 +3353,52 @@
         if (errBox) { errBox.textContent = validationError; errBox.hidden = false; }
         return;
       }
+      if (errBox) { errBox.hidden = true; errBox.textContent = ''; }
+      if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+      var b64 = null;
+      var fname = null;
+      var serverResult = null;
       try {
-        if (errBox) { errBox.hidden = true; errBox.textContent = ''; }
-        if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
-        var b64 = null;
-        var fname = null;
         if (file) {
           b64 = await fileToBase64(file);
           fname = file.name || 'evidence';
         }
         if (fixReshareDetailsChanged(inputs)) {
-          await fixReshareIssueReplacement(cid, inputs, b64, fname);
+          serverResult = await fixReshareIssueOnServer(cid, inputs, b64, fname);
         } else {
-          await fixReshareUpdateEvidenceOnly(cid, b64, fname);
+          await fixReshareRefreshEvidenceOnServer(cid, b64, fname);
         }
-        closeFixReshareModal();
       } catch (err) {
         if (errBox) {
           errBox.textContent = (err && err.message) ? err.message : 'Could not re-share — try again.';
           errBox.hidden = false;
         }
-      } finally {
         if (btn) { btn.disabled = false; btn.textContent = 'Re-share with HR'; }
+        return;
       }
+      // Server has confirmed. Close the modal immediately; local cache and UI
+      // refresh happen below as best-effort work (storage quota / network glitches
+      // must not keep the modal open after HR already has the update).
+      closeFixReshareModal();
+      if (btn) { btn.disabled = false; btn.textContent = 'Re-share with HR'; }
+      try {
+        if (serverResult) {
+          fixReshareApplyReplacementLocally(cid, serverResult.issued, inputs, b64 || serverResult.carryB64, fname || serverResult.carryFn);
+          var shareResult = await autoShareCredentialsWithHr([serverResult.issued.credential_id], { skipRender: true });
+          if (shareResult && shareResult.error) {
+            console.warn('Replacement issued but auto-share failed:', shareResult.error);
+          }
+        } else {
+          fixReshareApplyEvidenceLocally(cid, b64, fname);
+        }
+      } catch (cacheErr) {
+        console.warn('Re-share succeeded on server; local cache update was limited.', cacheErr);
+      }
+      try { await refreshVerifiedMap(); } catch (e) {}
+      try { renderList(); } catch (e) {}
     }
 
-    async function fixReshareUpdateEvidenceOnly(cid, b64, fname) {
+    async function fixReshareRefreshEvidenceOnServer(cid, b64, fname) {
       var res = await fetch('/api/me/credentials/' + encodeURIComponent(cid) + '/refresh-evidence', {
         method: 'POST',
         credentials: 'include',
@@ -3386,20 +3406,20 @@
         body: JSON.stringify({ certificate_base64: b64, certificate_filename: fname }),
       });
       if (!res.ok) throw new Error(await res.text());
-      var list = getStored();
-      var i = list.findIndex(function (x) { return x && x.credential_id === cid; });
-      if (i >= 0) {
-        if (b64) list[i].certificate_base64 = b64;
-        if (fname) list[i].certificate_filename = fname;
-        delete list[i].import_evidence_id;
-        delete list[i].import_evidence_batch;
-        setStored(list);
-      }
-      await refreshVerifiedMap();
-      renderList();
     }
 
-    async function fixReshareIssueReplacement(oldCid, inputs, b64, fname) {
+    function fixReshareApplyEvidenceLocally(cid, b64, fname) {
+      var list = getStored();
+      var i = list.findIndex(function (x) { return x && x.credential_id === cid; });
+      if (i < 0) return;
+      if (b64) list[i].certificate_base64 = b64;
+      if (fname) list[i].certificate_filename = fname;
+      delete list[i].import_evidence_id;
+      delete list[i].import_evidence_batch;
+      try { setStored(list); } catch (e) { console.warn(e); }
+    }
+
+    async function fixReshareIssueOnServer(oldCid, inputs, b64, fname) {
       var u = (window.NHSAuth && NHSAuth.user) || {};
       var staffName = String(u.display_name || '').trim();
       var staffId = String(u.gmc_number || '').trim();
@@ -3427,7 +3447,7 @@
         body.certificate_filename = carryFn || 'certificate';
       }
       if (window.NHSAuth && typeof NHSAuth.mergeAndPushWallet === 'function') {
-        await NHSAuth.mergeAndPushWallet();
+        try { await NHSAuth.mergeAndPushWallet(); } catch (e) { /* non-fatal */ }
       }
       var res = await fetch('/api/credentials/issue', {
         method: 'POST',
@@ -3441,7 +3461,10 @@
       if (!credsOut.length) {
         throw new Error('Could not issue replacement credential — try again.');
       }
-      var issued = credsOut[0];
+      return { issued: credsOut[0], carryB64: carryB64, carryFn: carryFn };
+    }
+
+    function fixReshareApplyReplacementLocally(oldCid, issued, inputs, b64, fname) {
       var list = getStored();
       list.push({
         credential_id: issued.credential_id,
@@ -3451,17 +3474,11 @@
         module_name: issued.module_name || inputs.module_name,
         expiry_date: issued.expiry_date || inputs.expiry_date,
         revoked: false,
-        certificate_base64: issued.certificate_base64 || carryB64 || null,
-        certificate_filename: issued.certificate_filename || carryFn || null,
+        certificate_base64: issued.certificate_base64 || b64 || null,
+        certificate_filename: issued.certificate_filename || fname || null,
         supersedes_credential_id: oldCid,
       });
-      setStored(list);
-      var shareResult = await autoShareCredentialsWithHr([issued.credential_id], { skipRender: true });
-      if (shareResult && shareResult.error) {
-        alert('Replacement added, but could not send to HR automatically: ' + shareResult.error);
-      }
-      await refreshVerifiedMap();
-      renderList();
+      try { setStored(list); } catch (e) { console.warn(e); }
     }
 
     window.startRenewal = function (credentialId) {
