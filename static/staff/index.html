@@ -696,7 +696,6 @@
       </div>
       <form id="addForm">
         <input type="hidden" id="addRenewFromId" value="">
-        <input type="hidden" id="addFixFromId" value="">
         <input type="hidden" id="addFromEsrNeedsFixId" value="">
         <div class="nhsuk-form-group"><label class="nhsuk-label" for="staff_full_name">Your full name</label><input class="nhsuk-input" id="staff_full_name" type="text" name="staff_full_name" required placeholder="Jane Smith" autocomplete="name"></div>
         <div class="nhsuk-form-group"><label class="nhsuk-label" for="staff_identifier">GMC number</label><input class="nhsuk-input" id="staff_identifier" type="text" name="staff_identifier" inputmode="numeric" required placeholder="1234567" maxlength="11" autocomplete="off"></div>
@@ -846,6 +845,25 @@
       <h3 id="staffCertModalTitle" class="staff-cert-modal__title">Uploaded certificate</h3>
       <div id="staffCertModalBody"></div>
       <button type="button" class="nhsuk-button nhsuk-button--secondary" id="staffCertModalClose" style="margin-top:1rem;">Close</button>
+    </div>
+  </div>
+
+  <div id="fixReshareModal" class="staff-cert-modal" hidden role="dialog" aria-modal="true" aria-labelledby="fixReshareModalTitle">
+    <div class="staff-cert-modal__panel" style="max-width:42rem;">
+      <h3 id="fixReshareModalTitle" class="staff-cert-modal__title">Fix and reshare with HR</h3>
+      <p class="nhsuk-body-s" style="margin:0 0 1rem 0;">Upload corrected evidence and your record will move back to <strong>Pending verification</strong> in HR&rsquo;s queue. The same training entry is kept &mdash; no duplicate rows are sent to HR.</p>
+      <dl id="fixReshareSummary" class="nhsuk-summary-list" style="margin:0 0 1rem 0;"></dl>
+      <div id="fixReshareDeclineReason" class="staff-declined-box" style="margin:0 0 1rem 0;" hidden></div>
+      <div class="nhsuk-form-group" style="margin:0 0 1rem 0;">
+        <label class="nhsuk-label" for="fixReshareFile">Replacement certificate or evidence</label>
+        <span class="nhsuk-hint" style="display:block; margin:0.25rem 0 0.5rem 0;">PDF, PNG, JPG, or WEBP. Make sure the new file addresses HR&rsquo;s reason for declining.</span>
+        <input type="file" id="fixReshareFile" accept="application/pdf,image/png,image/jpeg,image/webp" class="nhsuk-file-upload">
+      </div>
+      <div id="fixReshareError" class="nhsuk-error-message" hidden></div>
+      <div style="display:flex; gap:0.5rem; flex-wrap:wrap; justify-content:flex-end;">
+        <button type="button" class="nhsuk-button nhsuk-button--secondary" id="fixReshareCancel">Cancel</button>
+        <button type="button" class="nhsuk-button" id="fixReshareSubmit">Re-share with HR</button>
+      </div>
     </div>
   </div>
 
@@ -2938,7 +2956,7 @@
         var verifyBtnAttrs = canVerifyWithHr ? '' : ' disabled';
         var verifyBtnTitle = !profileOk
           ? 'Complete your profile to verify with HR'
-          : (isDeclined ? 'Update dates or evidence, then add and reshare to HR' : (allowResend ? 'You previously sent this to a different trust. Send again to your current trust HR.' : (alreadyPending ? 'Already sent to HR' : (alreadyVerified ? 'Decision already recorded' : ''))));
+          : (isDeclined ? 'Upload replacement evidence and re-share with HR' : (allowResend ? 'You previously sent this to a different trust. Send again to your current trust HR.' : (alreadyPending ? 'Already sent to HR' : (alreadyVerified ? 'Decision already recorded' : ''))));
         if (verifyBtnTitle) verifyBtnAttrs += ' title="' + verifyBtnTitle.replace(/"/g, '&quot;') + '"';
         var verifyBtnOnclick = isDeclined
           ? `onclick="startFixAndReshare('${c.credential_id}')"`
@@ -2960,7 +2978,7 @@
         var declinedBlock = isDeclined
           ? ('<div class="staff-declined-box"><strong>HR declined this record.</strong>'
             + (v.decline_reason ? ' ' + escapeHtml(v.decline_reason) : '')
-            + ' Update your training or evidence, then use <strong>Fix and reshare</strong>, or <strong>Renew</strong> to add a new completion.</div>')
+            + ' Upload replacement evidence with <strong>Fix and reshare</strong> — your record stays in place and goes back to <em>Pending verification</em> in HR&rsquo;s queue. Use <strong>Renew</strong> instead if the completion date has changed.</div>')
           : '';
         return `
           <div class="nhsuk-card ${c.revoked ? 'revoked' : ''}" data-id="${c.credential_id}">
@@ -3066,11 +3084,9 @@
 
     function clearRenewal() {
       var hid = document.getElementById('addRenewFromId');
-      var fixHid = document.getElementById('addFixFromId');
       var panel = document.getElementById('addRenewPanel');
       var titleEl = document.getElementById('customModuleTitle');
       if (hid) hid.value = '';
-      if (fixHid) fixHid.value = '';
       if (panel) panel.hidden = true;
       if (titleEl) titleEl.value = '';
       lastAutoExpiryFromCompletion = '';
@@ -3139,25 +3155,117 @@
       if (form) form.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
+    var fixReshareState = { credentialId: null };
+
+    function openFixReshareModal(c) {
+      var modal = document.getElementById('fixReshareModal');
+      var summary = document.getElementById('fixReshareSummary');
+      var declineBox = document.getElementById('fixReshareDeclineReason');
+      var errBox = document.getElementById('fixReshareError');
+      var fileEl = document.getElementById('fixReshareFile');
+      if (!modal || !summary || !c) return;
+      fixReshareState.credentialId = c.credential_id;
+      var trust = issuingTrustFromCredential(c);
+      var rows = [
+        ['Module', displayModuleName(c.module_name)],
+        ['Completion date', completionDateFromCredential(c) || '—'],
+        ['Expiry date', String(c.expiry_date || '—').slice(0, 10)],
+        ['Issuing organisation', trust.name || '—'],
+      ];
+      summary.innerHTML = rows.map(function (r) {
+        return (
+          '<div class="nhsuk-summary-list__row">' +
+          '<dt class="nhsuk-summary-list__key">' + escapeHtml(r[0]) + '</dt>' +
+          '<dd class="nhsuk-summary-list__value">' + escapeHtml(String(r[1])) + '</dd>' +
+          '</div>'
+        );
+      }).join('');
+      var v = (verifiedMap && verifiedMap[c.credential_id]) || null;
+      if (v && v.decline_reason) {
+        declineBox.innerHTML = '<strong>HR&rsquo;s reason for declining:</strong> ' + escapeHtml(String(v.decline_reason));
+        declineBox.hidden = false;
+      } else {
+        declineBox.hidden = true;
+        declineBox.textContent = '';
+      }
+      if (errBox) { errBox.hidden = true; errBox.textContent = ''; }
+      if (fileEl) fileEl.value = '';
+      modal.hidden = false;
+      setTimeout(function () { if (fileEl) fileEl.focus(); }, 50);
+    }
+
+    function closeFixReshareModal() {
+      var modal = document.getElementById('fixReshareModal');
+      if (modal) modal.hidden = true;
+      fixReshareState.credentialId = null;
+    }
+
     window.startFixAndReshare = function (credentialId) {
       var c = getStored().find(function (x) { return x.credential_id === credentialId; });
       if (!c) return;
-      var fixHid = document.getElementById('addFixFromId');
-      if (fixHid) fixHid.value = credentialId;
-      if (document.getElementById('addRenewFromId')) document.getElementById('addRenewFromId').value = '';
-      if (document.getElementById('addRenewPanel')) document.getElementById('addRenewPanel').hidden = true;
-      prefillAddFormForCredential(c, {});
-      var certName = document.getElementById('certificate_filename');
-      if (certName) certName.textContent = '';
-      var certInput = document.getElementById('certificate_upload');
-      if (certInput) certInput.value = '';
-      goToAddTrainingTab('Fix and reshare');
+      openFixReshareModal(c);
     };
+
+    document.addEventListener('DOMContentLoaded', function () {
+      var modal = document.getElementById('fixReshareModal');
+      var btnCancel = document.getElementById('fixReshareCancel');
+      var btnSubmit = document.getElementById('fixReshareSubmit');
+      if (btnCancel) btnCancel.addEventListener('click', closeFixReshareModal);
+      if (modal) {
+        modal.addEventListener('click', function (e) {
+          if (e.target === modal) closeFixReshareModal();
+        });
+      }
+      if (btnSubmit) btnSubmit.addEventListener('click', submitFixAndReshare);
+    });
+
+    async function submitFixAndReshare() {
+      var cid = fixReshareState.credentialId;
+      if (!cid) return;
+      var fileEl = document.getElementById('fixReshareFile');
+      var errBox = document.getElementById('fixReshareError');
+      var btn = document.getElementById('fixReshareSubmit');
+      var file = fileEl && fileEl.files && fileEl.files[0];
+      if (!file) {
+        if (errBox) { errBox.textContent = 'Choose a replacement certificate before re-sharing.'; errBox.hidden = false; }
+        return;
+      }
+      try {
+        if (errBox) { errBox.hidden = true; errBox.textContent = ''; }
+        if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+        var b64 = await fileToBase64(file);
+        var res = await fetch('/api/me/credentials/' + encodeURIComponent(cid) + '/refresh-evidence', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ certificate_base64: b64, certificate_filename: file.name || 'evidence' }),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        var list = getStored();
+        var i = list.findIndex(function (x) { return x && x.credential_id === cid; });
+        if (i >= 0) {
+          list[i].certificate_base64 = b64;
+          list[i].certificate_filename = file.name || 'evidence';
+          delete list[i].import_evidence_id;
+          delete list[i].import_evidence_batch;
+          setStored(list);
+        }
+        await refreshVerifiedMap();
+        renderList();
+        closeFixReshareModal();
+      } catch (err) {
+        if (errBox) {
+          errBox.textContent = (err && err.message) ? err.message : 'Could not re-share — try again.';
+          errBox.hidden = false;
+        }
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Re-share with HR'; }
+      }
+    }
 
     window.startRenewal = function (credentialId) {
       var c = getStored().find(function (x) { return x.credential_id === credentialId; });
       if (!c) return;
-      if (document.getElementById('addFixFromId')) document.getElementById('addFixFromId').value = '';
       document.getElementById('addRenewFromId').value = credentialId;
       document.getElementById('addRenewModuleLabel').textContent = c.module_name || 'training';
       document.getElementById('addRenewPanel').hidden = false;
@@ -3352,8 +3460,7 @@
         }
       }
       const renewFromForGuard = (document.getElementById('addRenewFromId').value || '').trim();
-      const fixFromForGuard = (document.getElementById('addFixFromId').value || '').trim();
-      const replacesIds = [renewFromForGuard, fixFromForGuard].filter(Boolean);
+      const replacesIds = renewFromForGuard ? [renewFromForGuard] : [];
       if (replacesIds.length) body.replaces_credential_ids = replacesIds;
       var dedupeKey = completionDedupeKeyFromAddForm(fd, module_code);
       if (localCompletionDedupeKeys(replacesIds)[dedupeKey]) {
@@ -3385,7 +3492,6 @@
         }
         const issued = credsOut[0];
         const renewFrom = (document.getElementById('addRenewFromId').value || '').trim();
-        const fixFrom = (document.getElementById('addFixFromId').value || '').trim();
         const list = getStored();
         var entry = {
           credential_id: issued.credential_id,
@@ -3399,7 +3505,6 @@
           certificate_filename: issued.certificate_filename || null
         };
         if (renewFrom) entry.supersedes_credential_id = renewFrom;
-        else if (fixFrom) entry.supersedes_credential_id = fixFrom;
         list.push(entry);
         setStored(list);
         resolveEsrNeedsFixAfterAdd(module_name);

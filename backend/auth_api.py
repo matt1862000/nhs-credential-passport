@@ -987,6 +987,73 @@ async def me_shares_withdraw(request: Request):
     return {"ok": True, "withdrawn": withdrawn}
 
 
+@router.post("/me/credentials/{credential_id}/refresh-evidence")
+async def me_credential_refresh_evidence(request: Request, credential_id: str):
+    """Doctor's Fix-and-reshare: keep the credential, refresh evidence, reopen the HR review.
+
+    Updates the wallet entry's certificate and flips every DECLINED share row for this
+    credential (at the doctor's current trust) back to PENDING, so HR sees a single row
+    that cycles PENDING -> DECLINED -> PENDING rather than a stream of resubmissions.
+    """
+    uid = require_user_id(request)
+    cid = (credential_id or "").strip()
+    if not cid:
+        raise HTTPException(status_code=400, detail="credential_id required")
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Expected a JSON object")
+
+    cert_b64 = body.get("certificate_base64")
+    cert_fn = body.get("certificate_filename")
+    if cert_b64 is not None and not isinstance(cert_b64, str):
+        raise HTTPException(status_code=400, detail="certificate_base64 must be a string")
+    if cert_fn is not None and not isinstance(cert_fn, str):
+        raise HTTPException(status_code=400, detail="certificate_filename must be a string")
+    if cert_b64 and len(cert_b64.encode("utf-8")) > MAX_WALLET_BYTES:
+        raise HTTPException(status_code=413, detail="Evidence file too large")
+
+    try:
+        wallet = json.loads(db.user_wallet_get(uid))
+    except Exception:
+        wallet = []
+    if not isinstance(wallet, list):
+        wallet = []
+    entry_idx = next(
+        (i for i, e in enumerate(wallet)
+         if isinstance(e, dict) and str(e.get("credential_id") or "").strip() == cid),
+        -1,
+    )
+    if entry_idx < 0:
+        raise HTTPException(status_code=404, detail="Credential not in your wallet")
+
+    u = db.user_get_by_id(uid)
+    trust = (u.get("current_trust") if u else "") or ""
+    reset_count = db.share_reset_declined_for_doctor(
+        uid,
+        cid,
+        certificate_base64=cert_b64,
+        certificate_filename=cert_fn,
+        hr_trust=trust or None,
+    )
+    if reset_count == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="No declined share entry to refresh for this credential at your trust.",
+        )
+
+    if cert_b64 is not None:
+        wallet[entry_idx]["certificate_base64"] = cert_b64
+    if cert_fn is not None:
+        wallet[entry_idx]["certificate_filename"] = cert_fn
+    wallet[entry_idx].pop("import_evidence_id", None)
+    wallet[entry_idx].pop("import_evidence_batch", None)
+    db.user_wallet_put(uid, json.dumps(wallet))
+    return {"ok": True, "reset_count": reset_count, "credential_id": cid}
+
+
 @router.post("/me/shares")
 async def me_shares_post(request: Request, background_tasks: BackgroundTasks):
     uid = require_user_id(request)

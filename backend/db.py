@@ -2313,6 +2313,58 @@ def share_item_set_decision(
         conn.commit()
 
 
+def share_reset_declined_for_doctor(
+    doctor_user_id: int,
+    credential_id: str,
+    *,
+    certificate_base64: Optional[str],
+    certificate_filename: Optional[str],
+    hr_trust: Optional[str] = None,
+) -> int:
+    """Flip DECLINED share items for one of the doctor's credentials back to PENDING.
+
+    Used by the doctor's Fix-and-reshare flow: rather than minting a new credential,
+    the existing share row keeps its identity and cycles PENDING -> DECLINED -> PENDING
+    so HR sees a single row that has been re-submitted with updated evidence.
+
+    Returns the number of share rows that were reset.
+    """
+    cid = (credential_id or "").strip()
+    if not cid:
+        return 0
+    trust_key = (hr_trust or "").strip().lower()
+    params: list = [cid, int(doctor_user_id)]
+    extra_where = ""
+    if trust_key:
+        extra_where = " AND LOWER(TRIM(COALESCE(s.target_trust, ''))) = ?"
+        params.append(trust_key)
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_share_tables(conn)
+        cur = conn.execute(
+            f"""
+            UPDATE share_items
+            SET status = 'PENDING',
+                decision_at = NULL,
+                decision_by_user_id = NULL,
+                decline_reason = NULL,
+                certificate_base64 = ?,
+                certificate_filename = ?,
+                is_resubmission = 0
+            WHERE credential_id = ?
+              AND UPPER(TRIM(status)) = 'DECLINED'
+              AND session_id IN (
+                SELECT s.id FROM share_sessions s
+                WHERE s.doctor_user_id = ?
+                  AND LOWER(TRIM(COALESCE(s.share_kind, 'review'))) = 'review'
+                  {extra_where}
+              )
+            """,
+            (certificate_base64, certificate_filename, *params),
+        )
+        conn.commit()
+    return int(cur.rowcount or 0)
+
+
 def share_withdraw_pending_for_doctor(doctor_user_id: int, credential_ids: list[str]) -> int:
     """
     Drop PENDING review share items when a doctor removes credentials from their wallet.
