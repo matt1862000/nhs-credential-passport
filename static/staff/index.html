@@ -2698,9 +2698,17 @@
      *  another (Fix-and-reshare replacement, Renew) is allowed past the sibling
      *  dup check for the credential it replaces.
      */
+    function isExpiredCredential(c) {
+      if (!c || c.revoked) return false;
+      return statusClass(c.expiry_date, false) === 'expired';
+    }
+
     function isAwaitingHrShare(c, list) {
       list = list || getStored();
       if (!c || !c.credential_id || c.revoked) return false;
+      // Expired training is not sent to HR for verification — the doctor should
+      // Renew (which creates a new in-date credential) and that will auto-share.
+      if (isExpiredCredential(c)) return false;
       if (hasRenewalReplacement(list, c)) return false;
       var supersedesId = String(c.supersedes_credential_id || '').trim();
       var module = moduleDisplayKey(c);
@@ -3030,7 +3038,8 @@
         var myTrust = (window.NHSAuth && NHSAuth.user && NHSAuth.user.current_trust || '').trim().toLowerCase();
         var allowResend = alreadyPending && pendingTarget && myTrust && pendingTarget !== myTrust;
         var replacedByRenewal = hasRenewalReplacement(list, c);
-        var canVerifyWithHr = profileOk && (isDeclined || ((!alreadyPending || allowResend) && !alreadyVerified));
+        var isExpired = isExpiredCredential(c);
+        var canVerifyWithHr = profileOk && !isExpired && (isDeclined || ((!alreadyPending || allowResend) && !alreadyVerified));
         var verifyBtnText = isDeclined
           ? 'Fix and reshare'
           : (allowResend
@@ -3039,7 +3048,7 @@
         var verifyBtnAttrs = canVerifyWithHr ? '' : ' disabled';
         var verifyBtnTitle = !profileOk
           ? 'Complete your profile to verify with HR'
-          : (isDeclined ? 'Update evidence or details, then re-share with HR' : (allowResend ? 'You previously sent this to a different trust. Send again to your current trust HR.' : (alreadyPending ? 'Already sent to HR' : (alreadyVerified ? 'Decision already recorded' : ''))));
+          : (isExpired ? 'Expired training is not sent to HR. Tap Renew to log a new completion.' : (isDeclined ? 'Update evidence or details, then re-share with HR' : (allowResend ? 'You previously sent this to a different trust. Send again to your current trust HR.' : (alreadyPending ? 'Already sent to HR' : (alreadyVerified ? 'Decision already recorded' : '')))));
         if (verifyBtnTitle) verifyBtnAttrs += ' title="' + verifyBtnTitle.replace(/"/g, '&quot;') + '"';
         var verifyBtnOnclick = isDeclined
           ? `onclick="startFixAndReshare('${c.credential_id}')"`
@@ -3072,7 +3081,8 @@
                 <div class="nhsuk-card__meta">Expires ${c.expiry_date}${c.revoked ? ' · Revoked' : ''}</div>
                 <span class="nhsuk-tag nhsuk-tag--${status}">${expiryStatusLabel(status)}</span>${verifiedTag}${pendingTag}${declinedTag}
                 ${actionsHtml}
-                ${!alreadyVerified && !alreadyPending && !c.import_evidence_batch && !c.import_evidence_id ? '<p class="nhsuk-hint" style="margin:0.5rem 0 0 0;">Sent to HR automatically when added. Downloadable proof is available after verification — use the <strong>Download</strong> tab.</p>' : ''}
+                ${isExpired && !alreadyVerified && !alreadyPending ? '<p class="nhsuk-hint" style="margin:0.5rem 0 0 0;">Expired training isn\'t sent to HR. Tap <strong>Renew</strong> to log a new completion — that will be shared with HR automatically.</p>' : ''}
+                ${!isExpired && !alreadyVerified && !alreadyPending && !c.import_evidence_batch && !c.import_evidence_id ? '<p class="nhsuk-hint" style="margin:0.5rem 0 0 0;">Sent to HR automatically when added. Downloadable proof is available after verification — use the <strong>Download</strong> tab.</p>' : ''}
                 ${declinedBlock || declinedNote}
               </div>
             </div>

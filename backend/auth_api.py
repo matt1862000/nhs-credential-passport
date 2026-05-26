@@ -1106,6 +1106,31 @@ async def me_shares_post(request: Request, background_tasks: BackgroundTasks):
                     "Remove any that are still awaiting verification, or use normal Verify with HR first.",
                 )
 
+    # Expired training is never sent to HR for verification. The doctor must
+    # Renew (log a fresh in-date completion) and that will be auto-shared.
+    # Portfolio packs are exempt: they collect already-verified history that a
+    # doctor may want to surface at a new trust even after expiry.
+    if not portfolio:
+        today = date.today()
+        kept_ids: list[str] = []
+        for cid in ids:
+            w = wallet_by_id.get(cid) or {}
+            exp_raw = str(w.get("expiry_date") or "").strip()
+            try:
+                exp = date.fromisoformat(exp_raw) if exp_raw else None
+            except ValueError:
+                exp = None
+            if exp is not None and exp < today:
+                continue
+            kept_ids.append(cid)
+        if not kept_ids:
+            raise HTTPException(
+                status_code=400,
+                detail="Expired training is not sent to HR for verification. "
+                "Tap Renew on the record to log a new completion, then it will be shared automatically.",
+            )
+        ids = kept_ids
+
     items = []
     for cid in ids:
         w = wallet_by_id.get(cid) or {}
