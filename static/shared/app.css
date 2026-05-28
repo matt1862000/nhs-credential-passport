@@ -441,6 +441,40 @@ a:hover {
   flex: 1 1 auto;
   width: 100%;
 }
+
+/* Site footer — slim, NHS-style, shared across all pages */
+.docpass-footer {
+  flex-shrink: 0;
+  background: #fff;
+  border-top: 1px solid var(--nhsuk-border);
+  padding: 1.25rem 1.5rem;
+  margin-top: 2rem;
+}
+.docpass-footer__inner {
+  max-width: 1040px;
+  margin: 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1.25rem;
+  font-size: 0.875rem;
+  color: var(--nhsuk-secondary-text);
+}
+.docpass-footer__links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+.docpass-footer__links a {
+  color: var(--nhsuk-link);
+  text-decoration: underline;
+}
+.docpass-footer__copy {
+  margin-left: auto;
+}
+@media (max-width: 540px) {
+  .docpass-footer__copy { margin-left: 0; }
+}
 .nhsuk-page-heading {
   font-size: 2.25rem;
   font-weight: 700;
