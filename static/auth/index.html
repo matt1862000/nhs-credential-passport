@@ -11,6 +11,20 @@
   <style>
     .auth-card { max-width: 28rem; }
     .auth-card .nhsuk-hint { display: block; font-size: 0.875rem; color: var(--nhsuk-secondary-text); margin-top: 0.35rem; line-height: 1.45; }
+    .mfa-code-input {
+      font-family: Menlo, Consolas, "SFMono-Regular", monospace;
+      letter-spacing: 0.4em;
+      font-size: 1.4rem;
+      text-align: center;
+      max-width: 14rem;
+    }
+    .mfa-resend-row { margin-top: 1rem; font-size: 0.9375rem; }
+    .mfa-resend-row button {
+      background: none; border: 0; padding: 0; color: var(--nhsuk-link, #005eb8);
+      text-decoration: underline; cursor: pointer; font: inherit;
+    }
+    .mfa-resend-row button[disabled] { color: var(--nhsuk-secondary-text); cursor: default; text-decoration: none; }
+    .mfa-status { margin-top: 0.5rem; font-size: 0.875rem; color: var(--nhsuk-secondary-text); }
   </style>
 </head>
 <body>
@@ -50,10 +64,38 @@
         <a href="/static/auth/forgot.html">Forgot password?</a>
       </p>
     </section>
+
+    <section class="nhsuk-card auth-card" id="mfaCard" hidden>
+      <h2>Enter your sign-in code</h2>
+      <p class="nhsuk-body-s" id="mfaIntro">We've emailed a 6-digit code to your verification address. It expires in 10 minutes.</p>
+      <form id="formMfa" novalidate>
+        <div class="nhsuk-form-group">
+          <label class="nhsuk-label" for="mfaCode">6-digit code</label>
+          <input class="nhsuk-input mfa-code-input" type="text" id="mfaCode" name="code"
+                 inputmode="numeric" autocomplete="one-time-code"
+                 pattern="[0-9]{6}" maxlength="6" required>
+        </div>
+        <div class="nhsuk-form-group">
+          <label class="nhsuk-checkbox">
+            <input type="checkbox" id="mfaRemember" name="remember_device">
+            <span>Trust this device for 30 days</span>
+          </label>
+        </div>
+        <button type="submit" class="nhsuk-button">Verify and sign in</button>
+      </form>
+      <p class="nhsuk-error-msg" id="mfaError" hidden role="alert"></p>
+      <p class="mfa-resend-row">
+        Didn't get it? <button type="button" id="mfaResendBtn">Send a new code</button>
+        <span class="mfa-status" id="mfaResendStatus" hidden></span>
+      </p>
+      <p style="margin:1rem 0 0 0; font-size:0.9375rem;">
+        <button type="button" id="mfaCancelBtn" style="background:none;border:0;padding:0;color:var(--nhsuk-link,#005eb8);text-decoration:underline;cursor:pointer;font:inherit;">Use a different account</button>
+      </p>
+    </section>
   </main>
 
   <script src="/static/wallet/wallet-store.js"></script>
-  <script src="/static/shared/auth.js?v=20260523-1"></script>
+  <script src="/static/shared/auth.js?v=20260528-mfa"></script>
   <script>
     (function () {
       function showErr(id, msg) {
@@ -89,13 +131,77 @@
         }
       }
 
+      var signInCard = document.getElementById('signInCard');
+      var mfaCard = document.getElementById('mfaCard');
+      var mfaIntro = document.getElementById('mfaIntro');
+      var mfaCodeInput = document.getElementById('mfaCode');
+      var mfaRememberInput = document.getElementById('mfaRemember');
+      var mfaResendBtn = document.getElementById('mfaResendBtn');
+      var mfaResendStatus = document.getElementById('mfaResendStatus');
+      var mfaCancelBtn = document.getElementById('mfaCancelBtn');
+      var mfaResendCountdown = null;
+
+      function setMfaIntro(deliveryHint, minutes) {
+        var ttl = (minutes && minutes > 0) ? minutes : 10;
+        var who = deliveryHint ? ('We\'ve emailed a 6-digit code to ' + deliveryHint + '.') : 'We\'ve emailed a 6-digit code to your verification address.';
+        mfaIntro.textContent = who + ' It expires in ' + ttl + ' minutes.';
+      }
+
+      function startResendCooldown(seconds) {
+        if (mfaResendCountdown) clearInterval(mfaResendCountdown);
+        var remaining = Math.max(1, seconds | 0);
+        mfaResendBtn.disabled = true;
+        mfaResendBtn.textContent = 'Send a new code (' + remaining + 's)';
+        mfaResendCountdown = setInterval(function () {
+          remaining -= 1;
+          if (remaining <= 0) {
+            clearInterval(mfaResendCountdown);
+            mfaResendCountdown = null;
+            mfaResendBtn.disabled = false;
+            mfaResendBtn.textContent = 'Send a new code';
+            return;
+          }
+          mfaResendBtn.textContent = 'Send a new code (' + remaining + 's)';
+        }, 1000);
+      }
+
+      function showMfaPanel(deliveryHint, minutes) {
+        setMfaIntro(deliveryHint, minutes);
+        signInCard.hidden = true;
+        mfaCard.hidden = false;
+        mfaCodeInput.value = '';
+        mfaRememberInput.checked = false;
+        showErr('mfaError', '');
+        mfaResendStatus.hidden = true;
+        mfaResendStatus.textContent = '';
+        try { mfaCodeInput.focus(); } catch (_) {}
+      }
+
+      function showSignInPanel() {
+        if (mfaResendCountdown) {
+          clearInterval(mfaResendCountdown);
+          mfaResendCountdown = null;
+          mfaResendBtn.disabled = false;
+          mfaResendBtn.textContent = 'Send a new code';
+        }
+        mfaCard.hidden = true;
+        signInCard.hidden = false;
+        showErr('mfaError', '');
+      }
+
       document.getElementById('formSignIn').addEventListener('submit', async function (e) {
         e.preventDefault();
         showErr('signInError', '');
         setSubmitBusy('formSignIn', true, 'Signing in…');
         var fd = new FormData(this);
         try {
-          await NHSAuth.signIn((fd.get('email') || '').trim(), fd.get('password') || '');
+          var result = await NHSAuth.signIn((fd.get('email') || '').trim(), fd.get('password') || '');
+          if (result && result.mfaRequired) {
+            setSubmitBusy('formSignIn', false);
+            showMfaPanel(result.deliveryHint, result.expiresInMinutes);
+            startResendCooldown(30);
+            return;
+          }
           if (window.NHSWallet && typeof NHSWallet.resetDeviceWalletCache === 'function') {
             await NHSWallet.resetDeviceWalletCache();
           }
@@ -105,6 +211,54 @@
           showErr('signInError', err.message || 'Could not sign in');
           setSubmitBusy('formSignIn', false);
         }
+      });
+
+      mfaCodeInput.addEventListener('input', function () {
+        this.value = (this.value || '').replace(/\D/g, '').slice(0, 6);
+      });
+
+      document.getElementById('formMfa').addEventListener('submit', async function (e) {
+        e.preventDefault();
+        showErr('mfaError', '');
+        var code = (mfaCodeInput.value || '').replace(/\D/g, '');
+        if (code.length !== 6) {
+          showErr('mfaError', 'Enter the 6-digit code we emailed you.');
+          return;
+        }
+        setSubmitBusy('formMfa', true, 'Verifying…');
+        try {
+          await NHSAuth.verifyMfaCode(code, mfaRememberInput.checked);
+          if (window.NHSWallet && typeof NHSWallet.resetDeviceWalletCache === 'function') {
+            await NHSWallet.resetDeviceWalletCache();
+          }
+          await NHSAuth.pullWalletMerge();
+          NHSAuth.redirectPostLogin('/static/dashboard/');
+        } catch (err) {
+          showErr('mfaError', err.message || 'Could not verify code');
+          setSubmitBusy('formMfa', false);
+        }
+      });
+
+      mfaResendBtn.addEventListener('click', async function () {
+        if (mfaResendBtn.disabled) return;
+        mfaResendStatus.hidden = true;
+        mfaResendStatus.textContent = '';
+        showErr('mfaError', '');
+        mfaResendBtn.disabled = true;
+        try {
+          var info = await NHSAuth.resendMfaCode();
+          setMfaIntro(info.deliveryHint, info.expiresInMinutes);
+          mfaResendStatus.textContent = 'New code sent.';
+          mfaResendStatus.hidden = false;
+          startResendCooldown(30);
+        } catch (err) {
+          showErr('mfaError', err.message || 'Could not send a new code');
+          mfaResendBtn.disabled = false;
+        }
+      });
+
+      mfaCancelBtn.addEventListener('click', function () {
+        showSignInPanel();
       });
 
       (async function () {

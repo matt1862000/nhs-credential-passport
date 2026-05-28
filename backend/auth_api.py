@@ -664,7 +664,7 @@ def auth_register(request: Request, body: dict):
 
 @router.post("/auth/login")
 @limiter.limit("10/minute")
-def auth_login(request: Request, body: dict):
+def auth_login(request: Request, body: dict, background_tasks: BackgroundTasks):
     email = _normalize_email(body.get("email") or "")
     password = body.get("password") or ""
     u = db.user_get_by_email(email)
@@ -679,6 +679,10 @@ def auth_login(request: Request, body: dict):
         ok = False
     if not ok:
         raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    if _mfa_required_for(u, request):
+        return _begin_mfa_challenge(request, u, email, background_tasks)
+
     return _session_response({"ok": True, "email": email}, u["id"], email, request)
 
 
@@ -874,6 +878,247 @@ def auth_reset_password(request: Request, body: dict):
     db.user_set_password(int(user_id), h, clear_must_change=True)
     db.password_reset_invalidate_outstanding(int(user_id))
     return {"ok": True}
+
+
+# ── Email-OTP MFA for sign-in ──────────────────────────────────────────────
+#
+# Currently scoped to the two demo HR accounts (`MFA_REQUIRED_EMAILS`). Once
+# password verification succeeds for one of those addresses we:
+#   1. Generate a 6-digit numeric code (`secrets.randbelow`) and a 32-byte
+#      challenge token. Only their SHA-256 hashes are persisted.
+#   2. Set the challenge token as an HttpOnly `mfa_pending` cookie (10 min).
+#   3. Email the 6-digit code to `_mfa_delivery_email` (which honours
+#      HR_EMAIL_OVERRIDE so demo mail lands on raihan.talukdar@nhs.net).
+#   4. Respond 200 with `{ ok: true, mfa_required: true }` — no session
+#      cookie yet, so the client knows to prompt for the code.
+#
+# `/auth/mfa-verify` consumes the challenge + code, optionally remembers the
+# device for 30 days via an HttpOnly `mfa_trust` cookie (so we skip the code
+# next time), then issues the real session.
+#
+# `/auth/mfa-resend` issues a fresh code against the same challenge cookie.
+
+MFA_REQUIRED_EMAILS = {
+    e.strip().lower()
+    for e in (
+        os.environ.get("MFA_REQUIRED_EMAILS")
+        or "sheffieldhr@nhs.net,rotherhamhr@nhs.net"
+    ).split(",")
+    if e.strip()
+}
+MFA_CODE_TTL_MINUTES = 10
+MFA_TRUST_DAYS = 30
+MFA_PENDING_COOKIE = "mfa_pending"
+MFA_TRUST_COOKIE = "mfa_trust"
+
+
+def _sha256_hex(raw: str) -> str:
+    import hashlib
+
+    return hashlib.sha256((raw or "").encode("utf-8")).hexdigest()
+
+
+def _mfa_required_for(u: dict, request: Request) -> bool:
+    """True if this user is gated by email-OTP and the browser isn't already trusted."""
+    email = (u.get("email") or "").strip().lower()
+    if email not in MFA_REQUIRED_EMAILS:
+        return False
+    trust_cookie = (request.cookies.get(MFA_TRUST_COOKIE) or "").strip()
+    if trust_cookie and db.mfa_trusted_device_valid(int(u["id"]), _sha256_hex(trust_cookie)):
+        return False
+    return True
+
+
+def _mfa_delivery_email(u: dict) -> str:
+    """Where to send the 6-digit code. Honours HR_EMAIL_OVERRIDE for demos."""
+    custom = (u.get("hr_notification_email") or "").strip()
+    if custom:
+        return custom
+    env_override = (os.environ.get("HR_EMAIL_OVERRIDE") or "").strip()
+    if env_override:
+        return env_override
+    return (u.get("email") or "").strip()
+
+
+def _send_mfa_code_email(*, to_email: str, code: str, account_email: str) -> None:
+    """Best-effort email of the 6-digit code; never raises."""
+    from . import email_service
+
+    subject = "Your DocPass sign-in code"
+    text_body = (
+        f"Use this 6-digit code to finish signing in to DocPass as {account_email}:\n\n"
+        f"    {code}\n\n"
+        f"The code expires in {MFA_CODE_TTL_MINUTES} minutes. "
+        "If you didn't try to sign in, you can ignore this email — your account is unchanged.\n"
+    )
+    html_body = (
+        f"<p>Use this 6-digit code to finish signing in to DocPass as "
+        f"<strong>{account_email}</strong>:</p>"
+        f'<p style="font-size:1.75rem;letter-spacing:0.35em;font-weight:700;'
+        f'font-family:Menlo,Consolas,monospace;margin:1rem 0;">{code}</p>'
+        f"<p>The code expires in <strong>{MFA_CODE_TTL_MINUTES} minutes</strong>.</p>"
+        "<p>If you didn't try to sign in, you can ignore this email — your account is unchanged.</p>"
+    )
+    try:
+        email_service.send_email(
+            to=to_email, subject=subject, text_body=text_body, html_body=html_body
+        )
+    except Exception:
+        pass
+
+
+def _set_mfa_pending_cookie(resp: JSONResponse, request: Request, raw_challenge: str) -> None:
+    secure = request.url.scheme == "https"
+    resp.set_cookie(
+        MFA_PENDING_COOKIE,
+        raw_challenge,
+        httponly=True,
+        secure=secure,
+        samesite="lax",
+        max_age=MFA_CODE_TTL_MINUTES * 60,
+        path="/",
+    )
+
+
+def _clear_mfa_pending_cookie(resp: JSONResponse, request: Request) -> None:
+    secure = request.url.scheme == "https"
+    resp.delete_cookie(
+        MFA_PENDING_COOKIE,
+        path="/",
+        samesite="lax",
+        httponly=True,
+        secure=secure,
+    )
+
+
+def _mask_email(email: str) -> str:
+    """Render a recipient hint without leaking the full address (e.g. ra***@nhs.net)."""
+    e = (email or "").strip()
+    if "@" not in e:
+        return ""
+    local, _, domain = e.partition("@")
+    if len(local) <= 2:
+        return f"{local[:1]}***@{domain}"
+    return f"{local[:2]}***@{domain}"
+
+
+def _begin_mfa_challenge(
+    request: Request,
+    u: dict,
+    email: str,
+    background_tasks: BackgroundTasks,
+) -> JSONResponse:
+    """Issue a fresh code + challenge token, set pending cookie, email the code."""
+    import secrets
+    from datetime import timedelta
+
+    raw_challenge = secrets.token_urlsafe(32)
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    expires_at = (datetime.utcnow() + timedelta(minutes=MFA_CODE_TTL_MINUTES)).isoformat()
+    db.mfa_code_create(
+        user_id=int(u["id"]),
+        code_hash=_sha256_hex(code),
+        challenge_hash=_sha256_hex(raw_challenge),
+        expires_at=expires_at,
+        ip_hint=_client_ip_hint(request),
+    )
+    delivery = _mfa_delivery_email(u) or email
+    background_tasks.add_task(
+        _send_mfa_code_email,
+        to_email=delivery,
+        code=code,
+        account_email=email,
+    )
+    resp = JSONResponse({
+        "ok": True,
+        "mfa_required": True,
+        "delivery_hint": _mask_email(delivery),
+        "expires_in_minutes": MFA_CODE_TTL_MINUTES,
+    })
+    _set_mfa_pending_cookie(resp, request, raw_challenge)
+    return resp
+
+
+@router.post("/auth/mfa-verify")
+@limiter.limit("10/minute")
+def auth_mfa_verify(request: Request, body: dict):
+    """Consume the code paired with the `mfa_pending` cookie and issue a session."""
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Expected a JSON object")
+    raw_code = re.sub(r"\D", "", str(body.get("code") or ""))
+    remember = bool(body.get("remember_device"))
+    if len(raw_code) != 6:
+        raise HTTPException(status_code=400, detail="Enter the 6-digit code we emailed you.")
+
+    challenge = (request.cookies.get(MFA_PENDING_COOKIE) or "").strip()
+    if not challenge:
+        raise HTTPException(status_code=400, detail="Sign in again to request a new code.")
+
+    record = db.mfa_code_lookup_active(_sha256_hex(challenge))
+    if not record:
+        raise HTTPException(status_code=400, detail="That code has expired. Sign in again to get a new one.")
+
+    if _sha256_hex(raw_code) != record["code_hash"]:
+        remaining = max(0, db.MFA_MAX_ATTEMPTS - db.mfa_code_record_attempt(record["id"]))
+        if remaining <= 0:
+            raise HTTPException(status_code=400, detail="Too many incorrect attempts. Sign in again to get a new code.")
+        raise HTTPException(status_code=400, detail=f"Incorrect code. {remaining} attempt(s) left.")
+
+    if not db.mfa_code_consume(record["id"]):
+        raise HTTPException(status_code=400, detail="That code has already been used. Sign in again.")
+
+    user_id = int(record["user_id"])
+    u = db.user_get_by_id(user_id)
+    if not u:
+        raise HTTPException(status_code=400, detail="Account no longer available.")
+    email = (u.get("email") or "").strip().lower()
+
+    resp = _session_response({"ok": True, "email": email}, user_id, email, request)
+    _clear_mfa_pending_cookie(resp, request)
+
+    if remember:
+        import secrets
+        from datetime import timedelta
+
+        raw_trust = secrets.token_urlsafe(32)
+        trust_expires = (datetime.utcnow() + timedelta(days=MFA_TRUST_DAYS)).isoformat()
+        ua_hint = (request.headers.get("user-agent") or "")[:200] or None
+        db.mfa_trusted_device_create(
+            user_id=user_id,
+            token_hash=_sha256_hex(raw_trust),
+            expires_at=trust_expires,
+            user_agent_hint=ua_hint,
+        )
+        secure = request.url.scheme == "https"
+        resp.set_cookie(
+            MFA_TRUST_COOKIE,
+            raw_trust,
+            httponly=True,
+            secure=secure,
+            samesite="lax",
+            max_age=MFA_TRUST_DAYS * 86400,
+            path="/",
+        )
+    return resp
+
+
+@router.post("/auth/mfa-resend")
+@limiter.limit("3/minute")
+def auth_mfa_resend(request: Request, background_tasks: BackgroundTasks):
+    """Issue a fresh code against the current challenge cookie."""
+    challenge = (request.cookies.get(MFA_PENDING_COOKIE) or "").strip()
+    if not challenge:
+        raise HTTPException(status_code=400, detail="Sign in again to request a new code.")
+    record = db.mfa_code_lookup_active(_sha256_hex(challenge))
+    if not record:
+        # Challenge expired — caller must restart sign-in. We don't tell them
+        # whether the cookie ever existed.
+        raise HTTPException(status_code=400, detail="Sign in again to request a new code.")
+    u = db.user_get_by_id(int(record["user_id"]))
+    if not u:
+        raise HTTPException(status_code=400, detail="Account no longer available.")
+    email = (u.get("email") or "").strip().lower()
+    return _begin_mfa_challenge(request, u, email, background_tasks)
 
 
 @router.put("/me/profile")

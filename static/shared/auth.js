@@ -96,8 +96,53 @@
         var d = parsed.data && parsed.data.detail;
         throw new Error(typeof d === 'string' ? d : 'Could not sign in');
       }
+      /* Email-OTP MFA path: server returned ok:true but withheld the session
+         cookie. Tell the caller so it can prompt for the 6-digit code. */
+      if (parsed.data && parsed.data.mfa_required) {
+        return {
+          mfaRequired: true,
+          deliveryHint: parsed.data.delivery_hint || '',
+          expiresInMinutes: parsed.data.expires_in_minutes || 10,
+        };
+      }
       await this.refresh();
       return this.user;
+    },
+
+    async verifyMfaCode(code, rememberDevice) {
+      var r = await fetch('/api/auth/mfa-verify', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code: String(code || ''),
+          remember_device: !!rememberDevice,
+        }),
+      });
+      var parsed = await readJsonOrText(r);
+      if (!r.ok) {
+        var d = parsed.data && parsed.data.detail;
+        throw new Error(typeof d === 'string' ? d : 'Could not verify code');
+      }
+      await this.refresh();
+      return this.user;
+    },
+
+    async resendMfaCode() {
+      var r = await fetch('/api/auth/mfa-resend', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      var parsed = await readJsonOrText(r);
+      if (!r.ok) {
+        var d = parsed.data && parsed.data.detail;
+        throw new Error(typeof d === 'string' ? d : 'Could not send a new code');
+      }
+      return {
+        deliveryHint: (parsed.data && parsed.data.delivery_hint) || '',
+        expiresInMinutes: (parsed.data && parsed.data.expires_in_minutes) || 10,
+      };
     },
 
     async register(email, password) {

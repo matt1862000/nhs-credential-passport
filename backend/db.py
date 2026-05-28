@@ -133,6 +133,7 @@ def init_db():
         _ensure_hr_verifier_links_table(conn)
         _ensure_hr_welcome_templates_table(conn)
         _ensure_password_resets_table(conn)
+        _ensure_mfa_tables(conn)
         _ensure_seed_privileged_user(conn)
         _ensure_seed_rotherham_user(conn)
         _ensure_default_cohorts_for_premium_hr(conn)
@@ -4602,6 +4603,204 @@ def password_reset_invalidate_outstanding(user_id: int) -> int:
         )
         conn.commit()
         return int(cur.rowcount or 0)
+
+
+# ── Email-OTP MFA for sign-in ─────────────────────────────────────────────
+#
+# `mfa_codes` rows pair a one-time 6-digit code with an opaque challenge
+# token issued via HttpOnly cookie at password-OK time. The verify endpoint
+# requires both the cookie token and the emailed code, so an attacker who
+# only sees the email cannot complete sign-in (and vice versa).
+#
+# `mfa_trusted_devices` lets a successful login persist a long-lived
+# HttpOnly device cookie so we don't ask for a code on every sign-in from
+# that browser.
+
+def _ensure_mfa_tables(conn: sqlite3.Connection) -> None:
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS mfa_codes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            code_hash TEXT NOT NULL,
+            challenge_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            used_at TEXT,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            ip_hint TEXT
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_mfa_codes_challenge ON mfa_codes(challenge_hash)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_mfa_codes_user ON mfa_codes(user_id)"
+    )
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS mfa_trusted_devices (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            token_hash TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            last_used_at TEXT,
+            user_agent_hint TEXT,
+            revoked_at TEXT
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_mfa_trusted_devices_user ON mfa_trusted_devices(user_id)"
+    )
+
+
+def mfa_code_create(
+    user_id: int,
+    code_hash: str,
+    challenge_hash: str,
+    expires_at: str,
+    ip_hint: Optional[str] = None,
+) -> int:
+    """Insert a fresh challenge. Invalidates any earlier unused codes for the user."""
+    now = datetime.utcnow().isoformat()
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_mfa_tables(conn)
+        conn.execute(
+            "UPDATE mfa_codes SET used_at = ? WHERE user_id = ? AND used_at IS NULL",
+            (now, int(user_id)),
+        )
+        cur = conn.execute(
+            """
+            INSERT INTO mfa_codes (user_id, code_hash, challenge_hash, created_at, expires_at, ip_hint)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (int(user_id), code_hash, challenge_hash, now, expires_at, ip_hint),
+        )
+        conn.commit()
+        return int(cur.lastrowid or 0)
+
+
+def mfa_code_lookup_active(challenge_hash: str) -> Optional[dict]:
+    """Return { id, user_id, code_hash, attempts } for an unused, unexpired challenge."""
+    if not challenge_hash:
+        return None
+    now_iso = datetime.utcnow().isoformat()
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_mfa_tables(conn)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            """
+            SELECT id, user_id, code_hash, expires_at, used_at, attempts
+            FROM mfa_codes
+            WHERE challenge_hash = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (challenge_hash,),
+        ).fetchone()
+    if not row:
+        return None
+    if row["used_at"]:
+        return None
+    if (row["expires_at"] or "") <= now_iso:
+        return None
+    return {
+        "id": int(row["id"]),
+        "user_id": int(row["user_id"]),
+        "code_hash": str(row["code_hash"]),
+        "attempts": int(row["attempts"] or 0),
+    }
+
+
+def mfa_code_consume(code_id: int) -> bool:
+    """Atomically mark a single code row as consumed. Returns True on success."""
+    now_iso = datetime.utcnow().isoformat()
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_mfa_tables(conn)
+        cur = conn.execute(
+            "UPDATE mfa_codes SET used_at = ? WHERE id = ? AND used_at IS NULL",
+            (now_iso, int(code_id)),
+        )
+        conn.commit()
+        return bool(cur.rowcount == 1)
+
+
+MFA_MAX_ATTEMPTS = 5
+
+
+def mfa_code_record_attempt(code_id: int) -> int:
+    """Increment attempt counter; auto-burn the row once MFA_MAX_ATTEMPTS reached."""
+    now_iso = datetime.utcnow().isoformat()
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_mfa_tables(conn)
+        conn.execute(
+            "UPDATE mfa_codes SET attempts = attempts + 1 WHERE id = ? AND used_at IS NULL",
+            (int(code_id),),
+        )
+        row = conn.execute(
+            "SELECT attempts FROM mfa_codes WHERE id = ?",
+            (int(code_id),),
+        ).fetchone()
+        attempts = int(row[0]) if row else 0
+        if attempts >= MFA_MAX_ATTEMPTS:
+            conn.execute(
+                "UPDATE mfa_codes SET used_at = ? WHERE id = ? AND used_at IS NULL",
+                (now_iso, int(code_id)),
+            )
+        conn.commit()
+        return attempts
+
+
+def mfa_trusted_device_create(
+    user_id: int,
+    token_hash: str,
+    expires_at: str,
+    user_agent_hint: Optional[str] = None,
+) -> int:
+    """Persist a trusted-device record. Returns row id."""
+    now = datetime.utcnow().isoformat()
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_mfa_tables(conn)
+        cur = conn.execute(
+            """
+            INSERT INTO mfa_trusted_devices
+                (user_id, token_hash, created_at, expires_at, user_agent_hint)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (int(user_id), token_hash, now, expires_at, user_agent_hint),
+        )
+        conn.commit()
+        return int(cur.lastrowid or 0)
+
+
+def mfa_trusted_device_valid(user_id: int, token_hash: str) -> bool:
+    """Return True if the device token is unrevoked and unexpired for this user."""
+    if not token_hash:
+        return False
+    now_iso = datetime.utcnow().isoformat()
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_mfa_tables(conn)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            """
+            SELECT id, expires_at, revoked_at
+            FROM mfa_trusted_devices
+            WHERE user_id = ? AND token_hash = ?
+            """,
+            (int(user_id), token_hash),
+        ).fetchone()
+        if not row:
+            return False
+        if row["revoked_at"]:
+            return False
+        if (row["expires_at"] or "") <= now_iso:
+            return False
+        conn.execute(
+            "UPDATE mfa_trusted_devices SET last_used_at = ? WHERE id = ?",
+            (now_iso, int(row["id"])),
+        )
+        conn.commit()
+        return True
 
 
 def hr_welcome_templates_list(hr_trust: str) -> list[dict]:
