@@ -114,13 +114,8 @@
       else if (String(t.match_label).indexOf('interpreted') !== -1) matchCls += ' moving-decision__chip--match-interpreted';
       chips.push('<span class="' + matchCls + '">Match: ' + escapeHtml(t.match_label) + '</span>');
     }
-    if (t.historical_acceptance_hint) {
-      var histCls = 'moving-decision__chip moving-decision__chip--hist';
-      if (String(t.historical_acceptance_hint).indexOf('Limited') === 0) {
-        histCls = 'moving-decision__chip moving-decision__chip--hist-low';
-      }
-      chips.push('<span class="' + histCls + '">' + escapeHtml(t.historical_acceptance_hint) + '</span>');
-    }
+    // Precedent (historical_acceptance_hint) is HR-only context and is
+    // intentionally omitted from this doctor-facing checklist preview.
     var chipRow = chips.length
       ? '<div class="moving-decision__chips">' + chips.join('') + '</div>'
       : '';

@@ -311,18 +311,15 @@
           ? '<p class="req-decision__why">' + esc(t.decision_reason) + '</p>'
           : '';
 
-        // 4 + 5. Match label chip and precedent hint (subtle supporting evidence).
+        // 4. Match label chip. Precedent (historical_acceptance_hint) is
+        //    intentionally NOT shown on the doctor screen — that signal is
+        //    HR decision-support context only.
         var chipParts = [];
         if (t.match_label) {
           var chipCls = 'req-match-chip';
           if (t.is_exact_match) chipCls += ' req-match-chip--exact';
           else if (String(t.match_label).indexOf('interpreted') !== -1) chipCls += ' req-match-chip--interpreted';
           chipParts.push('<span class="' + chipCls + '">Match: ' + esc(t.match_label) + '</span>');
-        }
-        if (t.historical_acceptance_hint) {
-          var hintCls = 'req-hist-badge';
-          if (String(t.historical_acceptance_hint).indexOf('Limited') === 0) hintCls += ' req-hist-badge--low';
-          chipParts.push('<span class="' + hintCls + '">' + esc(t.historical_acceptance_hint) + '</span>');
         }
         var chipRowHtml = chipParts.length
           ? '<div class="req-decision__chip-row">' + chipParts.join('') + '</div>'
