@@ -279,7 +279,7 @@
         } else if (t.decision === 'REQUIRES_REVIEW') {
           cls += ' req-decision--review';
           icon = '\u26A0\uFE0F';
-          title = 'Needs review';
+          title = 'Currently being reviewed by HR';
         } else {
           cls += ' req-decision--fail';
           icon = '\u274C';
@@ -367,7 +367,7 @@
           var pills = [
             { cls: 'req-summary-pill--met', count: sum.met || 0, label: 'Met' },
             { cls: 'req-summary-pill--expiring', count: sum.expiring || 0, label: 'Expiring soon' },
-            { cls: 'req-summary-pill--review', count: sum.needs_review || 0, label: 'Needs review' },
+            { cls: 'req-summary-pill--review', count: sum.needs_review || 0, label: 'With HR for review' },
             { cls: 'req-summary-pill--gap', count: sum.gap || 0, label: 'Gap / expired' },
           ];
           summaryEl.innerHTML = pills

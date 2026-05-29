@@ -80,7 +80,7 @@
     } else if (t.decision === 'REQUIRES_REVIEW') {
       cls += ' moving-decision--review';
       icon = '\u26A0\uFE0F';
-      title = 'Needs review';
+      title = 'Currently being reviewed by HR';
     } else {
       cls += ' moving-decision--fail';
       icon = '\u274C';
