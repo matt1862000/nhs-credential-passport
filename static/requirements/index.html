@@ -286,56 +286,32 @@
           title = 'Does not meet requirement';
         }
 
-        // 1. Decision (visually dominant).
+        // Doctor view, intentionally minimal — show ONCE, no repetition:
+        //   1. Decision badge (the only thing the doctor acts on)
+        //   2. Why, in plain English (one sentence about the match,
+        //      one about validity)
+        //
+        // Deliberately omitted (HR-only context):
+        //   - decision_confidence_label / reason  ("Likely match but
+        //     requires confirmation" duplicates the ⚠ badge)
+        //   - match_label chip  ("EXACT MATCH" duplicates the "exactly
+        //     matches" sentence in the why text)
+        //   - historical_acceptance_hint  (decision-support for HR)
+        //   - decision_factors  (scoring internals for audit/HR)
         var titleHtml =
           '<p class="req-decision__title">' +
           '<span class="req-decision__title-icon" aria-hidden="true">' + icon + '</span>' +
           '<span>' + esc(title) + '</span>' +
           '</p>';
 
-        // 2. Confidence label + reason (sits directly under decision).
-        var confHtml = '';
-        if (t.decision_confidence_label) {
-          var cLabel = String(t.decision_confidence_label);
-          var cText = cLabel.charAt(0).toUpperCase() + cLabel.slice(1);
-          confHtml =
-            '<div class="req-decision__conf">' +
-            '<span class="req-decision__conf-label req-decision__conf-label--' + esc(cLabel) + '">' +
-            esc(cText) + ' confidence</span>' +
-            '<span>' + esc(t.decision_confidence_reason || '') + '</span>' +
-            '</div>';
-        }
-
-        // 3. Why — natural-language paragraph. Prefer the short form
-        //    (match + validity) which drops "HR review is recommended…" /
-        //    "No further HR review is required." — that's HR-routing
-        //    language and the badge already conveys it for doctors.
         var whyText = t.decision_reason_short || t.decision_reason;
         var whyHtml = whyText
           ? '<p class="req-decision__why">' + esc(whyText) + '</p>'
           : '';
 
-        // 4. Match label chip. Precedent (historical_acceptance_hint) is
-        //    intentionally NOT shown on the doctor screen — that signal is
-        //    HR decision-support context only.
-        var chipParts = [];
-        if (t.match_label) {
-          var chipCls = 'req-match-chip';
-          if (t.is_exact_match) chipCls += ' req-match-chip--exact';
-          else if (String(t.match_label).indexOf('interpreted') !== -1) chipCls += ' req-match-chip--interpreted';
-          chipParts.push('<span class="' + chipCls + '">Match: ' + esc(t.match_label) + '</span>');
-        }
-        var chipRowHtml = chipParts.length
-          ? '<div class="req-decision__chip-row">' + chipParts.join('') + '</div>'
-          : '';
-
-        // Factors ("How this was calculated", e.g. "Exact module match
-        // (+50)") are scoring internals — HR-only audit detail, not shown
-        // on the doctor's screen.
-
         return (
           '<div class="' + cls + '">' +
-          titleHtml + confHtml + whyHtml + chipRowHtml +
+          titleHtml + whyHtml +
           '</div>'
         );
       }

@@ -87,46 +87,23 @@
       title = 'Does not meet requirement';
     }
 
+    // Doctor view, intentionally minimal — show ONCE, no repetition:
+    //   1. Decision badge (the only thing the doctor acts on)
+    //   2. Why, in plain English (match + validity)
+    //   3. The actual record line from their wallet (for context)
+    //
+    // Deliberately omitted (HR-only context):
+    //   - decision_confidence_label / reason  (duplicates the badge)
+    //   - match_label chip  (duplicates the "exactly matches" sentence)
+    //   - historical_acceptance_hint, decision_factors  (HR / audit)
     var titleHtml =
       '<p class="moving-decision__title"><span aria-hidden="true">' + icon +
       '</span><span>' + escapeHtml(title) + '</span></p>';
 
-    var confHtml = '';
-    if (t.decision_confidence_label) {
-      var cLabel = String(t.decision_confidence_label);
-      var cText = cLabel.charAt(0).toUpperCase() + cLabel.slice(1);
-      confHtml =
-        '<div class="moving-decision__conf">' +
-        '<span class="moving-decision__conf-label moving-decision__conf-label--' + escapeHtml(cLabel) + '">' +
-        escapeHtml(cText) + ' confidence</span>' +
-        '<span>' + escapeHtml(t.decision_confidence_reason || '') + '</span>' +
-        '</div>';
-    }
-
-    // Prefer the short reason — drops HR-routing language ("HR review is
-    // recommended…", "No further HR review is required.") that's redundant
-    // on the doctor's screen because the decision badge already conveys it.
     var whyText = t.decision_reason_short || t.decision_reason;
     var whyHtml = whyText
       ? '<p class="moving-decision__why">' + escapeHtml(whyText) + '</p>'
       : '';
-
-    var chips = [];
-    if (t.match_label) {
-      var matchCls = 'moving-decision__chip';
-      if (t.is_exact_match) matchCls += ' moving-decision__chip--match-exact';
-      else if (String(t.match_label).indexOf('interpreted') !== -1) matchCls += ' moving-decision__chip--match-interpreted';
-      chips.push('<span class="' + matchCls + '">Match: ' + escapeHtml(t.match_label) + '</span>');
-    }
-    // Precedent (historical_acceptance_hint) is HR-only context and is
-    // intentionally omitted from this doctor-facing checklist preview.
-    var chipRow = chips.length
-      ? '<div class="moving-decision__chips">' + chips.join('') + '</div>'
-      : '';
-
-    // Factors ("How this was calculated", e.g. "Exact module match
-    // (+50)") are scoring internals — HR-only audit detail, not shown on
-    // the doctor's screen.
 
     var recordLine = '';
     if (t.module_name) {
@@ -140,7 +117,7 @@
 
     return (
       '<div class="' + cls + '">' +
-      titleHtml + confHtml + whyHtml + chipRow + recordLine +
+      titleHtml + whyHtml + recordLine +
       '</div>'
     );
   }
