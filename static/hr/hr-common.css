@@ -148,6 +148,69 @@
     .hr-fit-chip--hist { background: #e8f4fd; color: #003d78; }
     .hr-fit-chip--hist-low { background: #f0f2f4; color: var(--nhsuk-secondary-text); font-style: italic; font-weight: 500; }
     .hr-fit-chip--cross { background: #f3eef8; color: #4c2c6a; }
+    .hr-assess {
+      margin-top: 0.55rem;
+      border: 1px solid #d8dde2;
+      border-radius: 4px;
+      background: #fff;
+    }
+    .hr-assess__summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 0.4rem 0.6rem;
+      font-size: 0.8125rem;
+      font-weight: 600;
+      color: #003d78;
+      user-select: none;
+    }
+    .hr-assess__summary::-webkit-details-marker { display: none; }
+    .hr-assess__summary::before {
+      content: '\25B8';
+      display: inline-block;
+      margin-right: 0.4rem;
+      transition: transform 0.15s ease;
+    }
+    .hr-assess[open] > .hr-assess__summary::before { transform: rotate(90deg); }
+    .hr-assess__body {
+      padding: 0.55rem 0.75rem 0.75rem;
+      border-top: 1px solid #eef0f2;
+      display: flex;
+      flex-direction: column;
+      gap: 0.65rem;
+    }
+    .hr-assess__heading {
+      margin: 0 0 0.25rem 0;
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--nhsuk-secondary-text);
+    }
+    .hr-assess__list {
+      margin: 0;
+      display: grid;
+      grid-template-columns: max-content 1fr;
+      column-gap: 0.65rem;
+      row-gap: 0.2rem;
+      font-size: 0.8125rem;
+    }
+    .hr-assess__row {
+      display: contents;
+    }
+    .hr-assess__list dt {
+      margin: 0;
+      color: var(--nhsuk-secondary-text);
+      font-weight: 600;
+    }
+    .hr-assess__list dd { margin: 0; color: var(--nhsuk-text-color); }
+    .hr-assess__factors {
+      margin: 0;
+      padding-left: 1.1rem;
+      font-size: 0.8125rem;
+      line-height: 1.4;
+    }
+    .hr-assess__factors li { margin: 0.1rem 0; }
+    .hr-assess__section { }
     .hr-mandatory-fit-banner__text { margin: 0 0 0.5rem 0; font-size: 0.9375rem; }
     .hr-mandatory-fit-note {
       margin-top: 0.65rem;

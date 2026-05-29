@@ -545,6 +545,11 @@ def mandatory_needs_review_by_credential(doctor_user_id: int, trust_name: str) -
                 "historical_context": tr.get("historical_context"),
                 "historical_acceptance_hint": tr.get("historical_acceptance_hint"),
                 "decision_engine_version": tr.get("decision_engine_version"),
+                # Raw signal block — surfaced to HR only so the
+                # "How this was assessed" audit panel can show category
+                # alignment, validity, provider trust and similarity.
+                # Doctor surfaces never receive this field.
+                "signals": tr.get("signals"),
             }
         )
     return out

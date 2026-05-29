@@ -120,7 +120,130 @@
           ? '<div class="hr-fit-decision__chips">' + chips.join('') + '</div>'
           : '';
 
-        return '<div class="' + cls + '">' + titleHtml + confHtml + whyHtml + chipsHtml + '</div>';
+        return (
+          '<div class="' + cls + '">' +
+          titleHtml + confHtml + whyHtml + chipsHtml +
+          howAssessedPanelHtml(t) +
+          '</div>'
+        );
+      }
+
+      // HR-only audit panel. Collapsed by default. Surfaces structured
+      // detail from the decision envelope so HR can verify how the
+      // recommendation was formed without cluttering the main row.
+      // Never rendered on doctor-facing surfaces.
+      function howAssessedPanelHtml(t) {
+        if (!t || !t.decision) return '';
+        var s = t.signals || {};
+
+        // SECTION A — Matching Evidence
+        var aRows = [];
+        if (t.match_label) {
+          aRows.push(['Match type', String(t.match_label)]);
+        }
+        if (Object.prototype.hasOwnProperty.call(s, 'category_match')) {
+          aRows.push(['Category alignment', s.category_match ? 'Aligned with required category' : 'No category alignment']);
+        }
+        var validity = '';
+        if (s.is_expired) {
+          validity = 'Expired';
+        } else if (typeof s.days_to_expiry === 'number') {
+          if (s.days_to_expiry < 30) {
+            validity = 'Expiring soon (' + s.days_to_expiry + ' days remaining)';
+          } else {
+            validity = 'Valid (' + s.days_to_expiry + ' days remaining)';
+          }
+        } else if (Object.prototype.hasOwnProperty.call(s, 'is_expired')) {
+          validity = 'No expiry recorded';
+        }
+        if (validity) aRows.push(['Validity', validity]);
+        if (Object.prototype.hasOwnProperty.call(s, 'trusted_provider')) {
+          aRows.push(['Provider', s.trusted_provider ? 'Recognised provider (NHS / e-LfH / trust LMS)' : 'Provider not on trusted list']);
+        }
+
+        // SECTION B — Similarity (only meaningful for semantic matches)
+        var bRows = [];
+        var sim = (typeof s.similarity_score === 'number') ? s.similarity_score : null;
+        if (sim != null && sim > 0) {
+          bRows.push(['Semantic similarity', Math.round(sim * 100) + '%']);
+        }
+
+        // SECTION C — Scoring Factors
+        var factors = Array.isArray(t.decision_factors) ? t.decision_factors : [];
+
+        // SECTION D — Decision Summary
+        var dRows = [];
+        if (typeof t.decision_score === 'number') {
+          dRows.push(['Score', String(t.decision_score)]);
+        }
+        if (t.decision_confidence_label) {
+          var cl = String(t.decision_confidence_label);
+          var conf = cl.charAt(0).toUpperCase() + cl.slice(1);
+          if (t.decision_confidence_reason) conf += ' — ' + t.decision_confidence_reason;
+          dRows.push(['Confidence', conf]);
+        }
+        var dec = String(t.decision || '');
+        var decLabel = dec === 'MEETS'
+          ? 'Meets requirement'
+          : dec === 'REQUIRES_REVIEW'
+          ? 'Needs HR review'
+          : dec === 'DOES_NOT_MEET'
+          ? 'Does not meet'
+          : dec;
+        dRows.push(['Decision', decLabel]);
+        if (t.decision_engine_version) {
+          dRows.push(['Engine version', String(t.decision_engine_version)]);
+        }
+
+        function rowsHtml(rows) {
+          if (!rows.length) return '';
+          return '<dl class="hr-assess__list">' + rows.map(function (kv) {
+            return '<div class="hr-assess__row">' +
+              '<dt>' + esc(kv[0]) + '</dt>' +
+              '<dd>' + esc(kv[1]) + '</dd>' +
+              '</div>';
+          }).join('') + '</dl>';
+        }
+
+        var sections = [];
+        if (aRows.length) {
+          sections.push(
+            '<section class="hr-assess__section">' +
+            '<h4 class="hr-assess__heading">Matching evidence</h4>' +
+            rowsHtml(aRows) + '</section>'
+          );
+        }
+        if (bRows.length) {
+          sections.push(
+            '<section class="hr-assess__section">' +
+            '<h4 class="hr-assess__heading">Similarity</h4>' +
+            rowsHtml(bRows) + '</section>'
+          );
+        }
+        if (factors.length) {
+          sections.push(
+            '<section class="hr-assess__section">' +
+            '<h4 class="hr-assess__heading">Scoring factors</h4>' +
+            '<ul class="hr-assess__factors">' +
+            factors.map(function (f) { return '<li>' + esc(String(f)) + '</li>'; }).join('') +
+            '</ul></section>'
+          );
+        }
+        if (dRows.length) {
+          sections.push(
+            '<section class="hr-assess__section">' +
+            '<h4 class="hr-assess__heading">Decision summary</h4>' +
+            rowsHtml(dRows) + '</section>'
+          );
+        }
+        if (!sections.length) return '';
+
+        return (
+          '<details class="hr-assess">' +
+          '<summary class="hr-assess__summary">How this was assessed</summary>' +
+          '<div class="hr-assess__body">' + sections.join('') + '</div>' +
+          '</details>'
+        );
       }
 
       function evidenceStatusPill(it) {
