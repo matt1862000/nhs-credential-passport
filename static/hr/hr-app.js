@@ -3185,9 +3185,11 @@
           stopInboxPoll();
           show(document.getElementById('sessionView'), true);
           show(document.getElementById('inboxView'), false);
-          itemsTab = loadStoredTab(LS_ITEMS_TAB, 'new');
+          // Always land on Awaiting decision when opening a doctor's
+          // queue — that's where the actionable work is.
+          itemsTab = 'new';
           setSegmentTab('sessionView', itemsTab);
-          wireTabs('sessionView', LS_ITEMS_TAB, function (tab) {
+          wireTabs('sessionView', null, function (tab) {
             itemsTab = tab === 'archived' ? 'archived' : 'new';
             if (lastSessionPayload) renderItemsTable(lastSessionPayload, null);
           });
@@ -3196,9 +3198,10 @@
           stopInboxPoll();
           show(document.getElementById('sessionView'), true);
           show(document.getElementById('inboxView'), false);
-          itemsTab = loadStoredTab(LS_ITEMS_TAB, 'new');
+          // Same here — every Review click starts on Awaiting decision.
+          itemsTab = 'new';
           setSegmentTab('sessionView', itemsTab);
-          wireTabs('sessionView', LS_ITEMS_TAB, function (tab) {
+          wireTabs('sessionView', null, function (tab) {
             itemsTab = tab === 'archived' ? 'archived' : 'new';
             if (lastSessionPayload) renderItemsTable(lastSessionPayload, sessionId);
           });
