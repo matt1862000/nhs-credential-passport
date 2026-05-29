@@ -12,7 +12,7 @@ from typing import Any, Optional
 from . import mandatory_matching
 from .models import CSTF_MODULES
 
-ENGINE_VERSION = "1.8.0"
+ENGINE_VERSION = "1.8.1"
 
 DECISION_MEETS = "MEETS"
 DECISION_REQUIRES_REVIEW = "REQUIRES_REVIEW"
@@ -242,13 +242,14 @@ def _score_contributions(signals: dict[str, Any]) -> list[tuple[str, int]]:
     if signals.get("trusted_provider"):
         out.append(("Trusted provider", 10))
 
-    # HR has already verified that the underlying evidence is genuine for
-    # this credential at the current trust. That's a strong signal it
-    # should at least reach the review band — typically combined with
-    # other signals (match nature + validity) it tips a clear case to
-    # MEETS without HR having to manually confirm fit too.
-    if signals.get("hr_verified"):
-        out.append(("HR-verified evidence at this trust", 25))
+    # NOTE: HR evidence-verification is intentionally NOT a scoring
+    # signal. Evidence verification ("is this certificate genuine?") and
+    # fit confirmation ("does this credential satisfy this trust's
+    # requirement?") are two separate decisions the HR user makes. A
+    # verified certificate must still pass an explicit fit decision
+    # before we mark a mandatory topic MEETS — see hr_fit_decision in
+    # compliance_snapshot._apply_hr_fit_decision. The hr_verified signal
+    # is still tracked for explanations and audit.
 
     if signals.get("previously_accepted"):
         out.append(("Previously accepted at this trust", 30))

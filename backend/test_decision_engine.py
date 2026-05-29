@@ -231,63 +231,44 @@ class ExplanationStyleTests(unittest.TestCase):
         out_fail = de.generate_explanation(_signals(), de.DECISION_DOES_NOT_MEET, 10)
         self.assertIn("cannot be treated as meeting", out_fail["reason"])
 
-    def test_hr_verified_signal_rescues_bare_exact_match(self):
-        """Exact match with no category alignment and no trusted-provider
-        bonus previously landed at 65 (REQUIRES_REVIEW), contradicting the
-        'Verified by HR' chip on the doctor's wallet. With hr_verified=True
-        the score reaches MEETS."""
+    def test_hr_verified_does_not_auto_meet_bare_exact_match(self):
+        """HR evidence-verification must NOT auto-promote an exact match
+        to MEETS. Fit confirmation is a separate explicit HR decision
+        (hr_fit_decision in compliance_snapshot._apply_hr_fit_decision).
+        Verified-but-no-fit-decision must stay REQUIRES_REVIEW so the
+        row appears in HR's fit-review panel."""
         bare = _signals(
             match_type="exact",
             category_match=False,
             trusted_provider=False,
             days_to_expiry=500,
         )
-        before_score, before_decision, _ = de.evaluate_decision(bare)
-        self.assertEqual(before_score, 65)
-        self.assertEqual(before_decision, de.DECISION_REQUIRES_REVIEW)
-
-        verified = dict(bare)
-        verified["hr_verified"] = True
-        after_score, after_decision, _ = de.evaluate_decision(verified)
-        # exact (+50) + valid >180d (+15) + hr_verified (+25) = 90
-        self.assertEqual(after_score, 90)
-        self.assertEqual(after_decision, de.DECISION_MEETS)
-
-    def test_hr_verified_signal_is_purely_additive(self):
-        """Without hr_verified, every scoring scenario stays identical."""
-        bare = _signals(
-            match_type="exact",
-            category_match=False,
-            trusted_provider=False,
-            days_to_expiry=500,
-        )
-        with_flag_false = dict(bare, hr_verified=False)
         s1, d1, _ = de.evaluate_decision(bare)
-        s2, d2, _ = de.evaluate_decision(with_flag_false)
-        self.assertEqual(s1, s2)
-        self.assertEqual(d1, d2)
+        verified = dict(bare, hr_verified=True)
+        s2, d2, _ = de.evaluate_decision(verified)
+        # exact (+50) + valid >180d (+15) = 65 in both cases
+        self.assertEqual(s1, 65)
+        self.assertEqual(s2, 65)
+        self.assertEqual(d1, de.DECISION_REQUIRES_REVIEW)
+        self.assertEqual(d2, de.DECISION_REQUIRES_REVIEW)
 
-    def test_hr_verified_signal_appears_in_factors(self):
+    def test_hr_verified_is_not_a_scoring_signal(self):
+        """hr_verified flag is tracked for explanation/audit, but never
+        contributes to the score."""
+        for mt in ("exact", "alias", "semantic", "partial"):
+            bare = _signals(match_type=mt, similarity_score=0.85, days_to_expiry=500)
+            verified = dict(bare, hr_verified=True)
+            s1, _, _ = de.evaluate_decision(bare)
+            s2, _, _ = de.evaluate_decision(verified)
+            self.assertEqual(s1, s2, f"hr_verified must not change score for {mt}")
+
+    def test_hr_verified_does_not_appear_in_factors(self):
+        """No factor row for HR verification — that decision belongs to
+        hr_fit_decision, not the scoring layer."""
         s = _signals(match_type="exact", hr_verified=True, days_to_expiry=500)
-        out = de.generate_explanation(s, de.DECISION_MEETS, 100)
+        out = de.generate_explanation(s, de.DECISION_REQUIRES_REVIEW, 65)
         joined = " ".join(out["factors"])
-        self.assertIn("HR-verified evidence at this trust", joined)
-
-    def test_hr_verified_partial_still_requires_review(self):
-        """HR verified the evidence but it's a partial match — the credential
-        still needs HR to make a fit decision, so the band must stay REVIEW
-        (not jump to MEETS just because the evidence is verified)."""
-        s = _signals(
-            match_type="partial",
-            hr_verified=True,
-            category_match=False,
-            trusted_provider=False,
-            days_to_expiry=500,
-        )
-        score, decision, _ = de.evaluate_decision(s)
-        # partial (+15) + valid >180d (+15) + hr_verified (+25) = 55
-        self.assertEqual(score, 55)
-        self.assertEqual(decision, de.DECISION_REQUIRES_REVIEW)
+        self.assertNotIn("HR-verified", joined)
 
     def test_reason_short_drops_decision_framing(self):
         """reason_short must contain match + validity sentences only,
@@ -497,7 +478,7 @@ class EnvelopeShapeTests(unittest.TestCase):
             "decision_engine_version",
         ):
             self.assertIn(key, env, f"missing {key}")
-        self.assertEqual(env["decision_engine_version"], "1.8.0")
+        self.assertEqual(env["decision_engine_version"], "1.8.1")
         self.assertIn("decision_reason_short", env)
         self.assertTrue(env["decision_reason_short"])
         self.assertNotIn("HR review", env["decision_reason_short"])

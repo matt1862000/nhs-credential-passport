@@ -143,6 +143,12 @@ def _apply_hr_fit_decision(row: dict[str, Any], decision: Optional[dict]) -> dic
 def _topic_needs_hr_fit_review_row(tr: dict) -> bool:
     if tr.get("hr_fit_decision"):
         return False
+    # Anything the decision engine flagged as REQUIRES_REVIEW needs an
+    # explicit HR fit decision — including HR-verified exact matches
+    # whose status_label is "Met (exact match)". Evidence verification
+    # is not fit confirmation.
+    if tr.get("decision") == decision_engine.DECISION_REQUIRES_REVIEW:
+        return True
     return mandatory_matching.topic_needs_hr_fit_review(
         tr.get("match_type"),
         tr.get("status_label"),
