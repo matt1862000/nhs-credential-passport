@@ -1634,14 +1634,18 @@ def _notify_clinician_hr_training(
     module_name: str,
     trust_name: str,
     decline_reason: Optional[str] = None,
+    topic_name: Optional[str] = None,
 ) -> None:
     mod = (module_name or "Training").strip() or "Training"
     trust = (trust_name or "HR").strip() or "HR"
+    topic = (topic_name or "").strip()
     titles = {
         "hr_verified": "Training verified",
         "hr_declined": "Training declined",
         "hr_unverified": "Verification reverted",
         "hr_issued": "Training recorded by HR",
+        "hr_fit_accepted": "Requirement satisfied",
+        "hr_fit_rejected": "Requirement not satisfied",
     }
     title = titles.get(kind, "Training update")
     if kind == "hr_verified":
@@ -1656,16 +1660,31 @@ def _notify_clinician_hr_training(
     elif kind == "hr_unverified":
         body = f"HR at {trust} reverted verification for {mod}. It is awaiting review again."
         link = "/static/staff/"
+    elif kind == "hr_fit_accepted":
+        if topic:
+            body = f"HR at {trust} confirmed {mod} satisfies the {topic} requirement."
+        else:
+            body = f"HR at {trust} confirmed {mod} satisfies a trust requirement."
+        link = "/static/requirements/"
+    elif kind == "hr_fit_rejected":
+        if topic:
+            body = f"HR at {trust} decided {mod} does not satisfy the {topic} requirement."
+        else:
+            body = f"HR at {trust} decided {mod} does not satisfy a trust requirement."
+        link = "/static/requirements/"
     else:
         body = f"{mod} was recorded by HR at {trust}."
         link = "/static/staff/"
+    meta = {"module_name": mod, "trust_name": trust}
+    if topic:
+        meta["topic_name"] = topic
     db.notification_create(
         int(doctor_user_id),
         kind=kind,
         title=title,
         body=body,
         link_path=link,
-        meta={"module_name": mod, "trust_name": trust},
+        meta=meta,
     )
 
 
@@ -2866,6 +2885,13 @@ async def hr_mandatory_fit_decision(request: Request, doctor_user_id: int):
         credential_id=credential_id,
         detail=f"{topic_name} ↔ {match.get('module_name') or credential_id}",
         meta={"topic_id": saved.get("topic_id"), "topic_name": topic_name, "decision": decision},
+    )
+    _notify_clinician_hr_training(
+        int(doctor_user_id),
+        kind="hr_fit_accepted" if decision == "accepted" else "hr_fit_rejected",
+        module_name=str(match.get("module_name") or credential_id or "Training"),
+        trust_name=trust,
+        topic_name=topic_name,
     )
     return {"ok": True, "decision": saved}
 
