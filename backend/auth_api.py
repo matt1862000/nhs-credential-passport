@@ -1798,11 +1798,47 @@ def _decided_fit_reviews_for_doctor(
 def hr_shares_list(request: Request, limit: int = 50):
     hr = require_premium_user(request)
     trust = _hr_trust(hr)
+    trust_display = (hr.get("current_trust") or "").strip()
     db.share_reconcile_stale_pending(trust)
-    summary = db.hr_inbox_activity_summary((hr.get("current_trust") or "").strip())
+    summary = db.hr_inbox_activity_summary(trust_display)
+    sessions = db.share_inbox_list(limit=limit, hr_trust=trust)
+    # Attach pending fit-review count per doctor so a session whose
+    # evidence is fully verified but still has outstanding fit decisions
+    # stays in the 'Needs action' tab rather than dropping into Completed.
+    fit_pending_by_doctor: dict[int, int] = {}
+    if trust_display:
+        seen_doctors: set[int] = set()
+        for s in sessions:
+            did = s.get("doctor_user_id")
+            if did is None:
+                continue
+            try:
+                did_i = int(did)
+            except (TypeError, ValueError):
+                continue
+            if did_i in seen_doctors:
+                continue
+            seen_doctors.add(did_i)
+            try:
+                fit_map = compliance_snapshot.mandatory_needs_review_by_credential(
+                    did_i, trust_display
+                )
+            except Exception:
+                fit_map = {}
+            fit_pending_by_doctor[did_i] = len(fit_map or {})
+        # Stamp each session row with its doctor's count (doctor-level
+        # signal duplicated per row; the JS aggregator dedupes by doctor).
+        for s in sessions:
+            did = s.get("doctor_user_id")
+            try:
+                did_i = int(did) if did is not None else None
+            except (TypeError, ValueError):
+                did_i = None
+            s["fit_pending_count"] = int(fit_pending_by_doctor.get(did_i, 0)) if did_i is not None else 0
     return {
-        "sessions": db.share_inbox_list(limit=limit, hr_trust=trust),
+        "sessions": sessions,
         "actionable_pending_items": int(summary.get("pending_items") or 0),
+        "fit_pending_by_doctor": {str(k): v for k, v in fit_pending_by_doctor.items()},
     }
 
 

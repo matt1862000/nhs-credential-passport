@@ -293,8 +293,10 @@
         var v = s.verified_count || 0;
         var p = s.pending_count || 0;
         var dec = s.declined_count || 0;
+        var fitP = s.fit_pending_count || 0;
         var parts = [];
         if (p > 0) parts.push('<span class="hr-count-pill hr-count-pill--pending">' + String(p) + ' pending</span>');
+        if (fitP > 0) parts.push('<span class="hr-count-pill hr-count-pill--pending">' + String(fitP) + ' awaiting fit review</span>');
         if (v > 0) parts.push('<span class="hr-count-pill hr-count-pill--verified">' + String(v) + ' verified</span>');
         if (dec > 0) parts.push('<span class="hr-count-pill hr-count-pill--declined">' + String(dec) + ' declined</span>');
         if (!parts.length) parts.push('<span class="hr-count-pill">No records</span>');
@@ -325,6 +327,12 @@
           var pending = sess.reduce(function (a, x) { return a + (x.pending_count || 0); }, 0);
           var verified = sess.reduce(function (a, x) { return a + (x.verified_count || 0); }, 0);
           var declined = sess.reduce(function (a, x) { return a + (x.declined_count || 0); }, 0);
+          // fit_pending_count is a doctor-level signal stamped onto
+          // every session of that doctor, so take the max, not the sum.
+          var fitPending = sess.reduce(function (a, x) {
+            var n = x.fit_pending_count || 0;
+            return n > a ? n : a;
+          }, 0);
           var latest = sess.map(function (x) { return x.created_at; }).sort().slice(-1)[0];
           return {
             doctor_user_id: g.doctor_user_id,
@@ -335,6 +343,7 @@
             pending_count: pending,
             verified_count: verified,
             declined_count: declined,
+            fit_pending_count: fitPending,
             created_at: latest,
             _session_count: sess.length,
             sessions: sess,
@@ -1420,12 +1429,18 @@
 
       function ingestInboxSharesData(data) {
         var all = (data.sessions || []);
+        // Needs action covers: pending evidence OR pending fit-review.
+        // A session whose evidence is fully decided but still has
+        // outstanding fit decisions stays in Needs action because the
+        // doctor's compliance is still incomplete pending HR's call.
         var sessions = all.filter(function (s) {
           var sk = String(s.share_kind || 'review').toLowerCase();
           var isPortfolio = sk === 'portfolio';
           var hasPending = (s.pending_count || 0) > 0;
-          if (inboxTab === 'new') return !isPortfolio && hasPending;
-          return !isPortfolio && !hasPending;
+          var hasFitPending = (s.fit_pending_count || 0) > 0;
+          var needsAction = hasPending || hasFitPending;
+          if (inboxTab === 'new') return !isPortfolio && needsAction;
+          return !isPortfolio && !needsAction;
         });
         lastInboxGroups = aggregateDoctorGroups(sessions);
         fillInboxModuleSelect(lastInboxGroups);
