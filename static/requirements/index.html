@@ -53,6 +53,19 @@
     }
     .req-badge--portable { background: #e8f4fd; color: #005eb8; }
     .req-badge--local { background: #f3eef8; color: #4c2c6a; }
+    .req-decision {
+      margin-top: 0.45rem; padding: 0.45rem 0.55rem; border-radius: 4px;
+      font-size: 0.8125rem; line-height: 1.4; background: #f8f9fa; border-left: 3px solid #768692;
+    }
+    .req-decision--meets { border-left-color: var(--nhsuk-success, #007f3b); }
+    .req-decision--review { border-left-color: #d5700a; }
+    .req-decision--fail { border-left-color: var(--nhsuk-error); }
+    .req-decision__title { font-weight: 700; display: block; }
+    .req-decision ul { margin: 0.25rem 0 0 1rem; padding: 0; }
+    .req-hist-badge {
+      display: inline-block; margin-top: 0.35rem; font-size: 0.75rem; font-weight: 600;
+      padding: 0.15rem 0.45rem; border-radius: 3px; background: #e8f4fd; color: #003d78;
+    }
     .req-summary-pill--review .req-summary-pill__count { color: #7a4700; }
     .req-card { background: #fff; border: 1px solid var(--nhsuk-border); border-radius: 6px; padding: 1.25rem 1.5rem; margin-top: 1.25rem; }
     .req-empty { color: var(--nhsuk-secondary-text); padding: 0.75rem 0; font-style: italic; }
@@ -207,6 +220,33 @@
         return '<a class="req-complete-link" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">Open link</a>';
       }
 
+      function decisionBlock(t) {
+        if (!t.decision) return '';
+        var cls = 'req-decision';
+        if (t.decision === 'MEETS') cls += ' req-decision--meets';
+        else if (t.decision === 'REQUIRES_REVIEW') cls += ' req-decision--review';
+        else cls += ' req-decision--fail';
+        var title = t.decision === 'MEETS' ? 'Likely meets requirement'
+          : t.decision === 'REQUIRES_REVIEW' ? 'Needs review'
+          : 'Does not meet';
+        var conf = t.decision_confidence != null
+          ? ' <span class="req-detail">(' + Math.round(Number(t.decision_confidence) * 100) + '% confidence)</span>'
+          : '';
+        var factors = Array.isArray(t.decision_factors) && t.decision_factors.length
+          ? '<ul>' + t.decision_factors.map(function (f) { return '<li>' + esc(f) + '</li>'; }).join('') + '</ul>'
+          : '';
+        var hist = t.historical_acceptance_hint
+          ? '<span class="req-hist-badge">' + esc(t.historical_acceptance_hint) + '</span>'
+          : '';
+        return (
+          '<div class="' + cls + '">' +
+          '<span class="req-decision__title">' + esc(title) + conf + '</span>' +
+          (t.decision_reason ? esc(t.decision_reason) : '') +
+          factors + hist +
+          '</div>'
+        );
+      }
+
       function renderTable(snap) {
         var tbody = document.getElementById('reqTbody');
         if (!tbody) return;
@@ -239,7 +279,7 @@
             '<td>' + esc(t.topic_name) + '</td>' +
             '<td>' + esc(t.category || '—') + '</td>' +
             '<td>' + completeTrainingCell(t) + '</td>' +
-            '<td><span class="req-tag ' + tagClass + '">' + esc(tagLabel) + '</span>' + reasonHtml + metaHtml + '</td>' +
+            '<td><span class="req-tag ' + tagClass + '">' + esc(tagLabel) + '</span>' + reasonHtml + decisionBlock(t) + metaHtml + '</td>' +
             '<td>' + recordHtml + '</td>' +
             '</tr>'
           );

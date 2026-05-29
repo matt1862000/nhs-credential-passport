@@ -91,11 +91,26 @@
             var moduleCell = moduleEvidenceLinkHtml(it, sidVal, payload);
             var topicName = esc(t.topic_name || 'Mandatory requirement');
             var reason = t.reason ? '<p class="hr-mandatory-fit-section__reason">' + esc(t.reason) + '</p>' : '';
+            var histHint = t.historical_acceptance_hint
+              ? '<p class="hr-mandatory-fit-section__reason hr-mandatory-fit-section__hist">' + esc(t.historical_acceptance_hint) + '</p>'
+              : '';
+            var crossCtx = t.historical_context && t.historical_context.cross_trust;
+            var crossLine = '';
+            if (crossCtx && crossCtx.sample_size >= 5 && crossCtx.rate != null) {
+              crossLine =
+                '<p class="hr-mandatory-fit-section__reason hr-mandatory-fit-section__hist">Accepted by ' +
+                Math.round(crossCtx.rate * 100) +
+                '% of similar trusts (' +
+                esc(String(crossCtx.accepted)) +
+                ' of ' +
+                esc(String(crossCtx.sample_size)) +
+                ' decisions)</p>';
+            }
             return (
               '<tr>' +
               '<td>' + moduleCell + '</td>' +
               '<td>' + evidenceStatusPill(it) + '</td>' +
-              '<td>' + topicName + reason + '</td>' +
+              '<td>' + topicName + reason + histHint + crossLine + '</td>' +
               '<td>' +
               '<div class="hr-mandatory-fit-actions">' +
               '<button type="button" class="nhsuk-button hr-btn-small" data-fit-accept="1" data-cid="' +

@@ -126,6 +126,7 @@ def init_db():
         _ensure_expiry_reminder_sent_table(conn)
         _ensure_hr_attestations_table(conn)
         _ensure_mandatory_match_decisions_table(conn)
+        _ensure_training_decision_stats_table(conn)
         _ensure_users_provision_columns(conn)
         _ensure_hr_cohorts_tables(conn)
         _ensure_notifications_table(conn)
@@ -628,16 +629,260 @@ def _ensure_mandatory_match_decisions_table(conn: sqlite3.Connection) -> None:
             decision TEXT NOT NULL CHECK(decision IN ('accepted', 'rejected')),
             hr_user_id INTEGER NOT NULL REFERENCES users(id),
             decided_at TEXT NOT NULL,
+            decision_engine_version TEXT,
             UNIQUE(doctor_user_id, trust_name, topic_name, credential_id)
         )
         """
     )
+    try:
+        conn.execute(
+            "ALTER TABLE mandatory_match_decisions ADD COLUMN decision_engine_version TEXT"
+        )
+    except sqlite3.OperationalError:
+        pass
     conn.execute(
         """
         CREATE INDEX IF NOT EXISTS idx_mandatory_match_decisions_doctor_trust
         ON mandatory_match_decisions(doctor_user_id, trust_name)
         """
     )
+
+
+def _ensure_training_decision_stats_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS training_decision_stats (
+            topic_norm TEXT NOT NULL,
+            credential_title_norm TEXT NOT NULL,
+            trust_name_norm TEXT NOT NULL,
+            accepted_count INTEGER NOT NULL DEFAULT 0,
+            rejected_count INTEGER NOT NULL DEFAULT 0,
+            last_decided_at TEXT,
+            PRIMARY KEY (topic_norm, credential_title_norm, trust_name_norm)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_training_decision_stats_topic_cred
+        ON training_decision_stats(topic_norm, credential_title_norm)
+        """
+    )
+
+
+def _norm_stats_trust(trust_name: str) -> str:
+    return (trust_name or "").strip().lower()
+
+
+def training_decision_stats_apply(
+    *,
+    topic_name: str,
+    credential_title: str,
+    trust_name: str,
+    decision: str,
+    decided_at: str,
+    previous_decision: Optional[str] = None,
+) -> None:
+    """Increment rollup counts when HR records a requirement-fit decision."""
+    from . import decision_engine
+
+    topic_norm = decision_engine.normalize_key(topic_name)
+    cred_norm = decision_engine.normalize_key(credential_title)
+    trust_norm = _norm_stats_trust(trust_name)
+    if not topic_norm or not cred_norm or not trust_norm:
+        return
+    dec = (decision or "").strip().lower()
+    if dec not in ("accepted", "rejected"):
+        return
+    prev = (previous_decision or "").strip().lower() if previous_decision else None
+
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_training_decision_stats_table(conn)
+        conn.row_factory = sqlite3.Row
+        if prev and prev == dec:
+            conn.execute(
+                """
+                UPDATE training_decision_stats SET last_decided_at = ?
+                WHERE topic_norm = ? AND credential_title_norm = ? AND trust_name_norm = ?
+                """,
+                (decided_at, topic_norm, cred_norm, trust_norm),
+            )
+            conn.commit()
+            return
+        row = conn.execute(
+            """
+            SELECT accepted_count, rejected_count FROM training_decision_stats
+            WHERE topic_norm = ? AND credential_title_norm = ? AND trust_name_norm = ?
+            """,
+            (topic_norm, cred_norm, trust_norm),
+        ).fetchone()
+        acc = int(row["accepted_count"]) if row else 0
+        rej = int(row["rejected_count"]) if row else 0
+        if prev == "accepted" and acc > 0:
+            acc -= 1
+        elif prev == "rejected" and rej > 0:
+            rej -= 1
+        if dec == "accepted":
+            acc += 1
+        else:
+            rej += 1
+        conn.execute(
+            """
+            INSERT INTO training_decision_stats (
+                topic_norm, credential_title_norm, trust_name_norm,
+                accepted_count, rejected_count, last_decided_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(topic_norm, credential_title_norm, trust_name_norm) DO UPDATE SET
+                accepted_count = excluded.accepted_count,
+                rejected_count = excluded.rejected_count,
+                last_decided_at = excluded.last_decided_at
+            """,
+            (topic_norm, cred_norm, trust_norm, acc, rej, decided_at),
+        )
+        conn.commit()
+
+
+def training_decision_stats_lookup(
+    topic_name: str,
+    credential_title: str,
+    trust_name: str,
+) -> dict:
+    from . import decision_engine
+
+    topic_norm = decision_engine.normalize_key(topic_name)
+    cred_norm = decision_engine.normalize_key(credential_title)
+    trust_norm = _norm_stats_trust(trust_name)
+    if not topic_norm or not cred_norm or not trust_norm:
+        return {"accepted_count": 0, "rejected_count": 0}
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_training_decision_stats_table(conn)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            """
+            SELECT accepted_count, rejected_count, last_decided_at
+            FROM training_decision_stats
+            WHERE topic_norm = ? AND credential_title_norm = ? AND trust_name_norm = ?
+            """,
+            (topic_norm, cred_norm, trust_norm),
+        ).fetchone()
+    if not row:
+        return {"accepted_count": 0, "rejected_count": 0}
+    return {
+        "accepted_count": int(row["accepted_count"] or 0),
+        "rejected_count": int(row["rejected_count"] or 0),
+        "last_decided_at": row["last_decided_at"],
+    }
+
+
+def training_decision_acceptance_rate_cross_trust(
+    topic_name: str,
+    credential_title: str,
+) -> dict:
+    """Sum acceptance across all trusts for one topic + credential title pair."""
+    from . import decision_engine
+
+    topic_norm = decision_engine.normalize_key(topic_name)
+    cred_norm = decision_engine.normalize_key(credential_title)
+    if not topic_norm or not cred_norm:
+        return {"accepted_count": 0, "rejected_count": 0}
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_training_decision_stats_table(conn)
+        row = conn.execute(
+            """
+            SELECT COALESCE(SUM(accepted_count), 0) AS a,
+                   COALESCE(SUM(rejected_count), 0) AS r
+            FROM training_decision_stats
+            WHERE topic_norm = ? AND credential_title_norm = ?
+            """,
+            (topic_norm, cred_norm),
+        ).fetchone()
+    if not row:
+        return {"accepted_count": 0, "rejected_count": 0}
+    return {
+        "accepted_count": int(row[0] or 0),
+        "rejected_count": int(row[1] or 0),
+    }
+
+
+def training_decision_stats_alternatives_for_topic(
+    topic_name: str,
+    trust_name: Optional[str] = None,
+    *,
+    limit: int = 5,
+) -> list[dict]:
+    """Top credential titles accepted for a topic (optionally scoped to one trust)."""
+    from . import decision_engine
+
+    topic_norm = decision_engine.normalize_key(topic_name)
+    if not topic_norm:
+        return []
+    trust_norm = _norm_stats_trust(trust_name) if trust_name else None
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_training_decision_stats_table(conn)
+        conn.row_factory = sqlite3.Row
+        if trust_norm:
+            rows = conn.execute(
+                """
+                SELECT credential_title_norm, accepted_count, rejected_count
+                FROM training_decision_stats
+                WHERE topic_norm = ? AND trust_name_norm = ?
+                ORDER BY accepted_count DESC, rejected_count ASC
+                LIMIT ?
+                """,
+                (topic_norm, trust_norm, int(limit)),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT credential_title_norm,
+                       SUM(accepted_count) AS accepted_count,
+                       SUM(rejected_count) AS rejected_count
+                FROM training_decision_stats
+                WHERE topic_norm = ?
+                GROUP BY credential_title_norm
+                ORDER BY accepted_count DESC
+                LIMIT ?
+                """,
+                (topic_norm, int(limit)),
+            ).fetchall()
+    out: list[dict] = []
+    for r in rows:
+        a = int(r["accepted_count"] or 0)
+        rej = int(r["rejected_count"] or 0)
+        total = a + rej
+        if total < 1:
+            continue
+        out.append(
+            {
+                "credential_title_norm": r["credential_title_norm"],
+                "title": r["credential_title_norm"],
+                "acceptance_rate": round(a / total, 4),
+                "sample_size": total,
+                "accepted_count": a,
+                "rejected_count": rej,
+            }
+        )
+    return out
+
+
+def training_decision_trust_accepted_pairs(trust_name: str) -> set[tuple[str, str]]:
+    """Set of (topic_norm, credential_title_norm) with at least one acceptance at trust."""
+    from . import decision_engine
+
+    trust_norm = _norm_stats_trust(trust_name)
+    if not trust_norm:
+        return set()
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_training_decision_stats_table(conn)
+        rows = conn.execute(
+            """
+            SELECT topic_norm, credential_title_norm
+            FROM training_decision_stats
+            WHERE trust_name_norm = ? AND accepted_count > 0
+            """,
+            (trust_norm,),
+        ).fetchall()
+    return {(str(r[0]), str(r[1])) for r in rows}
 
 
 def mandatory_match_decision_upsert(
@@ -647,8 +892,10 @@ def mandatory_match_decision_upsert(
     topic_id: Optional[int],
     topic_name: str,
     credential_id: str,
+    credential_title: Optional[str] = None,
     decision: str,
     hr_user_id: int,
+    decision_engine_version: Optional[str] = None,
 ) -> dict:
     dec = (decision or "").strip().lower()
     if dec not in ("accepted", "rejected"):
@@ -660,23 +907,67 @@ def mandatory_match_decision_upsert(
         raise ValueError("trust_name, topic_name, and credential_id are required")
     now = datetime.utcnow().isoformat()
     tid = int(topic_id) if topic_id is not None else None
+    eng_ver = (decision_engine_version or "").strip() or None
+    if not eng_ver:
+        try:
+            from . import decision_engine
+
+            eng_ver = decision_engine.ENGINE_VERSION
+        except Exception:
+            eng_ver = None
+
+    prev_decision: Optional[str] = None
+    cred_title = (credential_title or topic or cid).strip()
     with sqlite3.connect(DB_PATH) as conn:
         _ensure_mandatory_match_decisions_table(conn)
+        conn.row_factory = sqlite3.Row
+        existing = conn.execute(
+            """
+            SELECT decision FROM mandatory_match_decisions
+            WHERE doctor_user_id = ? AND LOWER(TRIM(trust_name)) = LOWER(TRIM(?))
+              AND topic_name = ? AND credential_id = ?
+            """,
+            (int(doctor_user_id), trust, topic, cid),
+        ).fetchone()
+        if existing:
+            prev_decision = (existing["decision"] or "").lower()
         conn.execute(
             """
             INSERT INTO mandatory_match_decisions (
                 doctor_user_id, trust_name, topic_id, topic_name, credential_id,
-                decision, hr_user_id, decided_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                decision, hr_user_id, decided_at, decision_engine_version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(doctor_user_id, trust_name, topic_name, credential_id) DO UPDATE SET
                 topic_id = excluded.topic_id,
                 decision = excluded.decision,
                 hr_user_id = excluded.hr_user_id,
-                decided_at = excluded.decided_at
+                decided_at = excluded.decided_at,
+                decision_engine_version = excluded.decision_engine_version
             """,
-            (int(doctor_user_id), trust, tid, topic, cid, dec, int(hr_user_id), now),
+            (
+                int(doctor_user_id),
+                trust,
+                tid,
+                topic,
+                cid,
+                dec,
+                int(hr_user_id),
+                now,
+                eng_ver,
+            ),
         )
         conn.commit()
+
+    if prev_decision != dec:
+        training_decision_stats_apply(
+            topic_name=topic,
+            credential_title=cred_title,
+            trust_name=trust,
+            decision=dec,
+            decided_at=now,
+            previous_decision=prev_decision,
+        )
+
     return {
         "doctor_user_id": int(doctor_user_id),
         "trust_name": trust,
@@ -686,6 +977,7 @@ def mandatory_match_decision_upsert(
         "decision": dec,
         "hr_user_id": int(hr_user_id),
         "decided_at": now,
+        "decision_engine_version": eng_ver,
     }
 
 
@@ -827,6 +1119,9 @@ def _mandatory_topic_row_to_dict(r: sqlite3.Row) -> dict:
             hints = _json.loads(raw)
         except (_json.JSONDecodeError, TypeError):
             hints = None
+    rules: dict = {}
+    if isinstance(hints, dict) and isinstance(hints.get("rules"), dict):
+        rules = hints.get("rules") or {}
     return {
         "id": r["id"],
         "topic_name": r["topic_name"],
@@ -835,6 +1130,7 @@ def _mandatory_topic_row_to_dict(r: sqlite3.Row) -> dict:
         "delivery_channel": r["delivery_channel"] if "delivery_channel" in r.keys() else None,
         "resource_url": r["resource_url"] if "resource_url" in r.keys() else None,
         "match_hints": hints,
+        "rules": rules,
     }
 
 

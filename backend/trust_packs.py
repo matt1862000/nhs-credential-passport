@@ -96,6 +96,8 @@ def mandatory_examples_to_rows(pack: dict[str, Any]) -> list[dict[str, Any]]:
             hints["partial_name_substrings"] = ex.get("partial_name_substrings")
         if ex.get("partial_hint"):
             hints["partial_hint"] = ex.get("partial_hint")
+        if isinstance(ex.get("rules"), dict) and ex.get("rules"):
+            hints["rules"] = ex.get("rules")
         rows.append(
             {
                 "topic_name": (ex.get("label") or "").strip(),

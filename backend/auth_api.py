@@ -2825,14 +2825,18 @@ async def hr_mandatory_fit_decision(request: Request, doctor_user_id: int):
             detail="This topic and training record are not awaiting requirement-fit review.",
         )
 
+    from . import decision_engine
+
     saved = db.mandatory_match_decision_upsert(
         doctor_user_id=int(doctor_user_id),
         trust_name=trust,
         topic_id=topic_id if topic_id is not None else match.get("topic_id"),
         topic_name=topic_name,
         credential_id=credential_id,
+        credential_title=str(match.get("module_name") or topic_name),
         decision=decision,
         hr_user_id=int(hr["id"]),
+        decision_engine_version=decision_engine.ENGINE_VERSION,
     )
     action = "mandatory_fit_accept" if decision == "accepted" else "mandatory_fit_reject"
     _audit_hr_action(
@@ -3098,7 +3102,11 @@ def me_compliance_snapshot(request: Request):
     if not trust:
         return {"snapshot": None, "message": "Set your current trust in Profile to see mandatory requirements."}
     _try_seed_mandatory_from_pack(trust)
-    return {"snapshot": compliance_snapshot.doctor_compliance_snapshot(uid, trust)}
+    return {
+        "snapshot": compliance_snapshot.doctor_compliance_snapshot(
+            uid, trust, include_decision_envelope=True
+        )
+    }
 
 
 @router.get("/hr/audit-log")
@@ -3620,6 +3628,38 @@ async def hr_mandatory_topics_reorder(request: Request):
         raise HTTPException(status_code=400, detail="ids must be a list")
     db.mandatory_topic_reorder(trust, [int(i) for i in ids])
     return {"ok": True}
+
+
+@router.get("/hr/mandatory-topics/{topic_id}/recommendations")
+def hr_mandatory_topic_recommendations(
+    request: Request,
+    topic_id: int,
+    credential_title: Optional[str] = None,
+):
+    """Historical acceptance intelligence for one mandatory topic (HR only)."""
+    from . import decision_recommendations
+
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    topics = db.mandatory_topics_list(trust, seed_defaults=False)
+    topic = next((t for t in topics if int(t.get("id") or 0) == int(topic_id)), None)
+    if not topic:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    topic_name = (topic.get("topic_name") or "").strip()
+    cred = (credential_title or "").strip() or None
+    return decision_recommendations.recommendations_payload(
+        topic_name=topic_name,
+        trust_name=trust,
+        credential_title=cred,
+    )
+
+
+@router.get("/decision-engine/version")
+def decision_engine_version(request: Request):
+    """Public rule-set metadata for audit and reproducibility."""
+    from . import decision_engine
+
+    return decision_engine.engine_version_payload()
 
 
 # ── Messaging ─────────────────────────────────────────────────────────────────

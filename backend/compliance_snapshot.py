@@ -14,6 +14,7 @@ from typing import Any, Optional
 from jose import jwt as jose_jwt
 
 from . import db
+from . import decision_engine
 from . import mandatory_matching
 from . import trust_packs
 
@@ -44,6 +45,7 @@ def _cred_payload(c: dict) -> Optional[dict]:
         "module_code": code,
         "module_name": name,
         "expiry_date": (c.get("expiry_date") or "").strip()[:10] or None,
+        "completion_date": (c.get("completion_date") or c.get("completed_at") or "").strip()[:10] or None,
         "credential_id": c.get("credential_id"),
         "module_name_display": c.get("module_name"),
         "issuing_trust_name": c.get("issuing_trust_name"),
@@ -171,12 +173,31 @@ def _summary_counts(topic_rows: list[dict]) -> dict[str, int]:
     }
 
 
+def _decision_stats_for_match(
+    topic: dict,
+    result: dict[str, Any],
+    trust_name: Optional[str],
+) -> tuple[Optional[dict], Optional[dict]]:
+    """Trust-scoped and cross-trust rollup stats for one topic + credential title."""
+    if not trust_name:
+        return None, None
+    module_name = (result.get("module_name") or "").strip()
+    topic_name = (topic.get("topic_name") or "").strip()
+    if not module_name or not topic_name:
+        return None, None
+    trust_stats = db.training_decision_stats_lookup(topic_name, module_name, trust_name)
+    cross_stats = db.training_decision_acceptance_rate_cross_trust(topic_name, module_name)
+    return trust_stats, cross_stats
+
+
 def _topic_result_row(
     t: dict,
     result: dict[str, Any],
     verified_map: dict,
     *,
     rec_hints: Optional[dict] = None,
+    trust_name: Optional[str] = None,
+    include_decision_envelope: bool = False,
 ) -> dict[str, Any]:
     cid = result.get("credential_id")
     hr_st = _hr_status_for_credential(verified_map, cid)
@@ -189,7 +210,7 @@ def _topic_result_row(
             from_leaving = True
             if (result.get("status_label") or "").startswith("Met") and "leaving trust" not in reason.lower():
                 reason = f"{reason} Issuer matches your leaving trust."
-    return {
+    row: dict[str, Any] = {
         "topic_id": t.get("id"),
         "topic_name": t.get("topic_name"),
         "category": t.get("category"),
@@ -210,6 +231,26 @@ def _topic_result_row(
         "hr_status": hr_st,
         "from_leaving_trust": from_leaving,
     }
+    if include_decision_envelope:
+        trust_stats, cross_stats = _decision_stats_for_match(t, result, trust_name)
+        cred_raw = cred if isinstance(cred, dict) else None
+        row.update(
+            decision_engine.build_decision_envelope(
+                result,
+                t,
+                cred_raw,
+                trust_name=trust_name,
+                trust_stats=trust_stats,
+                cross_trust_stats=cross_stats,
+            )
+        )
+        acc = int((trust_stats or {}).get("accepted_count") or 0)
+        if acc > 0 and trust_name:
+            row["historical_acceptance_hint"] = (
+                f"Accepted {acc} time{'s' if acc != 1 else ''} at your organisation for "
+                f"{(t.get('topic_name') or 'this requirement').strip()}"
+            )
+    return row
 
 
 def _pack_example_to_topic(ex: dict) -> dict:
@@ -217,9 +258,11 @@ def _pack_example_to_topic(ex: dict) -> dict:
     subs = list(ex.get("match_name_substrings") or [])
     if label and label not in subs:
         subs.insert(0, label)
+    rules = ex.get("rules") if isinstance(ex.get("rules"), dict) else {}
     return {
         "topic_name": label,
         "category": ex.get("category"),
+        "rules": rules,
         "match_hints": {
             "match_module_codes": ex.get("match_module_codes") or [],
             "match_name_substrings": subs,
@@ -284,7 +327,17 @@ def pack_checklist_preview(
         result = mandatory_matching.match_topic_to_wallet(
             topic, payloads, pack_key=pack_key, pack_topics=topics
         )
-        topic_rows.append(_topic_result_row(topic, result, verified_map, rec_hints=rec_hints))
+        dest_trust = (pack.get("display_name") or pack.get("pack_id") or "").strip() or None
+        topic_rows.append(
+            _topic_result_row(
+                topic,
+                result,
+                verified_map,
+                rec_hints=rec_hints,
+                trust_name=dest_trust,
+                include_decision_envelope=True,
+            )
+        )
 
     summary = _summary_counts(topic_rows)
     summary["total_topics"] = len(topic_rows)
@@ -298,10 +351,16 @@ def pack_checklist_preview(
         "recognition_summary": rec.get("summary"),
         "topics": topic_rows,
         "summary": summary,
+        "decision_engine_version": decision_engine.ENGINE_VERSION,
     }
 
 
-def doctor_compliance_snapshot(doctor_user_id: int, trust_name: str) -> dict:
+def doctor_compliance_snapshot(
+    doctor_user_id: int,
+    trust_name: str,
+    *,
+    include_decision_envelope: bool = False,
+) -> dict:
     """Mandatory topics vs wallet for one doctor at a trust."""
     trust = (trust_name or "").strip()
     topics = db.mandatory_topics_list(trust) if trust else []
@@ -317,7 +376,13 @@ def doctor_compliance_snapshot(doctor_user_id: int, trust_name: str) -> dict:
         result = mandatory_matching.match_topic_to_wallet(
             t, payloads, pack_key=pack_key, pack_topics=topics
         )
-        row = _topic_result_row(t, result, verified_map)
+        row = _topic_result_row(
+            t,
+            result,
+            verified_map,
+            trust_name=trust,
+            include_decision_envelope=include_decision_envelope,
+        )
         cid = row.get("credential_id")
         if cid:
             dkey = _decision_lookup_key(row.get("topic_id"), row.get("topic_name") or "", str(cid))
@@ -362,13 +427,16 @@ def doctor_compliance_snapshot(doctor_user_id: int, trust_name: str) -> dict:
         elif st == "PENDING":
             vm_counts["pending"] += 1
 
-    return {
+    out: dict[str, Any] = {
         "trust": trust or None,
         "topics": topic_rows,
         "summary": summary,
         "expiring_credentials": expiring_creds,
         "hr_verification": vm_counts,
     }
+    if include_decision_envelope:
+        out["decision_engine_version"] = decision_engine.ENGINE_VERSION
+    return out
 
 
 def fit_review_wallet_items(
@@ -418,7 +486,9 @@ def fit_review_wallet_items(
 
 def mandatory_needs_review_by_credential(doctor_user_id: int, trust_name: str) -> dict[str, list[dict]]:
     """Map credential_id → mandatory topics where requirement fit is uncertain (partial/semantic)."""
-    snap = doctor_compliance_snapshot(int(doctor_user_id), trust_name)
+    snap = doctor_compliance_snapshot(
+        int(doctor_user_id), trust_name, include_decision_envelope=True
+    )
     out: dict[str, list[dict]] = {}
     for tr in snap.get("topics") or []:
         if not _topic_needs_hr_fit_review_row(tr):
@@ -435,6 +505,10 @@ def mandatory_needs_review_by_credential(doctor_user_id: int, trust_name: str) -
                 "module_name": tr.get("module_name"),
                 "match_type": tr.get("match_type"),
                 "status_label": tr.get("status_label"),
+                "decision": tr.get("decision"),
+                "decision_factors": tr.get("decision_factors"),
+                "historical_context": tr.get("historical_context"),
+                "historical_acceptance_hint": tr.get("historical_acceptance_hint"),
             }
         )
     return out

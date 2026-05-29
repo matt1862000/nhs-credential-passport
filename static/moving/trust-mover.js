@@ -10,6 +10,7 @@
    */
   var ODS_TO_CONFIG_ID = {
     RHQ: 'sheffield',
+    TAH: 'sheffield-health-partnership',
     RXE: 'rotherham',
   };
 
@@ -19,6 +20,8 @@
    */
   var NAME_TO_CONFIG_ID = [
     { substr: 'sheffield teaching', id: 'sheffield' },
+    { substr: 'sheffield health', id: 'sheffield-health-partnership' },
+    { substr: 'social care nhs foundation', id: 'sheffield-health-partnership' },
     { substr: 'rotherham doncaster', id: 'rotherham' },
     { substr: 'south humber nhs foundation', id: 'rotherham' },
   ];
@@ -82,6 +85,16 @@
             (t.expiry_date ? ' · expires ' + escapeHtml(t.expiry_date) : '') +
             (t.hr_status ? ' · HR ' + escapeHtml(t.hr_status) : '') +
             '</span>';
+        }
+        if (t.decision_reason) {
+          detail +=
+            '<br><span class="moving-muted"><strong>Assessment:</strong> ' +
+            escapeHtml(t.decision_reason) +
+            '</span>';
+        }
+        if (t.historical_acceptance_hint) {
+          detail +=
+            '<br><span class="moving-muted">' + escapeHtml(t.historical_acceptance_hint) + '</span>';
         }
         return (
           '<tr><td>' +

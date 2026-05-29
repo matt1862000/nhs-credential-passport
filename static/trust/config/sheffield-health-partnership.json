@@ -91,7 +91,11 @@
       "category": "E-learning via ESR",
       "delivery_channel": "esr",
       "match_module_codes": ["fire_safety"],
-      "match_name_substrings": ["fire safety"]
+      "match_name_substrings": ["fire safety"],
+      "rules": {
+        "max_valid_days": 365,
+        "require_trusted_provider": true
+      }
     },
     {
       "id": "esr_speak_up",
