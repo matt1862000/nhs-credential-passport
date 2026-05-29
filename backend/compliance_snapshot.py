@@ -499,10 +499,20 @@ def mandatory_needs_review_by_credential(doctor_user_id: int, trust_name: str) -
                 "module_name": tr.get("module_name"),
                 "match_type": tr.get("match_type"),
                 "status_label": tr.get("status_label"),
+                # Full decision envelope — HR needs the same detail as doctors
+                # (they're the ones making the accept/reject call).
                 "decision": tr.get("decision"),
+                "decision_confidence": tr.get("decision_confidence"),
+                "decision_confidence_label": tr.get("decision_confidence_label"),
+                "decision_confidence_reason": tr.get("decision_confidence_reason"),
+                "decision_score": tr.get("decision_score"),
+                "decision_reason": tr.get("decision_reason"),
                 "decision_factors": tr.get("decision_factors"),
+                "is_exact_match": tr.get("is_exact_match"),
+                "match_label": tr.get("match_label"),
                 "historical_context": tr.get("historical_context"),
                 "historical_acceptance_hint": tr.get("historical_acceptance_hint"),
+                "decision_engine_version": tr.get("decision_engine_version"),
             }
         )
     return out
