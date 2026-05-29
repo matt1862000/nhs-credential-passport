@@ -306,9 +306,13 @@
             '</div>';
         }
 
-        // 3. Why — full natural-language paragraph from decision_reason.
-        var whyHtml = t.decision_reason
-          ? '<p class="req-decision__why">' + esc(t.decision_reason) + '</p>'
+        // 3. Why — natural-language paragraph. Prefer the short form
+        //    (match + validity) which drops "HR review is recommended…" /
+        //    "No further HR review is required." — that's HR-routing
+        //    language and the badge already conveys it for doctors.
+        var whyText = t.decision_reason_short || t.decision_reason;
+        var whyHtml = whyText
+          ? '<p class="req-decision__why">' + esc(whyText) + '</p>'
           : '';
 
         // 4. Match label chip. Precedent (historical_acceptance_hint) is

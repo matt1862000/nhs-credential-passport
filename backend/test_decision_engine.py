@@ -231,6 +231,31 @@ class ExplanationStyleTests(unittest.TestCase):
         out_fail = de.generate_explanation(_signals(), de.DECISION_DOES_NOT_MEET, 10)
         self.assertIn("cannot be treated as meeting", out_fail["reason"])
 
+    def test_reason_short_drops_decision_framing(self):
+        """reason_short must contain match + validity sentences only,
+        never the decision-routing sentence."""
+        s = _signals(match_type="exact")
+        out_meets = de.generate_explanation(s, de.DECISION_MEETS, 100)
+        self.assertIn("exactly matches", out_meets["reason_short"])
+        self.assertIn("within the required validity period", out_meets["reason_short"])
+        self.assertNotIn("No further HR review", out_meets["reason_short"])
+
+        out_review = de.generate_explanation(s, de.DECISION_REQUIRES_REVIEW, 50)
+        self.assertNotIn("HR review", out_review["reason_short"])
+        self.assertNotIn("trust's standard", out_review["reason_short"])
+
+        out_fail = de.generate_explanation(
+            _signals(match_type="none"), de.DECISION_DOES_NOT_MEET, 0
+        )
+        self.assertNotIn("cannot be treated", out_fail["reason_short"])
+        self.assertIn("No record", out_fail["reason_short"])
+
+    def test_reason_full_still_contains_framing(self):
+        """Full reason (kept for HR + audit) still has all 3 sentences."""
+        s = _signals(match_type="exact")
+        out = de.generate_explanation(s, de.DECISION_REQUIRES_REVIEW, 50)
+        self.assertIn("HR review is recommended", out["reason"])
+
     def test_no_contradiction_exact_match_in_review_band(self):
         """An exact-match credential in REQUIRES_REVIEW must not be told
         'this is not an exact match' — that contradicts sentence 1."""
@@ -414,7 +439,11 @@ class EnvelopeShapeTests(unittest.TestCase):
             "decision_engine_version",
         ):
             self.assertIn(key, env, f"missing {key}")
-        self.assertEqual(env["decision_engine_version"], "1.7.1")
+        self.assertEqual(env["decision_engine_version"], "1.7.2")
+        self.assertIn("decision_reason_short", env)
+        self.assertTrue(env["decision_reason_short"])
+        self.assertNotIn("HR review", env["decision_reason_short"])
+        self.assertNotIn("cannot be treated", env["decision_reason_short"])
         self.assertIn("trust_accept_count", env["historical_context"])
         self.assertIn("this_trust", env["historical_context"])
         self.assertEqual(

@@ -103,8 +103,12 @@
         '</div>';
     }
 
-    var whyHtml = t.decision_reason
-      ? '<p class="moving-decision__why">' + escapeHtml(t.decision_reason) + '</p>'
+    // Prefer the short reason — drops HR-routing language ("HR review is
+    // recommended…", "No further HR review is required.") that's redundant
+    // on the doctor's screen because the decision badge already conveys it.
+    var whyText = t.decision_reason_short || t.decision_reason;
+    var whyHtml = whyText
+      ? '<p class="moving-decision__why">' + escapeHtml(whyText) + '</p>'
       : '';
 
     var chips = [];

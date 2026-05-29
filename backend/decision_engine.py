@@ -12,7 +12,7 @@ from typing import Any, Optional
 from . import mandatory_matching
 from .models import CSTF_MODULES
 
-ENGINE_VERSION = "1.7.1"
+ENGINE_VERSION = "1.7.2"
 
 DECISION_MEETS = "MEETS"
 DECISION_REQUIRES_REVIEW = "REQUIRES_REVIEW"
@@ -421,14 +421,24 @@ def generate_explanation(
             decision, _DECISION_FRAMING_TERMINAL[DECISION_DOES_NOT_MEET]
         )
 
-    sentences = [
-        _match_nature_sentence(signals),
-        _validity_sentence(signals),
-        framing,
-    ]
-    reason = " ".join(s for s in sentences if s)
+    nature = _match_nature_sentence(signals)
+    validity = _validity_sentence(signals)
+    full_sentences = [nature, validity, framing]
+    short_sentences = [nature, validity]
 
-    return {"reason": reason, "factors": factors}
+    reason = " ".join(s for s in full_sentences if s)
+    # Short form: drops the decision-routing sentence ("HR review is
+    # recommended…", "No further HR review is required.", "This record
+    # cannot be treated as meeting the requirement."). Doctors don't act
+    # on routing — the decision badge already conveys it and submission to
+    # HR is automatic. HR + audit still get the full reason.
+    reason_short = " ".join(s for s in short_sentences if s)
+
+    return {
+        "reason": reason,
+        "reason_short": reason_short,
+        "factors": factors,
+    }
 
 
 def historical_context_block(
@@ -494,6 +504,7 @@ def build_decision_envelope(
         "decision_confidence_reason": conf_reason,
         "decision_score": score,
         "decision_reason": explanation["reason"],
+        "decision_reason_short": explanation["reason_short"],
         "decision_factors": explanation["factors"],
         "is_exact_match": is_exact_match(signals),
         "match_label": match_label(signals),
