@@ -6,6 +6,7 @@ import json
 import os
 import re
 import sqlite3
+import struct
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Callable, Optional
@@ -122,6 +123,7 @@ def init_db():
         _ensure_csv_import_evidence_table(conn)
         _ensure_visibility_tables(conn)
         _ensure_mandatory_topics_table(conn)
+        _ensure_embedding_tables(conn)
         _ensure_messaging_tables(conn)
         _ensure_expiry_reminder_sent_table(conn)
         _ensure_hr_attestations_table(conn)
@@ -1126,6 +1128,94 @@ def _ensure_mandatory_topics_table(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE trust_mandatory_topics ADD COLUMN resource_url TEXT")
     if "match_hints_json" not in cols:
         conn.execute("ALTER TABLE trust_mandatory_topics ADD COLUMN match_hints_json TEXT")
+
+
+def _ensure_embedding_tables(conn: sqlite3.Connection) -> None:
+    """Persist Gemini semantic-match vectors so cold starts skip API round-trips."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS topic_embeddings (
+            topic_hash TEXT NOT NULL,
+            model TEXT NOT NULL,
+            topic_name TEXT NOT NULL,
+            vector BLOB NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (topic_hash, model)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS credential_embeddings (
+            module_hash TEXT NOT NULL,
+            model TEXT NOT NULL,
+            module_name TEXT NOT NULL,
+            vector BLOB NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (module_hash, model)
+        )
+    """)
+
+
+def _pack_embedding(vector: list[float]) -> bytes:
+    return struct.pack(f"{len(vector)}f", *vector)
+
+
+def _unpack_embedding(blob: bytes) -> list[float]:
+    if not blob or len(blob) % 4 != 0:
+        return []
+    n = len(blob) // 4
+    return [float(x) for x in struct.unpack(f"{n}f", blob)]
+
+
+def embedding_store_get(kind: str, text_hash: str, model: str) -> Optional[list[float]]:
+    """Load a cached embedding vector (topic or credential). Returns None if missing."""
+    table = "topic_embeddings" if kind == "topic" else "credential_embeddings"
+    hash_col = "topic_hash" if kind == "topic" else "module_hash"
+    th = (text_hash or "").strip()
+    m = (model or "").strip()
+    if not th or not m:
+        return None
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_embedding_tables(conn)
+        row = conn.execute(
+            f"SELECT vector FROM {table} WHERE {hash_col} = ? AND model = ?",
+            (th, m),
+        ).fetchone()
+    if not row or not row[0]:
+        return None
+    return _unpack_embedding(row[0])
+
+
+def embedding_store_put(
+    kind: str,
+    text_hash: str,
+    display_text: str,
+    model: str,
+    vector: list[float],
+) -> None:
+    """Persist an embedding vector (INSERT OR REPLACE)."""
+    table = "topic_embeddings" if kind == "topic" else "credential_embeddings"
+    hash_col = "topic_hash" if kind == "topic" else "module_hash"
+    name_col = "topic_name" if kind == "topic" else "module_name"
+    th = (text_hash or "").strip()
+    m = (model or "").strip()
+    label = (display_text or "").strip()
+    if not th or not m or not vector:
+        return
+    now = datetime.utcnow().isoformat()
+    packed = _pack_embedding(vector)
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_embedding_tables(conn)
+        conn.execute(
+            f"""
+            INSERT INTO {table} ({hash_col}, model, {name_col}, vector, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT({hash_col}, model) DO UPDATE SET
+              {name_col} = excluded.{name_col},
+              vector = excluded.vector,
+              created_at = excluded.created_at
+            """,
+            (th, m, label, packed, now),
+        )
+        conn.commit()
 
 
 def _mandatory_topic_row_to_dict(r: sqlite3.Row) -> dict:

@@ -3,10 +3,13 @@ Mandatory topic ↔ wallet credential matching (shared rules for compliance snap
 """
 from __future__ import annotations
 
+import hashlib
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, timedelta
 from typing import Any, Optional
 
+from . import db
 from .models import CSTF_MODULES
 
 # Global aliases keyed by normalized topic name (extends per-topic match_hints).
@@ -197,6 +200,12 @@ def _pack_fingerprint(topics: list[dict]) -> str:
     return "|".join(names)
 
 
+def _text_hash(text: str) -> str:
+    """Stable key for embedding cache (normalized text → SHA-256 hex)."""
+    norm = normalize(text)
+    return hashlib.sha256(norm.encode("utf-8")).hexdigest()
+
+
 def _configure_genai_client() -> bool:
     """Authenticate with GOOGLE_APPLICATION_CREDENTIALS via google.auth (not an API key)."""
     try:
@@ -215,7 +224,8 @@ def _configure_genai_client() -> bool:
         return False
 
 
-def _embed_text(text: str) -> Optional[list[float]]:
+def _embed_text_gemini(text: str) -> Optional[list[float]]:
+    """Call Gemini for a single embedding (no caching)."""
     raw = (text or "").strip()
     if not raw:
         return None
@@ -242,6 +252,54 @@ def _embed_text(text: str) -> Optional[list[float]]:
         return None
 
 
+def _embed_text_cached(text: str, *, kind: str) -> Optional[list[float]]:
+    """Resolve embedding: in-process cache → SQLite → Gemini (write-through)."""
+    raw = (text or "").strip()
+    if not raw:
+        return None
+    norm = normalize(raw)
+    if kind == "credential" and norm in _credential_embedding_cache:
+        return _credential_embedding_cache[norm]
+
+    th = _text_hash(raw)
+    stored = db.embedding_store_get(kind, th, _EMBEDDING_MODEL)
+    if stored:
+        if kind == "credential":
+            _credential_embedding_cache[norm] = stored
+        return stored
+
+    vec = _embed_text_gemini(raw)
+    if vec:
+        db.embedding_store_put(kind, th, raw, _EMBEDDING_MODEL, vec)
+        if kind == "credential":
+            _credential_embedding_cache[norm] = vec
+    return vec
+
+
+_EMBED_POOL_WORKERS = 8
+
+
+def _embed_texts_parallel(
+    items: list[tuple[str, str]], *, kind: str
+) -> dict[str, list[float]]:
+    """Embed many texts in parallel; keys are normalized names from items' first element."""
+    out: dict[str, list[float]] = {}
+    if not items:
+        return out
+
+    def _one(pair: tuple[str, str]) -> tuple[str, Optional[list[float]]]:
+        key, display = pair
+        return key, _embed_text_cached(display, kind=kind)
+
+    with ThreadPoolExecutor(max_workers=_EMBED_POOL_WORKERS) as pool:
+        futures = [pool.submit(_one, pair) for pair in items]
+        for fut in as_completed(futures):
+            key, vec = fut.result()
+            if vec:
+                out[key] = vec
+    return out
+
+
 def _cosine_similarity(left: list[float], right: list[float]) -> float:
     try:
         import numpy as np
@@ -259,6 +317,7 @@ def prepare_semantic_match_cache(pack_key: str, topics: list[dict]) -> None:
     """
     Pre-compute embeddings for all mandatory topic names in a trust pack.
     Recomputes only when the pack's topic set changes (in-memory cache).
+    Loads from SQLite first; parallel Gemini only for cache misses.
     """
     key = (pack_key or "").strip()
     if not key:
@@ -268,14 +327,21 @@ def prepare_semantic_match_cache(pack_key: str, topics: list[dict]) -> None:
     if cached and cached.get("fingerprint") == fingerprint:
         return
     topic_embeddings: dict[str, list[float]] = {}
+    to_fetch: list[tuple[str, str]] = []
     for topic in topics:
         topic_name = (topic.get("topic_name") or "").strip()
         topic_norm = normalize(topic_name)
         if not topic_norm:
             continue
-        embedding = _embed_text(topic_name)
-        if embedding:
-            topic_embeddings[topic_norm] = embedding
+        th = _text_hash(topic_name)
+        stored = db.embedding_store_get("topic", th, _EMBEDDING_MODEL)
+        if stored:
+            topic_embeddings[topic_norm] = stored
+        else:
+            to_fetch.append((topic_norm, topic_name))
+    if to_fetch:
+        fetched = _embed_texts_parallel(to_fetch, kind="topic")
+        topic_embeddings.update(fetched)
     _semantic_pack_cache[key] = {
         "fingerprint": fingerprint,
         "topics": topic_embeddings,
@@ -293,7 +359,7 @@ def _topic_embedding(topic: dict, pack_key: Optional[str]) -> Optional[list[floa
             embedding = (cached.get("topics") or {}).get(topic_norm)
             if embedding:
                 return embedding
-    return _embed_text(topic_name)
+    return _embed_text_cached(topic_name, kind="topic")
 
 
 def _credential_embedding(pl: dict) -> Optional[list[float]]:
@@ -303,10 +369,7 @@ def _credential_embedding(pl: dict) -> Optional[list[float]]:
         return None
     if norm in _credential_embedding_cache:
         return _credential_embedding_cache[norm]
-    embedding = _embed_text(name)
-    if embedding:
-        _credential_embedding_cache[norm] = embedding
-    return embedding
+    return _embed_text_cached(name, kind="credential")
 
 
 def _should_try_semantic(match_type: str) -> bool:
