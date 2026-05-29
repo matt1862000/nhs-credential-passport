@@ -47,23 +47,108 @@
     return null;
   }
 
-  function tagClassForTopic(t) {
-    if (t.status === 'expiring') return 'tag-partial';
-    var label = t.status_label || '';
-    if (label.indexOf('Met') === 0) return 'tag-met';
-    if (label === 'Needs review' || label.indexOf('Needs review') === 0) return 'tag-partial';
-    return 'tag-miss';
-  }
-
-  function statusLabelForTopic(t) {
-    return t.status_label || t.status || '—';
-  }
-
   function portabilityBadge(portability) {
     if (portability === 'portable') return ' <span class="moving-tag tag-met" style="font-size:0.6875rem;">Portable</span>';
     if (portability === 'local_only') return ' <span class="moving-tag tag-miss" style="font-size:0.6875rem;">Local only</span>';
     if (portability === 'conditional') return ' <span class="moving-tag tag-partial" style="font-size:0.6875rem;">Conditional</span>';
     return '';
+  }
+
+  // Legacy fallback for older snapshots without a decision envelope.
+  function legacyStatusCell(t) {
+    var label = t.status_label || t.status || '—';
+    var cls = 'tag-miss';
+    if ((t.status_label || '').indexOf('Met') === 0) cls = 'tag-met';
+    else if ((t.status_label || '').indexOf('Needs review') === 0) cls = 'tag-partial';
+    return (
+      '<span class="moving-tag ' + cls + '">' + escapeHtml(label) + '</span>' +
+      (t.reason ? '<div class="moving-muted" style="margin-top:0.3rem;">' + escapeHtml(t.reason) + '</div>' : '')
+    );
+  }
+
+  // Decision-support cell mirroring the doctor requirements page layout.
+  function decisionCell(t) {
+    if (!t.decision) return legacyStatusCell(t);
+
+    var cls = 'moving-decision';
+    var icon = '\u2753';
+    var title = 'Decision pending';
+    if (t.decision === 'MEETS') {
+      cls += ' moving-decision--meets';
+      icon = '\u2705';
+      title = 'Meets requirement';
+    } else if (t.decision === 'REQUIRES_REVIEW') {
+      cls += ' moving-decision--review';
+      icon = '\u26A0\uFE0F';
+      title = 'Needs review';
+    } else {
+      cls += ' moving-decision--fail';
+      icon = '\u274C';
+      title = 'Does not meet requirement';
+    }
+
+    var titleHtml =
+      '<p class="moving-decision__title"><span aria-hidden="true">' + icon +
+      '</span><span>' + escapeHtml(title) + '</span></p>';
+
+    var confHtml = '';
+    if (t.decision_confidence_label) {
+      var cLabel = String(t.decision_confidence_label);
+      var cText = cLabel.charAt(0).toUpperCase() + cLabel.slice(1);
+      confHtml =
+        '<div class="moving-decision__conf">' +
+        '<span class="moving-decision__conf-label moving-decision__conf-label--' + escapeHtml(cLabel) + '">' +
+        escapeHtml(cText) + ' confidence</span>' +
+        '<span>' + escapeHtml(t.decision_confidence_reason || '') + '</span>' +
+        '</div>';
+    }
+
+    var whyHtml = t.decision_reason
+      ? '<p class="moving-decision__why">' + escapeHtml(t.decision_reason) + '</p>'
+      : '';
+
+    var chips = [];
+    if (t.match_label) {
+      var matchCls = 'moving-decision__chip';
+      if (t.is_exact_match) matchCls += ' moving-decision__chip--match-exact';
+      else if (String(t.match_label).indexOf('interpreted') !== -1) matchCls += ' moving-decision__chip--match-interpreted';
+      chips.push('<span class="' + matchCls + '">Match: ' + escapeHtml(t.match_label) + '</span>');
+    }
+    if (t.historical_acceptance_hint) {
+      var histCls = 'moving-decision__chip moving-decision__chip--hist';
+      if (String(t.historical_acceptance_hint).indexOf('Limited') === 0) {
+        histCls = 'moving-decision__chip moving-decision__chip--hist-low';
+      }
+      chips.push('<span class="' + histCls + '">' + escapeHtml(t.historical_acceptance_hint) + '</span>');
+    }
+    var chipRow = chips.length
+      ? '<div class="moving-decision__chips">' + chips.join('') + '</div>'
+      : '';
+
+    var factorsHtml = '';
+    if (Array.isArray(t.decision_factors) && t.decision_factors.length) {
+      factorsHtml =
+        '<details class="moving-decision__factors">' +
+        '<summary>How this was calculated</summary>' +
+        '<ul>' + t.decision_factors.map(function (f) { return '<li>' + escapeHtml(f) + '</li>'; }).join('') + '</ul>' +
+        '</details>';
+    }
+
+    var recordLine = '';
+    if (t.module_name) {
+      recordLine =
+        '<p class="moving-record">From your training list: <strong>' +
+        escapeHtml(t.module_name) + '</strong>' +
+        (t.expiry_date ? ' &middot; expires ' + escapeHtml(t.expiry_date) : '') +
+        (t.hr_status ? ' &middot; HR ' + escapeHtml(t.hr_status) : '') +
+        '</p>';
+    }
+
+    return (
+      '<div class="' + cls + '">' +
+      titleHtml + confHtml + whyHtml + chipRow + factorsHtml + recordLine +
+      '</div>'
+    );
   }
 
   function renderWalletPreview(preview) {
@@ -75,43 +160,12 @@
     var sum = preview.summary || {};
     var body = topics
       .map(function (t) {
-        var tagClass = tagClassForTopic(t);
-        var label = statusLabelForTopic(t);
-        var detail = t.reason ? escapeHtml(t.reason) : '—';
-        if (t.module_name) {
-          detail +=
-            '<br><span class="moving-muted">' +
-            escapeHtml(t.module_name) +
-            (t.expiry_date ? ' · expires ' + escapeHtml(t.expiry_date) : '') +
-            (t.hr_status ? ' · HR ' + escapeHtml(t.hr_status) : '') +
-            '</span>';
-        }
-        if (t.match_label) {
-          detail +=
-            '<br><span class="moving-muted"><strong>Match:</strong> ' +
-            escapeHtml(t.match_label) +
-            '</span>';
-        }
-        if (t.decision_reason) {
-          detail +=
-            '<br><span class="moving-muted"><strong>Assessment:</strong> ' +
-            escapeHtml(t.decision_reason) +
-            '</span>';
-        }
-        if (t.historical_acceptance_hint) {
-          detail +=
-            '<br><span class="moving-muted">' + escapeHtml(t.historical_acceptance_hint) + '</span>';
-        }
         return (
           '<tr><td>' +
           escapeHtml(t.topic_name) +
           portabilityBadge(t.portability) +
-          '</td><td><span class="moving-tag ' +
-          tagClass +
-          '">' +
-          escapeHtml(label) +
-          '</span></td><td>' +
-          detail +
+          '</td><td>' +
+          decisionCell(t) +
           '</td></tr>'
         );
       })
@@ -120,11 +174,11 @@
     var summary =
       '<p class="moving-gap-summary" role="status"><strong>Gap analysis (illustrative):</strong> ' +
       Number(sum.met || 0) +
-      ' met · ' +
+      ' meet &middot; ' +
       Number(sum.needs_review || 0) +
-      ' need review · ' +
+      ' need review &middot; ' +
       Number(sum.gap || 0) +
-      ' gap or expired</p>';
+      ' do not meet</p>';
 
     var recNote = preview.recognition_summary
       ? '<p class="moving-muted">' + escapeHtml(preview.recognition_summary) + '</p>'
@@ -133,9 +187,9 @@
     return (
       summary +
       recNote +
-      '<table class="moving-table"><thead><tr><th>Required topic (pack)</th><th>Your training list</th><th>Detail</th></tr></thead><tbody>' +
+      '<table class="moving-table"><thead><tr><th>Required topic (pack)</th><th>Engine assessment</th></tr></thead><tbody>' +
       body +
-      '</tbody></table><p class="moving-muted moving-footnote">Green = exact or alias match. Amber = partial match or expiring soon — confirm with HR. Red = missing or expired. Not formal acceptance by your new trust.</p>'
+      '</tbody></table><p class="moving-muted moving-footnote">Green = likely meets requirement. Amber = needs HR review. Red = does not meet or expired. Not formal acceptance by your new trust.</p>'
     );
   }
 
