@@ -1910,7 +1910,9 @@ def hr_doctors_search(request: Request, q: str = "", limit: int = 30):
     trust = (hr.get("current_trust") or "").strip()
     if not trust:
         raise HTTPException(status_code=400, detail="Your HR account must have a current trust set to search for doctors.")
-    results = db.hr_doctor_search(q=q, hr_trust=trust, limit=limit)
+    results = db.hr_doctor_search(
+        q=q, hr_trust=trust, limit=limit, hr_user_id=int(hr["id"])
+    )
     return {"results": results}
 
 

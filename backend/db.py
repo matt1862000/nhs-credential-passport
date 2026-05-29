@@ -375,10 +375,25 @@ def _user_trust_fields(current_trust: Optional[str]) -> dict:
     }
 
 
-def hr_doctor_search(q: str, hr_trust: str, limit: int = 30) -> list[dict]:
+def _auto_enrol_visible_doctor_to_default_cohort(
+    doctor_user_id: int, hr_trust: str, hr_user_id: int
+) -> None:
+    """When a doctor permits a trust but is not in any group, add them to All Doctors."""
+    with sqlite3.connect(DB_PATH) as conn:
+        if _doctor_member_of_trust_cohort(int(doctor_user_id), hr_trust, conn):
+            return
+    _ensure_user_in_default_cohort(
+        hr_trust, int(doctor_user_id), int(hr_user_id), welcome_pending=False
+    )
+
+
+def hr_doctor_search(
+    q: str, hr_trust: str, limit: int = 30, *, hr_user_id: Optional[int] = None
+) -> list[dict]:
     """
     Search doctors by name / email / GMC.
     Only returns doctors whose visibility settings allow hr_trust to see them.
+    Visible doctors who are not yet in any trust cohort are auto-added to All Doctors.
     """
     q = (q or "").strip()
     if not q:
@@ -405,6 +420,10 @@ def hr_doctor_search(q: str, hr_trust: str, limit: int = 30) -> list[dict]:
         out = []
         for r in rows:
             if _doctor_visible_to_trust(int(r["id"]), hr_trust, conn):
+                if hr_user_id is not None:
+                    _auto_enrol_visible_doctor_to_default_cohort(
+                        int(r["id"]), hr_trust, int(hr_user_id)
+                    )
                 out.append(
                     {
                         "id": int(r["id"]),
