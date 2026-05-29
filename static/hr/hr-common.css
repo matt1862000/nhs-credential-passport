@@ -6,11 +6,24 @@
     .hr-inbox-head h2 { margin: 0; font-size: 1.25rem; }
     .hr-inbox-summary { margin: 0; font-size: 0.9375rem; color: var(--nhsuk-secondary-text); max-width: 28rem; }
     .hr-inbox-summary strong { color: var(--nhsuk-text); }
-    .hr-segment { display: inline-flex; gap: 0; margin: 0.25rem 0 1rem 0; border: 1px solid var(--nhsuk-border); border-radius: 6px; overflow: hidden; background: #f0f4f5; }
-    .hr-segment button { margin: 0; border: none; border-radius: 0; background: transparent; padding: 0.5rem 1rem; font-size: 0.9375rem; font-weight: 600; color: var(--nhsuk-secondary-text); cursor: pointer; }
+    .hr-segment { display: inline-flex; gap: 0; margin: 0.25rem 0 1rem 0; border: 1px solid var(--nhsuk-border); border-radius: 6px; overflow: hidden; background: #f0f4f5; max-width: 100%; box-sizing: border-box; }
+    .hr-segment button { margin: 0; border: none; border-radius: 0; background: transparent; padding: 0.5rem 1rem; font-size: 0.9375rem; font-weight: 600; color: var(--nhsuk-secondary-text); cursor: pointer; flex: 0 0 auto; white-space: nowrap; }
     .hr-segment button + button { border-left: 1px solid var(--nhsuk-border); }
     .hr-segment button.active { background: #fff; color: var(--nhsuk-link); box-shadow: 0 1px 0 #fff; }
     .hr-segment button:focus { outline: 3px solid #ffbf47; outline-offset: -2px; }
+    @media (max-width: 640px) {
+      .hr-segment {
+        display: flex;
+        width: 100%;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scroll-snap-type: x proximity;
+        scrollbar-width: thin;
+      }
+      .hr-segment button { scroll-snap-align: start; padding: 0.5rem 0.875rem; }
+      .hr-segment::-webkit-scrollbar { height: 4px; }
+      .hr-segment::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.2); border-radius: 2px; }
+    }
     .hr-card[hidden] { display: none !important; }
     .hr-inbox-filters {
       display: grid;
