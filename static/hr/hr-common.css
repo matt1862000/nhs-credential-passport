@@ -107,6 +107,47 @@
       font-size: 0.8125rem;
       color: var(--nhsuk-secondary-text);
     }
+    .hr-fit-decision {
+      margin-top: 0.45rem;
+      padding: 0.4rem 0.5rem;
+      border-radius: 4px;
+      border-left: 3px solid #768692;
+      background: #f8f9fa;
+      font-size: 0.8125rem;
+      line-height: 1.4;
+    }
+    .hr-fit-decision--meets { border-left-color: #007f3b; background: #f3faf5; }
+    .hr-fit-decision--review { border-left-color: #d5700a; background: #fffaf0; }
+    .hr-fit-decision--fail { border-left-color: #d5281b; background: #fdf6f6; }
+    .hr-fit-decision__title { font-weight: 700; margin: 0; font-size: 0.875rem; display: flex; gap: 0.35rem; align-items: center; }
+    .hr-fit-decision--meets .hr-fit-decision__title { color: #005a24; }
+    .hr-fit-decision--review .hr-fit-decision__title { color: #7a4700; }
+    .hr-fit-decision--fail .hr-fit-decision__title { color: #a30000; }
+    .hr-fit-decision__conf {
+      display: inline-flex; align-items: center; gap: 0.3rem;
+      margin-top: 0.25rem;
+    }
+    .hr-fit-decision__conf-label {
+      font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+      font-size: 0.625rem; padding: 0.1rem 0.4rem; border-radius: 3px;
+    }
+    .hr-fit-decision__conf-label--high { background: #d1f2e1; color: #005a24; }
+    .hr-fit-decision__conf-label--medium { background: #fef3da; color: #7a4700; }
+    .hr-fit-decision__conf-label--low { background: #fde8e8; color: #a30000; }
+    .hr-fit-decision__conf-reason { font-size: 0.75rem; color: var(--nhsuk-secondary-text); }
+    .hr-fit-decision__why { margin: 0.3rem 0 0 0; line-height: 1.45; }
+    .hr-fit-decision__chips { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.35rem; }
+    .hr-fit-chip {
+      display: inline-block; font-size: 0.625rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.04em;
+      padding: 0.12rem 0.4rem; border-radius: 3px;
+      background: #eef0f2; color: var(--nhsuk-secondary-text);
+    }
+    .hr-fit-chip--match-exact { background: #d1f2e1; color: #005a24; }
+    .hr-fit-chip--match-interpreted { background: #e8f4fd; color: #003d78; }
+    .hr-fit-chip--hist { background: #e8f4fd; color: #003d78; }
+    .hr-fit-chip--hist-low { background: #f0f2f4; color: var(--nhsuk-secondary-text); font-style: italic; font-weight: 500; }
+    .hr-fit-chip--cross { background: #f3eef8; color: #4c2c6a; }
     .hr-mandatory-fit-banner__text { margin: 0 0 0.5rem 0; font-size: 0.9375rem; }
     .hr-mandatory-fit-note {
       margin-top: 0.65rem;

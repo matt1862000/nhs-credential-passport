@@ -47,6 +47,82 @@
         });
       }
 
+      // Renders the decision-support block for an HR fit-review row.
+      // Drops legacy "Semantic match (XX% similar)" text in favour of the
+      // decision engine's natural-language reason, confidence label, match
+      // chip, and historical precedent.
+      function hrFitDecisionHtml(t) {
+        if (!t || !t.decision) return '';
+
+        var cls = 'hr-fit-decision';
+        var icon = '\u2753';
+        var title = 'Decision pending';
+        if (t.decision === 'MEETS') {
+          cls += ' hr-fit-decision--meets';
+          icon = '\u2705';
+          title = 'Meets requirement';
+        } else if (t.decision === 'REQUIRES_REVIEW') {
+          cls += ' hr-fit-decision--review';
+          icon = '\u26A0\uFE0F';
+          title = 'Needs review';
+        } else {
+          cls += ' hr-fit-decision--fail';
+          icon = '\u274C';
+          title = 'Does not meet';
+        }
+
+        var titleHtml =
+          '<p class="hr-fit-decision__title">' +
+          '<span aria-hidden="true">' + icon + '</span>' +
+          '<span>' + esc(title) + '</span>' +
+          '</p>';
+
+        var confHtml = '';
+        if (t.decision_confidence_label) {
+          var cLabel = String(t.decision_confidence_label);
+          var cText = cLabel.charAt(0).toUpperCase() + cLabel.slice(1);
+          confHtml =
+            '<div class="hr-fit-decision__conf">' +
+            '<span class="hr-fit-decision__conf-label hr-fit-decision__conf-label--' + esc(cLabel) + '">' +
+            esc(cText) + ' confidence</span>' +
+            '<span class="hr-fit-decision__conf-reason">' + esc(t.decision_confidence_reason || '') + '</span>' +
+            '</div>';
+        }
+
+        var whyHtml = t.decision_reason
+          ? '<p class="hr-fit-decision__why">' + esc(t.decision_reason) + '</p>'
+          : '';
+
+        var chips = [];
+        if (t.match_label) {
+          var matchCls = 'hr-fit-chip';
+          if (t.is_exact_match) matchCls += ' hr-fit-chip--match-exact';
+          else if (String(t.match_label).indexOf('interpreted') !== -1) matchCls += ' hr-fit-chip--match-interpreted';
+          chips.push('<span class="' + matchCls + '">Match: ' + esc(t.match_label) + '</span>');
+        }
+        if (t.historical_acceptance_hint) {
+          var histCls = 'hr-fit-chip hr-fit-chip--hist';
+          if (String(t.historical_acceptance_hint).indexOf('Limited') === 0) {
+            histCls = 'hr-fit-chip hr-fit-chip--hist-low';
+          }
+          chips.push('<span class="' + histCls + '">' + esc(t.historical_acceptance_hint) + '</span>');
+        }
+        var crossCtx = t.historical_context && t.historical_context.cross_trust;
+        if (crossCtx && crossCtx.sample_size >= 5 && crossCtx.rate != null) {
+          chips.push(
+            '<span class="hr-fit-chip hr-fit-chip--cross">' +
+            'Similar trusts: ' + Math.round(crossCtx.rate * 100) + '% (' +
+            esc(String(crossCtx.accepted)) + '/' + esc(String(crossCtx.sample_size)) +
+            ')</span>'
+          );
+        }
+        var chipsHtml = chips.length
+          ? '<div class="hr-fit-decision__chips">' + chips.join('') + '</div>'
+          : '';
+
+        return '<div class="' + cls + '">' + titleHtml + confHtml + whyHtml + chipsHtml + '</div>';
+      }
+
       function evidenceStatusPill(it) {
         var st = String(it.status || '').toUpperCase();
         if (st === 'VERIFIED') {
@@ -90,27 +166,16 @@
             var sidVal = it.session_id != null ? String(it.session_id) : '';
             var moduleCell = moduleEvidenceLinkHtml(it, sidVal, payload);
             var topicName = esc(t.topic_name || 'Mandatory requirement');
-            var reason = t.reason ? '<p class="hr-mandatory-fit-section__reason">' + esc(t.reason) + '</p>' : '';
-            var histHint = t.historical_acceptance_hint
-              ? '<p class="hr-mandatory-fit-section__reason hr-mandatory-fit-section__hist">' + esc(t.historical_acceptance_hint) + '</p>'
+            var decisionHtml = hrFitDecisionHtml(t);
+            // Legacy reason text only shown when API row has no decision envelope.
+            var legacyReason = (!t.decision && t.reason)
+              ? '<p class="hr-mandatory-fit-section__reason">' + esc(t.reason) + '</p>'
               : '';
-            var crossCtx = t.historical_context && t.historical_context.cross_trust;
-            var crossLine = '';
-            if (crossCtx && crossCtx.sample_size >= 5 && crossCtx.rate != null) {
-              crossLine =
-                '<p class="hr-mandatory-fit-section__reason hr-mandatory-fit-section__hist">Accepted by ' +
-                Math.round(crossCtx.rate * 100) +
-                '% of similar trusts (' +
-                esc(String(crossCtx.accepted)) +
-                ' of ' +
-                esc(String(crossCtx.sample_size)) +
-                ' decisions)</p>';
-            }
             return (
               '<tr>' +
               '<td>' + moduleCell + '</td>' +
               '<td>' + evidenceStatusPill(it) + '</td>' +
-              '<td>' + topicName + reason + histHint + crossLine + '</td>' +
+              '<td>' + topicName + legacyReason + decisionHtml + '</td>' +
               '<td>' +
               '<div class="hr-mandatory-fit-actions">' +
               '<button type="button" class="nhsuk-button hr-btn-small" data-fit-accept="1" data-cid="' +
