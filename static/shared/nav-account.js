@@ -809,13 +809,18 @@
         var res = await fetch('/api/hr/shares?limit=200', { credentials: 'include' });
         if (res.ok) {
           var payload = await res.json();
-          var fromSummary = Number(payload.actionable_pending_items);
-          if (Number.isFinite(fromSummary) && payload.actionable_pending_items != null) {
-            verifyN = fromSummary;
+          var fromTotal = Number(payload.actionable_total);
+          if (Number.isFinite(fromTotal) && payload.actionable_total != null) {
+            verifyN = fromTotal;
           } else {
-            verifyN = sessionsNeedingVerify(payload.sessions || []).reduce(function (a, s) {
-              return a + Number(s.pending_count || 0);
-            }, 0);
+            var fromSummary = Number(payload.actionable_pending_items);
+            if (Number.isFinite(fromSummary) && payload.actionable_pending_items != null) {
+              verifyN = fromSummary;
+            } else {
+              verifyN = sessionsNeedingVerify(payload.sessions || []).reduce(function (a, s) {
+                return a + Number(s.pending_count || 0) + Number(s.fit_pending_count || 0);
+              }, 0);
+            }
           }
         }
       }

@@ -1835,9 +1835,17 @@ def hr_shares_list(request: Request, limit: int = 50):
             except (TypeError, ValueError):
                 did_i = None
             s["fit_pending_count"] = int(fit_pending_by_doctor.get(did_i, 0)) if did_i is not None else 0
+    pending_items = int(summary.get("pending_items") or 0)
+    fit_pending_total = int(sum(fit_pending_by_doctor.values()))
     return {
         "sessions": sessions,
-        "actionable_pending_items": int(summary.get("pending_items") or 0),
+        "actionable_pending_items": pending_items,
+        "actionable_fit_pending_items": fit_pending_total,
+        # Combined count for dashboard / nav badges: evidence pending +
+        # outstanding fit reviews. A doctor whose evidence is fully
+        # verified but who still has a pending fit decision should still
+        # show up as actionable work for HR.
+        "actionable_total": pending_items + fit_pending_total,
         "fit_pending_by_doctor": {str(k): v for k, v in fit_pending_by_doctor.items()},
     }
 

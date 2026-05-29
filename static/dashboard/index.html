@@ -396,12 +396,20 @@
           }
           var data = await r.json();
           var sessions = data.sessions || [];
-          var total = Number(data.actionable_pending_items);
-          if (!Number.isFinite(total) || data.actionable_pending_items == null) {
+          // Prefer the combined count (evidence pending + outstanding
+          // fit reviews). Fall back through actionable_pending_items
+          // (evidence only) and finally to a client-side sum, so this
+          // keeps working against older backends.
+          var total = Number(data.actionable_total);
+          if (!Number.isFinite(total) || data.actionable_total == null) {
+            total = Number(data.actionable_pending_items);
+          }
+          if (!Number.isFinite(total) || total == null) {
             total = 0;
             sessions.forEach(function (s) {
               if (String(s.share_kind || 'review').toLowerCase() === 'portfolio') return;
               total += Number(s.pending_count || 0);
+              total += Number(s.fit_pending_count || 0);
             });
           }
           badge.textContent = String(total);
@@ -416,12 +424,21 @@
                 : total + ' training records awaiting verification'
           );
           if (desc) {
-            desc.textContent =
-              total === 0
-                ? 'Nothing in the inbox right now. When doctors share credentials for review, they will appear here.'
-                : total === 1
-                  ? '1 shared record is waiting for verification in your inbox.'
-                  : total + ' shared records are waiting for verification in your inbox.';
+            var pendingEv = Number(data.actionable_pending_items || 0);
+            var pendingFit = Number(data.actionable_fit_pending_items || 0);
+            if (total === 0) {
+              desc.textContent = 'Nothing in the inbox right now. When doctors share credentials for review, they will appear here.';
+            } else if (pendingEv > 0 && pendingFit > 0) {
+              desc.textContent = pendingEv + ' awaiting evidence verification and ' + pendingFit + ' awaiting requirement-fit review.';
+            } else if (pendingFit > 0) {
+              desc.textContent = pendingFit === 1
+                ? '1 verified record is awaiting your requirement-fit review.'
+                : pendingFit + ' verified records are awaiting your requirement-fit review.';
+            } else {
+              desc.textContent = pendingEv === 1
+                ? '1 shared record is waiting for verification in your inbox.'
+                : pendingEv + ' shared records are waiting for verification in your inbox.';
+            }
           }
         } catch (e) {
           badge.hidden = true;
