@@ -124,14 +124,9 @@
       ? '<div class="moving-decision__chips">' + chips.join('') + '</div>'
       : '';
 
-    var factorsHtml = '';
-    if (Array.isArray(t.decision_factors) && t.decision_factors.length) {
-      factorsHtml =
-        '<details class="moving-decision__factors">' +
-        '<summary>How this was calculated</summary>' +
-        '<ul>' + t.decision_factors.map(function (f) { return '<li>' + escapeHtml(f) + '</li>'; }).join('') + '</ul>' +
-        '</details>';
-    }
+    // Factors ("How this was calculated", e.g. "Exact module match
+    // (+50)") are scoring internals — HR-only audit detail, not shown on
+    // the doctor's screen.
 
     var recordLine = '';
     if (t.module_name) {
@@ -145,7 +140,7 @@
 
     return (
       '<div class="' + cls + '">' +
-      titleHtml + confHtml + whyHtml + chipRow + factorsHtml + recordLine +
+      titleHtml + confHtml + whyHtml + chipRow + recordLine +
       '</div>'
     );
   }

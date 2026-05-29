@@ -329,19 +329,13 @@
           ? '<div class="req-decision__chip-row">' + chipParts.join('') + '</div>'
           : '';
 
-        // 6. Factors — collapsible technical detail.
-        var factorsHtml = '';
-        if (Array.isArray(t.decision_factors) && t.decision_factors.length) {
-          factorsHtml =
-            '<details class="req-decision__factors">' +
-            '<summary>How this was calculated</summary>' +
-            '<ul>' + t.decision_factors.map(function (f) { return '<li>' + esc(f) + '</li>'; }).join('') + '</ul>' +
-            '</details>';
-        }
+        // Factors ("How this was calculated", e.g. "Exact module match
+        // (+50)") are scoring internals — HR-only audit detail, not shown
+        // on the doctor's screen.
 
         return (
           '<div class="' + cls + '">' +
-          titleHtml + confHtml + whyHtml + chipRowHtml + factorsHtml +
+          titleHtml + confHtml + whyHtml + chipRowHtml +
           '</div>'
         );
       }
