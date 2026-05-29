@@ -61,11 +61,25 @@
     .req-decision--review { border-left-color: #d5700a; }
     .req-decision--fail { border-left-color: var(--nhsuk-error); }
     .req-decision__title { font-weight: 700; display: block; }
-    .req-decision ul { margin: 0.25rem 0 0 1rem; padding: 0; }
+    .req-decision__conf { display: block; margin-top: 0.2rem; font-size: 0.8125rem; color: var(--nhsuk-secondary-text); }
+    .req-decision__conf-label { font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.6875rem; padding: 0.1rem 0.4rem; border-radius: 3px; margin-right: 0.35rem; }
+    .req-decision__conf-label--high { background: #d1f2e1; color: #005a24; }
+    .req-decision__conf-label--medium { background: #fef3da; color: #7a4700; }
+    .req-decision__conf-label--low { background: #fde8e8; color: #a30000; }
+    .req-decision__why { margin: 0.4rem 0 0 0; line-height: 1.45; }
+    .req-decision ul { margin: 0.35rem 0 0 1rem; padding: 0; }
     .req-hist-badge {
       display: inline-block; margin-top: 0.35rem; font-size: 0.75rem; font-weight: 600;
       padding: 0.15rem 0.45rem; border-radius: 3px; background: #e8f4fd; color: #003d78;
     }
+    .req-match-chip {
+      display: inline-block; margin-top: 0.4rem; font-size: 0.6875rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.04em;
+      padding: 0.12rem 0.45rem; border-radius: 3px;
+      background: #eef0f2; color: var(--nhsuk-secondary-text);
+    }
+    .req-match-chip--exact { background: #d1f2e1; color: #005a24; }
+    .req-match-chip--interpreted { background: #e8f4fd; color: #003d78; }
     .req-summary-pill--review .req-summary-pill__count { color: #7a4700; }
     .req-card { background: #fff; border: 1px solid var(--nhsuk-border); border-radius: 6px; padding: 1.25rem 1.5rem; margin-top: 1.25rem; }
     .req-empty { color: var(--nhsuk-secondary-text); padding: 0.75rem 0; font-style: italic; }
@@ -229,20 +243,51 @@
         var title = t.decision === 'MEETS' ? 'Likely meets requirement'
           : t.decision === 'REQUIRES_REVIEW' ? 'Needs review'
           : 'Does not meet';
-        var conf = t.decision_confidence != null
-          ? ' <span class="req-detail">(' + Math.round(Number(t.decision_confidence) * 100) + '% confidence)</span>'
+
+        // 2. Confidence label + reason (replaces inline % confidence).
+        var confHtml = '';
+        if (t.decision_confidence_label) {
+          var cLabel = String(t.decision_confidence_label);
+          confHtml =
+            '<span class="req-decision__conf">' +
+            '<span class="req-decision__conf-label req-decision__conf-label--' + esc(cLabel) + '">' +
+            esc(cLabel) + ' confidence</span>' +
+            (t.decision_confidence_reason ? esc(t.decision_confidence_reason) : '') +
+            '</span>';
+        }
+
+        // 3. Why (human-readable reason).
+        var whyHtml = t.decision_reason
+          ? '<p class="req-decision__why">' + esc(t.decision_reason) + '</p>'
           : '';
-        var factors = Array.isArray(t.decision_factors) && t.decision_factors.length
+
+        // 4. Factors bullets (technical detail).
+        var factorsHtml = Array.isArray(t.decision_factors) && t.decision_factors.length
           ? '<ul>' + t.decision_factors.map(function (f) { return '<li>' + esc(f) + '</li>'; }).join('') + '</ul>'
           : '';
-        var hist = t.historical_acceptance_hint
+
+        // 5. Precedent line (always present now — engine falls back to "Limited…").
+        var hintHtml = t.historical_acceptance_hint
           ? '<span class="req-hist-badge">' + esc(t.historical_acceptance_hint) + '</span>'
           : '';
+
+        // 6. Match label chip.
+        var matchHtml = '';
+        if (t.match_label) {
+          var chipCls = 'req-match-chip';
+          if (t.is_exact_match) chipCls += ' req-match-chip--exact';
+          else if (String(t.match_label).indexOf('interpreted') !== -1) chipCls += ' req-match-chip--interpreted';
+          matchHtml = ' <span class="' + chipCls + '">' + esc(t.match_label) + '</span>';
+        }
+
         return (
           '<div class="' + cls + '">' +
-          '<span class="req-decision__title">' + esc(title) + conf + '</span>' +
-          (t.decision_reason ? esc(t.decision_reason) : '') +
-          factors + hist +
+          '<span class="req-decision__title">' + esc(title) + '</span>' +
+          confHtml +
+          whyHtml +
+          factorsHtml +
+          hintHtml +
+          matchHtml +
           '</div>'
         );
       }

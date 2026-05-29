@@ -244,12 +244,6 @@ def _topic_result_row(
                 cross_trust_stats=cross_stats,
             )
         )
-        acc = int((trust_stats or {}).get("accepted_count") or 0)
-        if acc > 0 and trust_name:
-            row["historical_acceptance_hint"] = (
-                f"Accepted {acc} time{'s' if acc != 1 else ''} at your organisation for "
-                f"{(t.get('topic_name') or 'this requirement').strip()}"
-            )
     return row
 
 

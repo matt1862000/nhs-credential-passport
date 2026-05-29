@@ -86,6 +86,12 @@
             (t.hr_status ? ' · HR ' + escapeHtml(t.hr_status) : '') +
             '</span>';
         }
+        if (t.match_label) {
+          detail +=
+            '<br><span class="moving-muted"><strong>Match:</strong> ' +
+            escapeHtml(t.match_label) +
+            '</span>';
+        }
         if (t.decision_reason) {
           detail +=
             '<br><span class="moving-muted"><strong>Assessment:</strong> ' +

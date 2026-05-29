@@ -12,7 +12,7 @@ from typing import Any, Optional
 from . import mandatory_matching
 from .models import CSTF_MODULES
 
-ENGINE_VERSION = "1.6.0"
+ENGINE_VERSION = "1.7.0"
 
 DECISION_MEETS = "MEETS"
 DECISION_REQUIRES_REVIEW = "REQUIRES_REVIEW"
@@ -274,6 +274,100 @@ def evaluate_decision(signals: dict[str, Any]) -> tuple[int, str, float]:
     return score, decision, confidence
 
 
+_MATCH_NATURE_TEMPLATES = {
+    "exact": "This record exactly matches the required module.",
+    "alias": "This record is a recognised equivalent of the required module.",
+    "semantic": (
+        "This training closely matches the required topic based on similar content"
+        " and classification."
+    ),
+    "semantic_no_cat": (
+        "This training closely matches the required topic based on similar content."
+    ),
+    "semantic_low": (
+        "This training may match the required topic but with limited certainty."
+    ),
+    "partial": "This record only partially overlaps with the required topic.",
+    "hr_confirmed": "HR has confirmed this record satisfies the requirement.",
+    "none": "No record in your wallet matches this requirement.",
+}
+
+_DECISION_FRAMING = {
+    DECISION_MEETS: "No further HR review is required.",
+    DECISION_REQUIRES_REVIEW: (
+        "As this is not an exact match to the standard module title,"
+        " HR review is recommended."
+    ),
+    DECISION_DOES_NOT_MEET: (
+        "This record cannot be treated as meeting the requirement."
+    ),
+}
+
+MATCH_LABELS = {
+    "exact": "Exact match",
+    "alias": "Equivalent training (interpreted)",
+    "semantic": "Likely equivalent training (interpreted)",
+    "semantic_low": "Possible equivalent training (interpreted)",
+    "partial": "Partial match",
+    "hr_confirmed": "HR confirmed match",
+    "none": "Unclear match",
+}
+
+
+def _match_nature_sentence(signals: dict[str, Any]) -> str:
+    mt = (signals.get("match_type") or "none").strip().lower()
+    if mt == "semantic":
+        key = "semantic" if signals.get("category_match") else "semantic_no_cat"
+        return _MATCH_NATURE_TEMPLATES[key]
+    return _MATCH_NATURE_TEMPLATES.get(mt, _MATCH_NATURE_TEMPLATES["none"])
+
+
+def _validity_sentence(signals: dict[str, Any]) -> str:
+    if signals.get("is_expired"):
+        return "This record is expired."
+    dte = signals.get("days_to_expiry")
+    if isinstance(dte, (int, float)) and 0 <= int(dte) < 30:
+        return "It expires within 30 days."
+    return "It is within the required validity period."
+
+
+def is_exact_match(signals: dict[str, Any]) -> bool:
+    return (signals.get("match_type") or "").strip().lower() in ("exact", "alias")
+
+
+def match_label(signals: dict[str, Any]) -> str:
+    mt = (signals.get("match_type") or "none").strip().lower()
+    return MATCH_LABELS.get(mt, MATCH_LABELS["none"])
+
+
+def confidence_label_and_reason(decision_confidence: float) -> tuple[str, str]:
+    """Map a 0-1 decision_confidence to (label, reason). Thresholds unchanged."""
+    try:
+        c = float(decision_confidence)
+    except (TypeError, ValueError):
+        c = 0.0
+    if c >= 0.70:
+        return "high", "Clear match with strong supporting evidence"
+    if c >= 0.40:
+        return "medium", "Likely match but requires confirmation"
+    return "low", "Weak or unclear match"
+
+
+def historical_acceptance_hint(
+    historical_context: dict[str, Any],
+) -> str:
+    """Single source of truth for the precedent line shown on doctor screens."""
+    hc = historical_context or {}
+    trust_acc = int(hc.get("trust_accept_count") or 0)
+    cross_rate = hc.get("cross_trust_accept_rate")
+    cross_n = int(hc.get("cross_trust_sample_size") or 0)
+    if trust_acc >= 5:
+        return f"Accepted {trust_acc} times at this organisation"
+    if cross_rate is not None and cross_rate >= 0.7 and cross_n >= 5:
+        return f"Accepted {int(round(float(cross_rate) * 100))}% across NHS organisations"
+    return "Limited historical data available"
+
+
 def generate_explanation(
     signals: dict[str, Any],
     decision: str,
@@ -287,19 +381,12 @@ def generate_explanation(
         if pr and pr not in factors:
             factors.append(str(pr))
 
-    if decision == DECISION_MEETS:
-        reason = "This record likely meets the requirement based on the factors below."
-    elif decision == DECISION_REQUIRES_REVIEW:
-        reason = "This match needs HR review before it can be treated as meeting the requirement."
-    else:
-        reason = "This record does not appear to meet the requirement based on the factors below."
-
-    if contributions:
-        top_label, top_pts = max(contributions, key=lambda x: abs(x[1]))
-        if top_pts <= -40:
-            reason = f"Primary concern: {top_label.lower()}."
-        elif top_pts >= 40:
-            reason = f"Strongest factor: {top_label.lower()}."
+    sentences = [
+        _match_nature_sentence(signals),
+        _validity_sentence(signals),
+        _DECISION_FRAMING.get(decision, _DECISION_FRAMING[DECISION_DOES_NOT_MEET]),
+    ]
+    reason = " ".join(s for s in sentences if s)
 
     return {"reason": reason, "factors": factors}
 
@@ -314,10 +401,13 @@ def historical_context_block(
     ct_r = int(cts.get("rejected_count") or 0)
     ct_total = ct_a + ct_r
     rate = (ct_a / ct_total) if ct_total else None
+    trust_acc = int(ts.get("accepted_count") or 0)
+    trust_rej = int(ts.get("rejected_count") or 0)
     return {
+        # Existing nested keys — kept unchanged for backward compatibility.
         "this_trust": {
-            "accepted": int(ts.get("accepted_count") or 0),
-            "rejected": int(ts.get("rejected_count") or 0),
+            "accepted": trust_acc,
+            "rejected": trust_rej,
         },
         "cross_trust": {
             "accepted": ct_a,
@@ -325,6 +415,11 @@ def historical_context_block(
             "rate": round(rate, 4) if rate is not None else None,
             "sample_size": ct_total,
         },
+        # Additive flat keys (1.7.0) for simpler downstream consumption.
+        "trust_accept_count": trust_acc,
+        "trust_reject_count": trust_rej,
+        "cross_trust_accept_rate": round(rate, 4) if rate is not None else None,
+        "cross_trust_sample_size": ct_total,
     }
 
 
@@ -351,14 +446,20 @@ def build_decision_envelope(
     score, decision, confidence = evaluate_decision(signals)
     explanation = generate_explanation(signals, decision, score)
     hist = historical_context_block(trust_stats, cross_trust_stats)
+    conf_label, conf_reason = confidence_label_and_reason(confidence)
     return {
         "decision": decision,
         "decision_confidence": round(confidence, 4),
+        "decision_confidence_label": conf_label,
+        "decision_confidence_reason": conf_reason,
         "decision_score": score,
         "decision_reason": explanation["reason"],
         "decision_factors": explanation["factors"],
+        "is_exact_match": is_exact_match(signals),
+        "match_label": match_label(signals),
         "signals": signals,
         "historical_context": hist,
+        "historical_acceptance_hint": historical_acceptance_hint(hist),
         "decision_engine_version": ENGINE_VERSION,
     }
 
