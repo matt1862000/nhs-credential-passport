@@ -454,28 +454,42 @@
     var parts = [];
     if (isHr) {
       parts.push('<div class="nhsuk-topnav__msg-preview-section">');
-      parts.push('<p class="nhsuk-topnav__msg-preview-subhead">Training to verify</p>');
+      parts.push('<p class="nhsuk-topnav__msg-preview-subhead">Awaiting your action</p>');
       if (!verifyGroups.length) {
-        parts.push('<p class="nhsuk-topnav__msg-preview-empty">Nothing awaiting verification.</p>');
+        parts.push('<p class="nhsuk-topnav__msg-preview-empty">Nothing awaiting action.</p>');
       } else {
         parts.push(
           verifyGroups
             .slice(0, PREVIEW_LIMIT)
             .map(function (g) {
               var pending = Number(g.pending_count || 0);
+              var fitPending = Number(g.fit_pending_count || 0);
+              var total = pending + fitPending;
               var href = reviewHrefForGroup(g);
               var badge =
-                pending > 0
+                total > 0
                   ? '<span class="nhsuk-topnav__msg-preview-unread">' +
-                    esc(pending > 99 ? '99+' : String(pending)) +
+                    esc(total > 99 ? '99+' : String(total)) +
                     '</span>'
                   : '';
               var time = fmtPreviewTime(g.created_at);
               var meta = time ? '<span class="nhsuk-topnav__msg-preview-time">' + esc(time) + '</span>' : '';
-              var snippet =
-                pending === 1
-                  ? '1 record pending verification'
-                  : String(pending) + ' records pending verification';
+              var bits = [];
+              if (pending > 0) {
+                bits.push(
+                  pending === 1
+                    ? '1 awaiting verification'
+                    : String(pending) + ' awaiting verification'
+                );
+              }
+              if (fitPending > 0) {
+                bits.push(
+                  fitPending === 1
+                    ? '1 awaiting fit review'
+                    : String(fitPending) + ' awaiting fit review'
+                );
+              }
+              var snippet = bits.join(' · ');
               if (g.doctor_gmc) snippet += ' · GMC ' + String(g.doctor_gmc);
               return (
                 '<a class="nhsuk-topnav__msg-preview-item nhsuk-topnav__msg-preview-item--unread" href="' +
@@ -667,7 +681,14 @@
 
   function sessionsNeedingVerify(sessions) {
     return (sessions || []).filter(function (s) {
-      return String(s.share_kind || 'review').toLowerCase() !== 'portfolio' && Number(s.pending_count || 0) > 0;
+      if (String(s.share_kind || 'review').toLowerCase() === 'portfolio') return false;
+      // Bell surfaces both kinds of HR work: evidence verification AND
+      // outstanding requirement-fit decisions. A session whose evidence
+      // is fully verified but whose doctor still has fit-pending topics
+      // must remain visible until HR clicks Satisfies / Does not satisfy.
+      var pending = Number(s.pending_count || 0);
+      var fitPending = Number(s.fit_pending_count || 0);
+      return pending > 0 || fitPending > 0;
     });
   }
 
@@ -695,6 +716,12 @@
         var pending = sess.reduce(function (a, x) {
           return a + Number(x.pending_count || 0);
         }, 0);
+        // fit_pending_count is a per-doctor signal duplicated on every
+        // session row of that doctor — take MAX, not SUM.
+        var fitPending = sess.reduce(function (a, x) {
+          var n = Number(x.fit_pending_count || 0);
+          return n > a ? n : a;
+        }, 0);
         var latest = sess
           .map(function (x) {
             return x.created_at;
@@ -708,6 +735,7 @@
           doctor_gmc: g.doctor_gmc,
           doctor_trust: g.doctor_trust,
           pending_count: pending,
+          fit_pending_count: fitPending,
           created_at: latest,
           sessions: sess,
         };
