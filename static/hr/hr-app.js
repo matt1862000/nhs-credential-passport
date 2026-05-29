@@ -144,6 +144,14 @@
         var section = document.getElementById('mandatoryFitSection');
         var body = document.getElementById('mandatoryFitSectionBody');
         if (!section || !body) return;
+        // Fit-review is pending HR action, so it belongs only in the
+        // 'Awaiting decision' workspace. Hiding it from the 'Decided' tab
+        // prevents the same items appearing in both tabs.
+        if (itemsTab !== 'new') {
+          section.hidden = true;
+          body.innerHTML = '';
+          return;
+        }
         var doctorId = payload && payload.doctor_user_id;
         var rows = [];
         (payload && payload.items || []).forEach(function (it) {
