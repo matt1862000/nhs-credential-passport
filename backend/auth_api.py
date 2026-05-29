@@ -1758,6 +1758,39 @@ def _enrich_hr_share_payload(payload: dict, hr_trust: Optional[str]) -> dict:
         "topic_count": sum(len(v) for v in fit_map.values()),
         "topics": topics,
     }
+    out["mandatory_fit_decisions"] = _decided_fit_reviews_for_doctor(int(uid), trust, items)
+    return out
+
+
+def _decided_fit_reviews_for_doctor(
+    doctor_user_id: int, trust: str, items: list[dict]
+) -> list[dict]:
+    """Flat list of accepted/rejected fit decisions for this doctor at this
+    trust. Enriches each row with the credential's module name (from share
+    items when possible) so the HR UI can show it alongside the topic."""
+    decisions_map = db.mandatory_match_decisions_map(int(doctor_user_id), trust)
+    if not decisions_map:
+        return []
+    module_by_cid: dict[str, str] = {}
+    for it in items or []:
+        cid = str(it.get("credential_id") or "")
+        if cid and it.get("module_name") and cid not in module_by_cid:
+            module_by_cid[cid] = str(it.get("module_name") or "").strip()
+    out: list[dict] = []
+    for d in decisions_map.values():
+        cid = str(d.get("credential_id") or "")
+        out.append(
+            {
+                "credential_id": cid,
+                "module_name": module_by_cid.get(cid) or "",
+                "topic_id": d.get("topic_id"),
+                "topic_name": d.get("topic_name"),
+                "decision": d.get("decision"),
+                "decided_at": d.get("decided_at"),
+                "hr_user_id": d.get("hr_user_id"),
+            }
+        )
+    out.sort(key=lambda r: str(r.get("decided_at") or ""), reverse=True)
     return out
 
 

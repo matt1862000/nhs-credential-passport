@@ -140,6 +140,60 @@
         );
       }
 
+      function fmtFitDecidedAt(iso) {
+        if (!iso) return '';
+        try {
+          var d = new Date(iso);
+          if (isNaN(d.getTime())) return String(iso);
+          return d.toLocaleString(undefined, {
+            year: 'numeric', month: 'short', day: 'numeric',
+            hour: '2-digit', minute: '2-digit',
+          });
+        } catch (_) { return String(iso); }
+      }
+
+      function renderDecidedFitSection(payload) {
+        var section = document.getElementById('decidedFitSection');
+        var body = document.getElementById('decidedFitSectionBody');
+        if (!section || !body) return;
+        // Decided fit-review history lives only on the Decided tab.
+        if (itemsTab !== 'archived') {
+          section.hidden = true;
+          body.innerHTML = '';
+          return;
+        }
+        var decisions = (payload && payload.mandatory_fit_decisions) || [];
+        if (!decisions.length) {
+          section.hidden = true;
+          body.innerHTML = '';
+          return;
+        }
+        section.hidden = false;
+        var tableRows = decisions.map(function (d) {
+          var dec = String(d.decision || '').toLowerCase();
+          var pillClass = dec === 'accepted'
+            ? 'hr-fit-chip hr-fit-chip--match-exact'
+            : 'hr-fit-chip';
+          var pillText = dec === 'accepted' ? 'Satisfies requirement' : 'Does not satisfy';
+          var module = esc(d.module_name || d.credential_id || '—');
+          var topic = esc(d.topic_name || '—');
+          var when = esc(fmtFitDecidedAt(d.decided_at));
+          return (
+            '<tr>' +
+            '<td>' + module + '</td>' +
+            '<td>' + topic + '</td>' +
+            '<td><span class="' + pillClass + '">' + pillText + '</span></td>' +
+            '<td>' + when + '</td>' +
+            '</tr>'
+          );
+        }).join('');
+        body.innerHTML =
+          '<div class="hr-table-wrap">' +
+          '<table class="hr-table" aria-label="Decided requirement fit reviews">' +
+          '<thead><tr><th scope="col">Training record</th><th scope="col">Trust requirement</th><th scope="col">Decision</th><th scope="col">Decided at</th></tr></thead>' +
+          '<tbody>' + tableRows + '</tbody></table></div>';
+      }
+
       function renderMandatoryFitSection(payload) {
         var section = document.getElementById('mandatoryFitSection');
         var body = document.getElementById('mandatoryFitSectionBody');
@@ -807,6 +861,7 @@
         try {
           await refreshPayloadAfterAction(fixedSessionId);
           renderMandatoryFitSection(lastSessionPayload);
+          renderDecidedFitSection(lastSessionPayload);
         } catch (e) {
           console.warn('HR verify view poll failed', e);
         } finally {
@@ -1483,6 +1538,7 @@
         }
         fillItemsModuleSelect(s);
         renderMandatoryFitSection(s);
+        renderDecidedFitSection(s);
         var sourceItems = dedupeItemsByCredential(s.items || []);
         var items = sourceItems.filter(function (it) {
           var st = String(it.status || '').toUpperCase();
@@ -1701,6 +1757,7 @@
               );
               await refreshPayloadAfterAction(fixedSessionId);
               renderMandatoryFitSection(lastSessionPayload);
+              renderDecidedFitSection(lastSessionPayload);
             } catch (err) {
               alert(err.message || err);
               fitBtn.disabled = false;
