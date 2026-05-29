@@ -12,7 +12,7 @@ from typing import Any, Optional
 from . import mandatory_matching
 from .models import CSTF_MODULES
 
-ENGINE_VERSION = "1.7.0"
+ENGINE_VERSION = "1.7.1"
 
 DECISION_MEETS = "MEETS"
 DECISION_REQUIRES_REVIEW = "REQUIRES_REVIEW"
@@ -292,16 +292,49 @@ _MATCH_NATURE_TEMPLATES = {
     "none": "No record in your wallet matches this requirement.",
 }
 
-_DECISION_FRAMING = {
+_DECISION_FRAMING_TERMINAL = {
     DECISION_MEETS: "No further HR review is required.",
-    DECISION_REQUIRES_REVIEW: (
-        "As this is not an exact match to the standard module title,"
-        " HR review is recommended."
-    ),
     DECISION_DOES_NOT_MEET: (
         "This record cannot be treated as meeting the requirement."
     ),
 }
+
+
+def _requires_review_sentence(signals: dict[str, Any]) -> str:
+    """Pick a context-appropriate sentence explaining why review is needed.
+
+    Avoids contradicting the match-nature sentence: when the match is exact
+    or alias, we never tell the user "this is not an exact match"; instead
+    we cite the actual reason the score landed in the review band
+    (expiry, policy, prior rejections, or simply insufficient evidence).
+    """
+    if signals.get("is_expired"):
+        return "HR review is recommended because this record has expired."
+    if signals.get("violates_trust_policy"):
+        return (
+            "HR review is recommended because trust policy conditions"
+            " are not fully met."
+        )
+    dte = signals.get("days_to_expiry")
+    if isinstance(dte, (int, float)) and 0 <= int(dte) < 30:
+        return "HR review is recommended as this record is close to expiry."
+    if int(signals.get("previously_rejected_count") or 0) > int(
+        signals.get("previously_accepted_count") or 0
+    ):
+        return (
+            "HR review is recommended because similar records have previously"
+            " been rejected at this organisation."
+        )
+    mt = (signals.get("match_type") or "").strip().lower()
+    if mt in ("exact", "alias"):
+        return (
+            "HR review is recommended to confirm this credential satisfies"
+            " the trust's standard for this requirement."
+        )
+    return (
+        "As this is not an exact match to the standard module title,"
+        " HR review is recommended."
+    )
 
 MATCH_LABELS = {
     "exact": "Exact match",
@@ -381,10 +414,17 @@ def generate_explanation(
         if pr and pr not in factors:
             factors.append(str(pr))
 
+    if decision == DECISION_REQUIRES_REVIEW:
+        framing = _requires_review_sentence(signals)
+    else:
+        framing = _DECISION_FRAMING_TERMINAL.get(
+            decision, _DECISION_FRAMING_TERMINAL[DECISION_DOES_NOT_MEET]
+        )
+
     sentences = [
         _match_nature_sentence(signals),
         _validity_sentence(signals),
-        _DECISION_FRAMING.get(decision, _DECISION_FRAMING[DECISION_DOES_NOT_MEET]),
+        framing,
     ]
     reason = " ".join(s for s in sentences if s)
 

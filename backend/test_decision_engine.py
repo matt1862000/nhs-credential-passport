@@ -231,6 +231,50 @@ class ExplanationStyleTests(unittest.TestCase):
         out_fail = de.generate_explanation(_signals(), de.DECISION_DOES_NOT_MEET, 10)
         self.assertIn("cannot be treated as meeting", out_fail["reason"])
 
+    def test_no_contradiction_exact_match_in_review_band(self):
+        """An exact-match credential in REQUIRES_REVIEW must not be told
+        'this is not an exact match' — that contradicts sentence 1."""
+        s = _signals(match_type="exact")
+        out = de.generate_explanation(s, de.DECISION_REQUIRES_REVIEW, 50)
+        self.assertIn("exactly matches", out["reason"])
+        self.assertNotIn("not an exact match", out["reason"])
+        self.assertIn("trust's standard", out["reason"])
+
+    def test_no_contradiction_alias_match_in_review_band(self):
+        s = _signals(match_type="alias")
+        out = de.generate_explanation(s, de.DECISION_REQUIRES_REVIEW, 50)
+        self.assertIn("recognised equivalent", out["reason"])
+        self.assertNotIn("not an exact match", out["reason"])
+
+    def test_review_framing_cites_expired(self):
+        s = _signals(match_type="exact", is_expired=True)
+        out = de.generate_explanation(s, de.DECISION_REQUIRES_REVIEW, 50)
+        self.assertIn("expired", out["reason"])
+
+    def test_review_framing_cites_policy_violation(self):
+        s = _signals(match_type="exact", violates_trust_policy=True)
+        out = de.generate_explanation(s, de.DECISION_REQUIRES_REVIEW, 50)
+        self.assertIn("trust policy", out["reason"])
+
+    def test_review_framing_cites_prior_rejections(self):
+        s = _signals(
+            match_type="exact",
+            previously_accepted_count=1,
+            previously_rejected_count=5,
+        )
+        out = de.generate_explanation(s, de.DECISION_REQUIRES_REVIEW, 50)
+        self.assertIn("previously been rejected", out["reason"])
+
+    def test_review_framing_cites_imminent_expiry(self):
+        s = _signals(match_type="exact", days_to_expiry=10)
+        out = de.generate_explanation(s, de.DECISION_REQUIRES_REVIEW, 50)
+        self.assertIn("close to expiry", out["reason"])
+
+    def test_review_framing_non_exact_keeps_original_sentence(self):
+        s = _signals(match_type="partial")
+        out = de.generate_explanation(s, de.DECISION_REQUIRES_REVIEW, 50)
+        self.assertIn("not an exact match", out["reason"])
+
 
 class HistoricalContextTests(unittest.TestCase):
     def test_flat_keys_present(self):
@@ -370,7 +414,7 @@ class EnvelopeShapeTests(unittest.TestCase):
             "decision_engine_version",
         ):
             self.assertIn(key, env, f"missing {key}")
-        self.assertEqual(env["decision_engine_version"], "1.7.0")
+        self.assertEqual(env["decision_engine_version"], "1.7.1")
         self.assertIn("trust_accept_count", env["historical_context"])
         self.assertIn("this_trust", env["historical_context"])
         self.assertEqual(
