@@ -1,7 +1,7 @@
 # DocPass — product overview (shareable reference)
 
 > **Purpose of this document:** Single reference for Copilot, stakeholders, or new contributors.  
-> **Last updated:** May 2026 (email-OTP MFA for HR demo accounts, forgot/change password, expired-training guardrails, auto-refresh polling, Fix-and-reshare modal, QA checklist)  
+> **Last updated:** May 2026 (decision engine v1.8.1 — strict separation of evidence verification from requirement-fit confirmation; HR fit-review now drives inbox classification, dashboard badge, doctor wallet chip, doctor alerts, and an HR-only "How this was assessed" audit panel; session detail always opens on Awaiting decision with a Decided fit-reviews history section under Decided)  
 > **Live demo:** https://docpass.co.uk (Oracle Cloud VM — Docker + Caddy)  
 > **Source repo:** https://github.com/matt1862000/nhs-credential-passport.git
 
@@ -96,7 +96,7 @@ When **exact** and **alias** matching fail, the matcher calls **Google Gemini em
 - **Production:** credentials at `/var/lib/docpass/keys/gcp-embeddings.json`, mounted in container as `/app/keys/gcp-embeddings.json`  
 - **Caching:** trust-pack topic embeddings cached in memory per pack fingerprint; credential embeddings cached by normalised title  
 - **HR verification:** not required for matching — pending records can still show semantic matches; `hr_status` is display-only on requirements  
-- **HR requirement-fit decisions:** when status is **Needs review** (partial or semantic_low), HR uses the separate **Requirement fit review** section below the verification table — **Satisfies requirement** / **Does not satisfy** — stored per doctor, trust, topic, and credential; accepted → **Met (HR confirmed)**; rejected → **No match**
+- **HR requirement-fit decisions:** any topic whose decision is **REQUIRES_REVIEW** (partial, semantic_low, *and* HR-verified exact matches where the decision engine still flags review) appears in the **Requirement fit review** section under the doctor's session view. HR clicks **Satisfies requirement** / **Does not satisfy** — stored per doctor, trust, topic, and credential. Accepted → **Met (HR confirmed)**; rejected → **No match**. Evidence verification ("is the certificate genuine?") and fit confirmation ("does this satisfy *this trust's* requirement?") are two **separate** HR decisions; an HR-verified credential never auto-promotes to MEETS without an explicit fit decision.
 
 **Example:** pack topic “Information Governance” + wallet record “Protecting patient confidentiality and NHS data” → **Needs review (possible semantic match)** at ~86% similarity (≥90% required for Met).
 
@@ -122,7 +122,7 @@ When **exact** and **alias** matching fail, the matcher calls **Google Gemini em
 
 ### Explainable decision engine (`backend/decision_engine.py`)
 
-After the matcher runs, a **rule-based decision engine** scores each topic row. Embeddings only feed `similarity_score`; the final `decision` is deterministic and inspectable.
+After the matcher runs, a **rule-based decision engine** scores each topic row. Embeddings only feed `similarity_score`; the final `decision` is deterministic and inspectable. Current pinned audit version: **`ENGINE_VERSION = "1.8.1"`**.
 
 | Signal / rule | Points |
 |---------------|--------|
@@ -142,14 +142,30 @@ After the matcher runs, a **rule-based decision engine** scores each topic row. 
 | Cross-trust acceptance ≤30% (n≥5) | −15 |
 
 **Thresholds:** score ≥70 → `MEETS`; 40–69 → `REQUIRES_REVIEW`; &lt;40 → `DOES_NOT_MEET`.  
-**Confidence:** `decision_confidence = clamp(score / 100, 0, 1)`.
+**Confidence:** `decision_confidence = clamp(score / 100, 0, 1)` → mapped to `decision_confidence_label` (high ≥ 0.70 / medium ≥ 0.40 / low) and a human reason.
+
+**HR evidence verification is intentionally NOT a scoring signal.** A bare HR-verified exact match scores 50 + 15 = 65 → `REQUIRES_REVIEW`, and the row appears in HR's Requirement fit review panel awaiting an explicit Satisfies / Does not satisfy click. Only after HR commits a fit decision does the row become `MEETS` (via `Met (HR confirmed)`) or `DOES_NOT_MEET`. The `hr_verified` flag is still tracked in `signals` for explanation and audit, but contributes 0 to the score (see commit `b609bd3`, engine v1.8.1).
 
 **Doctor APIs (decision envelope included):**
 
-- `GET /api/me/compliance-snapshot` — adds `decision`, `decision_confidence`, `decision_score`, `decision_reason`, `decision_factors`, `signals`, `historical_context`, `decision_engine_version`, optional `historical_acceptance_hint` per topic; snapshot root includes `decision_engine_version`.
+- `GET /api/me/compliance-snapshot` — adds `decision`, `decision_confidence`, `decision_confidence_label`, `decision_confidence_reason`, `decision_score`, `decision_reason`, `decision_reason_short` (drops HR-routing sentence for the doctor view), `decision_factors`, `is_exact_match`, `match_label`, `signals`, `historical_context`, `historical_acceptance_hint`, `decision_engine_version` per topic; snapshot root includes `decision_engine_version`.
 - `GET /api/me/trust-move/checklist-preview` — same fields on each preview topic.
+- `GET /api/me/fit-review-pending-credentials` — set of wallet credential ids that are HR-verified but still pending HR fit-review for at least one mandatory topic; drives the amber **HR confirming fit** chip on wallet cards.
+
+**Doctor surfaces (`/requirements`, plan-move) intentionally render only the badge + a plain-English why sentence (match nature + validity).** Confidence chip, match label, precedent hint, scoring factors and the HR-routing sentence are all HR-only — the doctor doesn't act on those signals, so showing them is noise.
 
 **HR cohort snapshot** — unchanged (matcher fields only; no decision envelope).
+
+**HR-only audit surface — "How this was assessed":** every Requirement fit review row carries a collapsible `<details>` panel exposing four structured sections built from the decision envelope and `signals` block:
+
+| Section | Shows |
+|---------|-------|
+| Matching evidence | Match label, category alignment, validity (`Valid · N days remaining` / `Expiring soon · N days` / `Expired`), provider trust |
+| Similarity | Semantic similarity %, only when meaningful |
+| Scoring factors | `decision_factors` bullet list (e.g. `Exact module match (+50)`) |
+| Decision summary | Score, confidence label + reason, decision, engine version |
+
+Closed by default; never rendered on doctor surfaces. The HR-only `signals` block is forwarded by `compliance_snapshot.mandatory_needs_review_by_credential`.
 
 **HR feedback rollup:** `training_decision_stats` materialised from `mandatory_match_decisions` on each fit upsert (idempotent re-upsert). Backfill: `python3 backend/scripts/backfill_decision_stats.py`.
 
@@ -174,7 +190,7 @@ After the matcher runs, a **rule-based decision engine** scores each topic row. 
 
 ### 5.2 Training wallet (`/static/staff/`)
 
-- **View my training** — list with expiry status and HR verification state; sort **A–Z** or by **expiry date** (soonest first); **declined records float to the top** so they're impossible to miss
+- **View my training** — list with expiry status and HR verification state; sort **A–Z** or by **expiry date** (soonest first); **declined records float to the top** so they're impossible to miss. Cards that are HR-verified but still awaiting an HR requirement-fit decision get an amber **HR confirming fit** chip alongside the green **In Date** / blue **Verified by HR** chips — fed by `GET /api/me/fit-review-pending-credentials` (polled every 30 s, so the chip disappears the moment HR clicks Satisfies / Does not satisfy)
 - **Auto-refresh** — list polls every **30 s** (paused when the tab is hidden) so HR verify/decline outcomes show up without a manual reload
 - **Add a record** — manual entry; optional certificate upload
 - **Import from ESR** — multi-step wizard (help → CSV → column map → preview → evidence → import); trust format detection; **needs-fix** panel for rows that fail validation (exact title match against wallet, not fuzzy)
@@ -218,6 +234,8 @@ In-app notifications sent **to doctors only** when HR acts on their training:
 | Training declined | HR declines (optional reason) |
 | Verification reverted | HR unverifies a record |
 | Training recorded by HR | HR adds/issues training on a doctor’s behalf |
+| Requirement satisfied | HR clicks **Satisfies requirement** in fit review (links to `/requirements`) |
+| Requirement not satisfied | HR clicks **Does not satisfy** in fit review (links to `/requirements`) |
 
 ### 5.7 Messages (`/static/messages/`)
 
@@ -260,13 +278,16 @@ HR accounts see **Trust tools** on the dashboard instead of the doctor wallet. C
 
 - Inbox of **shared sets** from doctors grouped by doctor
 - **Auto-refresh** — both the inbox list and an open set poll every **15 s** (paused when the tab is hidden), so new doctor submissions appear without manual reload
+- **Inbox tabs (Needs action / Completed):** a doctor remains in **Needs action** until *both* the evidence work (PENDING items) *and* the requirement-fit work (REQUIRES_REVIEW topics with no `hr_fit_decision`) are complete. The inbox row shows a new **"N awaiting fit review"** chip beside the existing pending / verified / declined chips. Backend: `/api/hr/shares` computes `fit_pending_count` per session via `mandatory_needs_review_by_credential` and returns `actionable_fit_pending_items` + `actionable_total` for badges.
+- **Session detail tabs (Awaiting decision / Decided):** every Review click lands on **Awaiting decision** by default (no persistence across opens), so HR never misses the actionable work.
 - Filter: needs action / completed; by module; by record status
 - Per-record actions: **Verify**, **Decline** (with reason), **Unverify**
 - **Declined-record handling:** when a doctor uses **Fix and reshare**, the existing declined row is moved back to **Pending verification** rather than creating a duplicate "resubmission" entry. If the doctor changed a signed detail (module/dates), HR sees a single fresh Pending row instead.
 - **Expired training is never in the inbox** — server-side guard on `POST /api/me/shares` strips expired credentials before a share session is created
-- **Requirement fit review** — separate section below verification: **Satisfies requirement** / **Does not satisfy** (not mixed with Verify/Decline)
+- **Requirement fit review (Awaiting decision tab only)** — separate section below verification: **Satisfies requirement** / **Does not satisfy** (not mixed with Verify/Decline). Each row carries a collapsible HR-only **▸ How this was assessed** audit panel (Matching evidence / Similarity / Scoring factors / Decision summary). On click, the doctor receives a `Requirement satisfied` / `Requirement not satisfied` alert linking to `/requirements`.
+- **Decided requirement fit reviews (Decided tab only)** — read-only history of past Satisfies / Does not satisfy calls for the doctor at this trust, newest first; populated by the additive `mandatory_fit_decisions` array on `/api/hr/shares/{session_id}`.
 - Bulk verify / bulk decline within a set
-- Header **bell** — hover preview shows **Training to verify** only; badge = pending verification count
+- Header **bell** — hover preview shows **Training to verify** only; badge = combined evidence-pending + fit-pending count (`actionable_total`), so a doctor whose evidence is fully verified but who still has an outstanding fit decision still surfaces in the bell
 
 ### 6.2 Search doctors (`/static/hr/search.html`)
 
@@ -566,8 +587,9 @@ Caddy config lives on the VM at `/etc/caddy/Caddyfile` (not in git).
 
 ### Compliance & requirements
 - `GET /me/trust-requirements` — mandatory topic list for current trust
-- `GET /me/compliance-snapshot` — **enriched** topic vs wallet match (all Stage 2 fields)
-- `GET /me/trust-move/checklist-preview?pack_id=sheffield` — destination pack vs wallet (same matcher)
+- `GET /me/compliance-snapshot` — **enriched** topic vs wallet match (all Stage 2 fields plus full decision envelope: `decision`, `decision_confidence_label/reason`, `decision_reason`, `decision_reason_short`, `decision_factors`, `is_exact_match`, `match_label`, `signals`, `historical_context`, `historical_acceptance_hint`, `decision_engine_version`)
+- `GET /me/trust-move/checklist-preview?pack_id=sheffield` — destination pack vs wallet (same matcher and envelope)
+- `GET /me/fit-review-pending-credentials` — credential ids HR-verified but pending fit review (drives wallet "HR confirming fit" chip)
 - `GET /me/trust-move/candidates`, `POST /me/trust-move/complete`
 
 ### Notifications (doctors only)
@@ -575,8 +597,10 @@ Caddy config lives on the VM at `/etc/caddy/Caddyfile` (not in git).
 - `POST /me/notifications/{id}/read`, `POST /me/notifications/read-all`
 
 ### HR verification
-- `GET /hr/shares`, `GET /hr/shares/{session_id}`
+- `GET /hr/shares` — sessions list; also returns `actionable_pending_items` (evidence), `actionable_fit_pending_items`, `actionable_total`, `fit_pending_by_doctor`; each session row carries `fit_pending_count`
+- `GET /hr/shares/{session_id}` — session detail; payload extended with `mandatory_needs_review` per item, plus `mandatory_fit_decisions` (decided history) and `signals` block on each fit-review topic for the HR-only audit panel
 - `POST /hr/shares/{session_id}/items/{credential_id}/verify|decline|unverify`
+- `POST /hr/doctors/{doctor_user_id}/mandatory-fit-decisions` — Satisfies / Does not satisfy; persists `mandatory_match_decisions`, writes audit log, and emits a doctor notification (`hr_fit_accepted` / `hr_fit_rejected`)
 
 ### HR email preferences
 - `GET /hr/email-preferences` — digest/instant toggles, delivery email, inbox snapshot
@@ -649,6 +673,11 @@ DocPass demonstrates ideas aligned with StatMand direction:
 | **MFA challenge** | Server-side `mfa_codes` row pairing a SHA-256-hashed 6-digit code with a SHA-256-hashed challenge token (cookie); both must match within 10 minutes for sign-in to complete |
 | **Trusted device** | 32-byte random token issued at MFA success when the user ticks "Trust this device for 30 days"; only its SHA-256 hash is stored, in `mfa_trusted_devices` |
 | **Password reset token** | Random 32-byte URL-safe string emailed to a user as a reset link; only the SHA-256 hash is stored, 15-min expiry, single-use |
+| **Evidence verification** | HR's first decision on a shared credential — *is this certificate genuine?* — surfaced as Verify / Decline on each share item. Independent of fit confirmation. |
+| **Requirement-fit confirmation** | HR's separate decision after a credential is verified — *does this credential satisfy this trust's mandatory requirement?* — surfaced as Satisfies requirement / Does not satisfy in the Requirement fit review section. A credential never auto-MEETS a mandatory topic on the back of evidence verification alone. |
+| **Decision engine version** | `ENGINE_VERSION` constant in `backend/decision_engine.py` (currently `1.8.1`) pinned on every decision envelope and on each persisted `mandatory_match_decisions` row for audit replay. |
+| **`actionable_total`** | API field on `/api/hr/shares` = pending evidence items + pending requirement-fit reviews. Drives the HR dashboard card badge and top-nav bell so a doctor whose evidence is fully verified but who still has an outstanding fit decision remains visible as actionable work. |
+| **HR confirming fit chip** | Amber wallet chip shown to the doctor when one of their HR-verified credentials is awaiting an HR requirement-fit decision for a mandatory topic. Disappears the moment HR clicks Satisfies / Does not satisfy. |
 
 ---
 
@@ -692,6 +721,14 @@ DocPass demonstrates ideas aligned with StatMand direction:
 | Change password in Profile | Current + new + confirm form wired to `POST /api/auth/change-password` |
 | Email-OTP MFA (HR demo accounts) | Sign-in step for `MFA_REQUIRED_EMAILS` (default: `sheffieldhr@nhs.net`, `rotherhamhr@nhs.net`): 6-digit code, 10-min expiry, max 5 attempts, optional 30-day trusted device; codes routed through `HR_EMAIL_OVERRIDE` |
 | Manual QA checklist | `QA-CHECKLIST.md` — comprehensive role-by-role test script for systematic regression checks |
+| Decision engine v1.7 → v1.8.1 | Audit-relevant explanation upgrade: natural-language `decision_reason` (match + validity + framing, no jargon), `decision_reason_short` for doctor surfaces (drops HR-routing sentence), `is_exact_match`, `match_label`, `decision_confidence_label/reason`, contextual REQUIRES_REVIEW framing (no more "not an exact match" contradiction). v1.8 added a +25 hr_verified signal; **v1.8.1 reverted it** — evidence verification and fit confirmation are now strictly separate decisions |
+| Doctor surfaces de-cluttered | `/requirements` and plan-move now show only the decision badge + a plain-English why sentence per row. Confidence chip, match label, precedent hint, scoring factors and HR-routing sentence are HR-only |
+| HR Requirement fit review on Awaiting decision | Fit-review panel hidden from the Decided tab so the same rows can't appear twice. Session view always opens on Awaiting decision |
+| Decided requirement fit reviews section | New read-only history table on the Decided tab listing past Satisfies / Does not satisfy calls (newest first); polled after each decision so a fresh row appears immediately |
+| "How this was assessed" audit panel | HR-only collapsible `<details>` on every fit-review row, surfacing structured Matching evidence / Similarity / Scoring factors / Decision summary built from the decision envelope (incl. the `signals` block now forwarded to HR) |
+| Wallet "HR confirming fit" chip | Doctor wallet cards show an amber chip when the credential is HR-verified but still pending an HR fit decision for a mandatory topic; backed by `GET /api/me/fit-review-pending-credentials` |
+| Fit-decision doctor alerts | Clicking Satisfies / Does not satisfy emits `hr_fit_accepted` / `hr_fit_rejected` notifications to the doctor with deep links to `/requirements` |
+| Inbox classification by fit-pending | A doctor stays in HR's **Needs action** until evidence *and* fit reviews are all done. Inbox row carries a new "N awaiting fit review" chip. Dashboard card badge and top-nav bell read the combined `actionable_total` (evidence + fit) so a fully evidence-verified doctor with an outstanding fit decision still surfaces |
 
 ---
 
