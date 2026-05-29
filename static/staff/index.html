@@ -323,6 +323,9 @@
     .nhsuk-tag--revoked { background: #fdecea; color: var(--nhsuk-error); }
     .nhsuk-tag--shared { background: #eef0f2; color: var(--nhsuk-secondary-text); border: 1px solid var(--nhsuk-border); }
     .nhsuk-tag--verified { background: #dbeafe; color: #1d4ed8; border: 1px solid rgba(29, 78, 216, 0.25); }
+    /* Amber chip: HR verified the evidence but is still confirming the
+       credential satisfies a mandatory requirement at the current trust. */
+    .nhsuk-tag--fit-review { background: #fff3cd; color: #856404; border: 1px solid rgba(133, 100, 4, 0.25); }
     .nhsuk-card__actions { margin-top: 1rem; }
     .nhsuk-card__actions .nhsuk-button { margin-right: 0.5rem; margin-bottom: 0.5rem; }
     .nhsuk-summary-list {
@@ -1155,6 +1158,11 @@
     var trustSuggestItems = [];
     var trustSuggestActive = -1;
     var verifiedMap = {};
+    // Set of credential_ids that are HR-verified but still pending HR fit
+    // review against at least one mandatory topic at the doctor's current
+    // trust (post-verification portability check). Source of truth:
+    // GET /api/me/fit-review-pending-credentials.
+    var fitReviewPendingSet = {};
 
     function isHrVerified(credentialId) {
       var cid = String(credentialId || '').trim();
@@ -1164,7 +1172,18 @@
       return !!(v && v.shared === true && st === 'VERIFIED');
     }
 
+    function isFitReviewPending(credentialId) {
+      var cid = String(credentialId || '').trim();
+      return !!(cid && fitReviewPendingSet[cid]);
+    }
+
     async function refreshVerifiedMap() {
+      // Fetch verified-map + fit-review-pending in parallel — they both
+      // feed the wallet card chips and we want them in sync per render.
+      await Promise.all([_refreshVerifiedMapOnly(), refreshFitReviewPending()]);
+    }
+
+    async function _refreshVerifiedMapOnly() {
       try {
         var r = await fetch('/api/me/verified-map', { credentials: 'include' });
         var raw = r.ok ? await r.json() : {};
@@ -1176,6 +1195,24 @@
         }
       } catch (e) {
         verifiedMap = {};
+      }
+    }
+
+    async function refreshFitReviewPending() {
+      try {
+        var r = await fetch('/api/me/fit-review-pending-credentials', {
+          credentials: 'include',
+        });
+        var raw = r.ok ? await r.json() : {};
+        var ids = (raw && Array.isArray(raw.credential_ids)) ? raw.credential_ids : [];
+        var next = {};
+        ids.forEach(function (cid) {
+          var k = String(cid || '').trim();
+          if (k) next[k] = true;
+        });
+        fitReviewPendingSet = next;
+      } catch (e) {
+        fitReviewPendingSet = {};
       }
     }
 
@@ -3019,6 +3056,13 @@
         const verifiedTag = v && v.shared && st === 'VERIFIED'
           ? '<span class="nhsuk-tag nhsuk-tag--verified" style="margin-left:0.5rem;">Verified by HR</span>'
           : '';
+        // Amber chip — HR verified the evidence but is still confirming the
+        // credential satisfies a mandatory requirement at this trust.
+        // Only renders when the credential is in the fit-review-pending set
+        // (which itself requires VERIFIED status), so it never appears alone.
+        const fitReviewTag = (v && v.shared && st === 'VERIFIED' && isFitReviewPending(cidLookup))
+          ? '<span class="nhsuk-tag nhsuk-tag--fit-review" style="margin-left:0.5rem;" title="HR has verified this record and is now confirming whether it satisfies a mandatory requirement at your current trust.">HR confirming fit</span>'
+          : '';
         const pendingTag = v && v.shared && st === 'PENDING'
           ? '<span class="nhsuk-tag nhsuk-tag--shared" style="margin-left:0.5rem;">Pending verification</span>'
           : '';
@@ -3082,7 +3126,7 @@
               <div style="flex:1;">
                 ${credentialTitleRowHtml(c)}
                 <div class="nhsuk-card__meta">Expires ${c.expiry_date}${c.revoked ? ' · Revoked' : ''}</div>
-                <span class="nhsuk-tag nhsuk-tag--${status}">${expiryStatusLabel(status)}</span>${verifiedTag}${pendingTag}${declinedTag}
+                <span class="nhsuk-tag nhsuk-tag--${status}">${expiryStatusLabel(status)}</span>${verifiedTag}${fitReviewTag}${pendingTag}${declinedTag}
                 ${actionsHtml}
                 ${isExpired && !alreadyVerified && !alreadyPending ? '<div class="staff-declined-box">Expired training isn\'t sent to HR. Tap <strong>Renew</strong> to log a new completion — that will be shared with HR automatically.</div>' : ''}
                 ${!isExpired && !alreadyVerified && !alreadyPending && !c.import_evidence_batch && !c.import_evidence_id ? '<p class="nhsuk-hint" style="margin:0.5rem 0 0 0;">Sent to HR automatically when added. Downloadable proof is available after verification — use the <strong>Download</strong> tab.</p>' : ''}

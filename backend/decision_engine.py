@@ -12,7 +12,7 @@ from typing import Any, Optional
 from . import mandatory_matching
 from .models import CSTF_MODULES
 
-ENGINE_VERSION = "1.7.2"
+ENGINE_VERSION = "1.8.0"
 
 DECISION_MEETS = "MEETS"
 DECISION_REQUIRES_REVIEW = "REQUIRES_REVIEW"
@@ -133,6 +133,7 @@ def extract_signals(
     trust_name: Optional[str] = None,
     trust_stats: Optional[dict] = None,
     cross_trust_stats: Optional[dict] = None,
+    hr_verified: bool = False,
 ) -> dict[str, Any]:
     """Derive structured signals from matcher output + credential metadata."""
     today = today or date.today()
@@ -195,6 +196,7 @@ def extract_signals(
         "days_to_expiry": days_to_expiry,
         "days_since_completion": days_since_completion,
         "trusted_provider": trusted,
+        "hr_verified": bool(hr_verified),
         "violates_trust_policy": violates_policy,
         "policy_reasons": policy_reasons,
         "previously_accepted_count": accepted_count,
@@ -239,6 +241,14 @@ def _score_contributions(signals: dict[str, Any]) -> list[tuple[str, int]]:
 
     if signals.get("trusted_provider"):
         out.append(("Trusted provider", 10))
+
+    # HR has already verified that the underlying evidence is genuine for
+    # this credential at the current trust. That's a strong signal it
+    # should at least reach the review band — typically combined with
+    # other signals (match nature + validity) it tips a clear case to
+    # MEETS without HR having to manually confirm fit too.
+    if signals.get("hr_verified"):
+        out.append(("HR-verified evidence at this trust", 25))
 
     if signals.get("previously_accepted"):
         out.append(("Previously accepted at this trust", 30))
@@ -482,6 +492,7 @@ def build_decision_envelope(
     trust_stats: Optional[dict] = None,
     cross_trust_stats: Optional[dict] = None,
     today: Optional[date] = None,
+    hr_verified: bool = False,
 ) -> dict[str, Any]:
     """Full decision block to merge into compliance topic rows."""
     signals = extract_signals(
@@ -492,6 +503,7 @@ def build_decision_envelope(
         trust_name=trust_name,
         trust_stats=trust_stats,
         cross_trust_stats=cross_trust_stats,
+        hr_verified=hr_verified,
     )
     score, decision, confidence = evaluate_decision(signals)
     explanation = generate_explanation(signals, decision, score)

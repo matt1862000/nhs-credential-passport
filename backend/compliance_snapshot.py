@@ -242,6 +242,7 @@ def _topic_result_row(
                 trust_name=trust_name,
                 trust_stats=trust_stats,
                 cross_trust_stats=cross_stats,
+                hr_verified=(hr_st == "VERIFIED"),
             )
         )
     return row
@@ -476,6 +477,31 @@ def fit_review_wallet_items(
             }
         )
     return out
+
+
+def fit_review_pending_credential_ids(
+    doctor_user_id: int, trust_name: str
+) -> list[str]:
+    """Credential IDs that are HR-VERIFIED at this trust AND still have at least
+    one mandatory topic awaiting HR fit-review (post-verification portability
+    check). Used by the doctor's training wallet to show a "HR confirming fit"
+    chip next to "Verified by HR" while HR is still judging whether the
+    credential satisfies a trust requirement.
+    """
+    trust = (trust_name or "").strip()
+    if not trust:
+        return []
+    verified_map = db.doctor_verified_map(int(doctor_user_id))
+    verified_ids: set[str] = set()
+    for k, v in (verified_map or {}).items():
+        ent = v or {}
+        status = str(ent.get("status") or "").upper().strip()
+        if ent.get("shared") and status == "VERIFIED":
+            verified_ids.add(str(k))
+    if not verified_ids:
+        return []
+    fit_map = mandatory_needs_review_by_credential(int(doctor_user_id), trust)
+    return sorted(verified_ids & {str(k) for k in (fit_map or {}).keys()})
 
 
 def mandatory_needs_review_by_credential(doctor_user_id: int, trust_name: str) -> dict[str, list[dict]]:

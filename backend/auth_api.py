@@ -1571,6 +1571,26 @@ def me_verified_map(request: Request):
     return db.doctor_verified_map(uid)
 
 
+@router.get("/me/fit-review-pending-credentials")
+def me_fit_review_pending_credentials(request: Request):
+    """Credential IDs that are HR-verified but still pending HR fit-review
+    against one or more mandatory topics at the doctor's current trust.
+
+    The doctor's training wallet uses this to show a "HR confirming fit"
+    chip alongside "Verified by HR". The actual fit decision happens in the
+    HR session-detail Requirement fit review panel."""
+    uid = require_user_id(request)
+    u = db.user_get_by_id(uid)
+    if not u:
+        raise HTTPException(status_code=401, detail="Not signed in")
+    trust = (u.get("current_trust") or "").strip()
+    return {
+        "credential_ids": compliance_snapshot.fit_review_pending_credential_ids(
+            uid, trust
+        )
+    }
+
+
 @router.get("/me/getting-started-progress")
 def me_getting_started_progress(request: Request):
     """Checklist steps 4–5: only count actions the doctor took (not HR bulk issue)."""
