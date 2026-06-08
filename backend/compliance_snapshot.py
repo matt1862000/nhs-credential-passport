@@ -471,6 +471,7 @@ def fit_review_wallet_items(
         st = (ent.get("status") or "NOT_SHARED").upper()
         if st not in ("VERIFIED", "DECLINED", "PENDING"):
             st = "NOT_SHARED"
+        wallet_b64 = wallet_row.get("certificate_base64")
         out.append(
             {
                 "credential_id": cid_s,
@@ -478,7 +479,7 @@ def fit_review_wallet_items(
                 "expiry_date": wallet_row.get("expiry_date"),
                 "status": st,
                 "issuing_trust_name": wallet_row.get("issuing_trust_name"),
-                "certificate_base64": wallet_row.get("certificate_base64"),
+                "has_certificate": bool(wallet_b64 and str(wallet_b64).strip()),
                 "certificate_filename": wallet_row.get("certificate_filename"),
                 "mandatory_needs_review": topics,
                 "fit_review_only": True,

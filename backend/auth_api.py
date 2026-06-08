@@ -419,7 +419,7 @@ def _merge_hr_attested_wallet_items_into_training(q: dict, hr_trust: str) -> Non
                 "status": "VERIFIED",
                 "decision_at": row.get("attested_at"),
                 "decline_reason": None,
-                "certificate_base64": w.get("certificate_base64"),
+                "has_certificate": bool(w.get("certificate_base64") and str(w.get("certificate_base64")).strip()),
                 "certificate_filename": w.get("certificate_filename"),
                 "issuing_trust_name": issuer,
                 "verified_by_trust_name": row.get("verified_by_trust_name"),
@@ -3007,6 +3007,56 @@ async def hr_mandatory_fit_decision(request: Request, doctor_user_id: int):
         topic_name=topic_name,
     )
     return {"ok": True, "decision": saved}
+
+
+@router.get("/hr/doctors/{doctor_user_id}/credentials/{credential_id}/evidence")
+def hr_doctor_credential_evidence(
+    request: Request,
+    doctor_user_id: int,
+    credential_id: str,
+    session_id: Optional[int] = None,
+):
+    """On-demand evidence file for HR (PDF/image). List endpoints omit the blob."""
+    hr = require_premium_user(request)
+    trust = _hr_trust(hr)
+    cid = str(credential_id or "").strip()
+    if not cid:
+        raise HTTPException(status_code=400, detail="credential_id is required")
+
+    doc = db.user_get_by_id(int(doctor_user_id))
+    if not doc:
+        raise HTTPException(status_code=404, detail="Doctor not found")
+
+    if trust:
+        doc_trust = (doc.get("current_trust") or "").strip().lower()
+        if doc_trust != trust.strip().lower():
+            with __import__("sqlite3").connect(db.DB_PATH) as conn:
+                if not db._doctor_visible_to_trust(int(doctor_user_id), trust, conn):
+                    raise HTTPException(
+                        status_code=403,
+                        detail="This doctor has not permitted your trust to view their records.",
+                    )
+
+    ev: Optional[dict] = None
+    if session_id is not None and int(session_id) > 0:
+        s = db.share_session_get(int(session_id))
+        if not s:
+            raise HTTPException(status_code=404, detail="Share not found")
+        if int(s.get("doctor_user_id") or 0) != int(doctor_user_id):
+            raise HTTPException(status_code=403, detail="Credential does not belong to this doctor.")
+        if trust:
+            _assert_same_trust(hr, s)
+        ev = db.share_item_evidence_get(int(session_id), cid)
+        if not ev:
+            ev = db.share_session_first_evidence(int(session_id))
+
+    if not ev:
+        ev = db.share_doctor_credential_evidence(int(doctor_user_id), cid, hr_trust=trust)
+    if not ev:
+        ev = db.doctor_wallet_evidence_get(int(doctor_user_id), cid)
+    if not ev or not ev.get("certificate_base64"):
+        raise HTTPException(status_code=404, detail="No evidence file for this record.")
+    return ev
 
 
 @router.get("/hr/shares/{session_id}")

@@ -1329,34 +1329,38 @@
         return 'image/jpeg';
       }
 
+      function itemHasCertificate(it) {
+        if (!it) return false;
+        if (it.has_certificate) return true;
+        return !!(it.certificate_base64 && String(it.certificate_base64).trim());
+      }
+
       function resolveHrEvidenceItem(payload, cid, sid) {
         var items = (payload && payload.items) || [];
         var base = items.find(function (x) { return String(x.credential_id) === String(cid); }) || null;
-        if (base && base.certificate_base64 && String(base.certificate_base64).trim()) {
-          return base;
-        }
+        if (base && itemHasCertificate(base)) return base;
         if (sid) {
           var sameSession = items.find(function (x) {
-            return String(x.session_id) === String(sid) &&
-              x.certificate_base64 &&
-              String(x.certificate_base64).trim();
+            return String(x.session_id) === String(sid) && itemHasCertificate(x);
           });
           if (sameSession) {
             return Object.assign({}, base || {}, {
               module_name: (base && base.module_name) || sameSession.module_name,
-              certificate_base64: sameSession.certificate_base64,
+              has_certificate: true,
               certificate_filename: sameSession.certificate_filename || 'evidence',
+              session_id: sameSession.session_id,
             });
           }
         }
         var any = items.find(function (x) {
-          return x.certificate_base64 && String(x.certificate_base64).trim();
+          return itemHasCertificate(x);
         });
         if (any) {
           return Object.assign({}, base || {}, {
             module_name: (base && base.module_name) || any.module_name,
-            certificate_base64: any.certificate_base64,
+            has_certificate: true,
             certificate_filename: any.certificate_filename || 'evidence',
+            session_id: any.session_id,
           });
         }
         return base;
@@ -1366,7 +1370,20 @@
         if (!it) return false;
         var sidVal = sid != null && sid !== '' ? String(sid) : (it.session_id != null ? String(it.session_id) : '');
         var resolved = resolveHrEvidenceItem(payload, it.credential_id, sidVal);
-        return !!(resolved && resolved.certificate_base64 && String(resolved.certificate_base64).trim());
+        return itemHasCertificate(resolved);
+      }
+
+      async function fetchHrCredentialEvidence(doctorUserId, credentialId, sessionId) {
+        var url =
+          '/api/hr/doctors/' +
+          encodeURIComponent(String(doctorUserId)) +
+          '/credentials/' +
+          encodeURIComponent(String(credentialId)) +
+          '/evidence';
+        if (sessionId != null && sessionId !== '' && Number(sessionId) > 0) {
+          url += '?session_id=' + encodeURIComponent(String(sessionId));
+        }
+        return await apiJson(url);
       }
 
       function moduleEvidenceLinkHtml(it, sid, payload) {
@@ -1512,19 +1529,42 @@
         return true;
       }
 
-      function openHrCertModal(it) {
+      async function openHrCertModal(it, opts) {
+        opts = opts || {};
         var modal = document.getElementById('hrCertModal');
         var title = document.getElementById('hrCertModalTitle');
         var body = document.getElementById('hrCertModalBody');
-        if (!modal || !body || !it || !it.certificate_base64) return;
+        if (!modal || !body || !it) return;
+        if (!itemHasCertificate(it) && !(it.certificate_base64 && String(it.certificate_base64).trim())) return;
         var name = (it.module_name || it.credential_id || 'Evidence').trim();
         if (title) title.textContent = name;
-        var fn = String(it.certificate_filename || 'evidence');
-        var mime = evidenceMimeFromBytes(new Uint8Array(0), fn);
         modal.hidden = false;
-        if (!renderHrCertificatePreview(body, it.certificate_base64, mime, fn)) {
+        var b64 = it.certificate_base64;
+        var fn = String(it.certificate_filename || 'evidence');
+        if (!b64 || !String(b64).trim()) {
+          body.innerHTML = '<p class="hr-muted" aria-live="polite">Loading evidence…</p>';
+          var doctorId = opts.doctorUserId;
+          if (doctorId == null && lastSessionPayload) doctorId = lastSessionPayload.doctor_user_id;
+          if (doctorId == null) {
+            modal.hidden = true;
+            alert('Cannot load evidence for this record.');
+            return;
+          }
+          try {
+            var ev = await fetchHrCredentialEvidence(doctorId, it.credential_id, opts.sessionId);
+            b64 = ev.certificate_base64;
+            fn = String(ev.certificate_filename || fn);
+            it.certificate_base64 = b64;
+            it.certificate_filename = fn;
+          } catch (err) {
+            modal.hidden = true;
+            alert(err.message || err);
+            return;
+          }
+        }
+        var mime = evidenceMimeFromBytes(new Uint8Array(0), fn);
+        if (!renderHrCertificatePreview(body, b64, mime, fn)) {
           modal.hidden = true;
-          return;
         }
       }
 
@@ -1888,7 +1928,12 @@
             var cid = viewCert.getAttribute('data-cid');
             var sid = viewCert.getAttribute('data-sid');
             var it = resolveHrEvidenceItem(lastSessionPayload, cid, sid);
-            if (it && it.certificate_base64) openHrCertModal(it);
+            if (it && itemHasCertificate(it)) {
+              void openHrCertModal(it, {
+                sessionId: sid,
+                doctorUserId: lastSessionPayload && lastSessionPayload.doctor_user_id,
+              });
+            }
             return;
           }
           if (_hrSessionActionInFlight) return;
@@ -2769,7 +2814,9 @@
             e.preventDefault();
             var cid = btn.getAttribute('data-view-docs-cid');
             var it = searchDoctorItemsCache.find(function (x) { return String(x.credential_id) === String(cid); });
-            if (it && it.certificate_base64) openHrCertModal(it);
+            if (it && itemHasCertificate(it)) {
+              void openHrCertModal(it, { doctorUserId: searchDoctorViewId });
+            }
           });
         }
 
@@ -3210,7 +3257,7 @@
             if (tbody) {
               tbody.innerHTML = items.map(function (it) {
                 var namePlain = esc(it.module_name || it.credential_id || '—');
-                var nameCell = it.certificate_base64
+                var nameCell = itemHasCertificate(it)
                   ? ('<a href="#" class="hr-module-name-btn" data-view-docs-cid="' +
                     esc(String(it.credential_id || '')) +
                     '" title="View evidence for this record">' +
@@ -3220,7 +3267,7 @@
                 var expiry = it.expiry_date ? esc(String(it.expiry_date).slice(0, 10)) : '—';
                 var issuer = it.issuing_trust_name ? '<div style="font-size:0.8125rem;color:var(--nhsuk-secondary-text);">Issuing: ' + esc(it.issuing_trust_name) + '</div>' : '';
                 var verifiedAt = it.verified_by_trust_name ? '<div style="font-size:0.8125rem;color:var(--nhsuk-secondary-text);">HR verified at: ' + esc(it.verified_by_trust_name) + '</div>' : '';
-                var evCell = it.certificate_base64
+                var evCell = itemHasCertificate(it)
                   ? ('<button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" data-view-docs-cid="' +
                     esc(String(it.credential_id || '')) + '">View</button>')
                   : '—';

@@ -2546,6 +2546,37 @@ def cohort_members_pending_verification(cohort_id: int, hr_trust: str) -> list[d
     ]
 
 
+def _share_item_has_certificate(b64: Optional[str]) -> bool:
+    return bool(b64 and str(b64).strip())
+
+
+def _share_item_list_dict(r: sqlite3.Row, *, extra: Optional[dict] = None) -> dict:
+    """Share item for HR list/table APIs — metadata only, no certificate blob."""
+    has_cert = bool(int(r["has_certificate"] or 0))
+    out = {
+        "credential_id": r["credential_id"],
+        "module_name": r["module_name"],
+        "expiry_date": r["expiry_date"],
+        "status": r["status"],
+        "decision_at": r["decision_at"],
+        "decline_reason": r["decline_reason"],
+        "has_certificate": has_cert,
+        "certificate_filename": r["certificate_filename"],
+        "issuing_trust_name": r["issuing_trust_name"],
+        "verified_by_trust_name": r["verified_by_trust_name"],
+        "is_resubmission": bool(r["is_resubmission"]),
+    }
+    if extra:
+        out.update(extra)
+    return out
+
+
+_SHARE_ITEM_HAS_CERT_SQL = (
+    "CASE WHEN i.certificate_base64 IS NOT NULL "
+    "AND length(trim(i.certificate_base64)) > 0 THEN 1 ELSE 0 END as has_certificate"
+)
+
+
 def share_doctor_queue(doctor_user_id: int, hr_trust: Optional[str] = None) -> Optional[dict]:
     """All share items across every session for one doctor (for merged HR review)."""
     with sqlite3.connect(DB_PATH) as conn:
@@ -2575,9 +2606,10 @@ def share_doctor_queue(doctor_user_id: int, hr_trust: Optional[str] = None) -> O
               s.created_at as session_created_at,
               IFNULL(s.share_kind, 'review') as session_share_kind,
               i.credential_id, i.module_name, i.expiry_date, i.status, i.decision_at,
-              i.decline_reason, i.certificate_base64, i.certificate_filename,
+              i.decline_reason, i.certificate_filename,
               i.issuing_trust_name, i.verified_by_trust_name,
-              IFNULL(i.is_resubmission, 0) as is_resubmission
+              IFNULL(i.is_resubmission, 0) as is_resubmission,
+              """ + _SHARE_ITEM_HAS_CERT_SQL + """
             FROM share_sessions s
             JOIN share_items i ON i.session_id = s.id
             WHERE s.doctor_user_id = ?
@@ -2586,22 +2618,14 @@ def share_doctor_queue(doctor_user_id: int, hr_trust: Optional[str] = None) -> O
             (int(doctor_user_id),),
         ).fetchall()
     items = [
-        {
-            "session_id": int(r["session_id"]),
-            "session_created_at": r["session_created_at"],
-            "session_share_kind": str(r["session_share_kind"] or "review"),
-            "credential_id": r["credential_id"],
-            "module_name": r["module_name"],
-            "expiry_date": r["expiry_date"],
-            "status": r["status"],
-            "decision_at": r["decision_at"],
-            "decline_reason": r["decline_reason"],
-            "certificate_base64": r["certificate_base64"],
-            "certificate_filename": r["certificate_filename"],
-            "issuing_trust_name": r["issuing_trust_name"],
-            "verified_by_trust_name": r["verified_by_trust_name"],
-            "is_resubmission": bool(r["is_resubmission"]),
-        }
+        _share_item_list_dict(
+            r,
+            extra={
+                "session_id": int(r["session_id"]),
+                "session_created_at": r["session_created_at"],
+                "session_share_kind": str(r["session_share_kind"] or "review"),
+            },
+        )
         for r in rows
     ]
     session_ids = sorted({int(r["session_id"]) for r in rows}, reverse=True)
@@ -2636,12 +2660,13 @@ def share_session_get(session_id: int) -> Optional[dict]:
         if not s:
             return None
         items = conn.execute(
-            """
+            f"""
             SELECT credential_id, module_name, expiry_date, status, decision_at, decision_by_user_id, decline_reason,
-                   certificate_base64, certificate_filename,
+                   certificate_filename,
                    issuing_trust_name, verified_by_trust_name,
-                   IFNULL(is_resubmission, 0) as is_resubmission
-            FROM share_items
+                   IFNULL(is_resubmission, 0) as is_resubmission,
+                   {_SHARE_ITEM_HAS_CERT_SQL}
+            FROM share_items i
             WHERE session_id = ?
             ORDER BY credential_id
             """,
@@ -2661,22 +2686,143 @@ def share_session_get(session_id: int) -> Optional[dict]:
         "share_kind": str(s["share_kind"] or "review"),
         "items": [
             {
-                "credential_id": r["credential_id"],
-                "module_name": r["module_name"],
-                "expiry_date": r["expiry_date"],
-                "status": r["status"],
-                "decision_at": r["decision_at"],
+                **_share_item_list_dict(r),
                 "decision_by_user_id": r["decision_by_user_id"],
-                "decline_reason": r["decline_reason"],
-                "certificate_base64": r["certificate_base64"],
-                "certificate_filename": r["certificate_filename"],
-                "issuing_trust_name": r["issuing_trust_name"],
-                "verified_by_trust_name": r["verified_by_trust_name"],
-                "is_resubmission": bool(r["is_resubmission"]),
             }
             for r in items
         ],
     }
+
+
+def share_item_evidence_get(session_id: int, credential_id: str) -> Optional[dict]:
+    """Uploaded evidence for one share item (on-demand fetch)."""
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_share_tables(conn)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            """
+            SELECT credential_id, module_name, certificate_base64, certificate_filename
+            FROM share_items
+            WHERE session_id = ? AND credential_id = ?
+            """,
+            (int(session_id), str(credential_id)),
+        ).fetchone()
+    if not row or not _share_item_has_certificate(row["certificate_base64"]):
+        return None
+    return {
+        "credential_id": row["credential_id"],
+        "module_name": row["module_name"],
+        "certificate_base64": row["certificate_base64"],
+        "certificate_filename": row["certificate_filename"],
+    }
+
+
+def share_session_first_evidence(session_id: int) -> Optional[dict]:
+    """First evidence file in a share session (CSV import batches share one file)."""
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_share_tables(conn)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            """
+            SELECT credential_id, module_name, certificate_base64, certificate_filename
+            FROM share_items
+            WHERE session_id = ?
+              AND certificate_base64 IS NOT NULL
+              AND length(trim(certificate_base64)) > 0
+            ORDER BY credential_id
+            LIMIT 1
+            """,
+            (int(session_id),),
+        ).fetchone()
+    if not row:
+        return None
+    return {
+        "credential_id": row["credential_id"],
+        "module_name": row["module_name"],
+        "certificate_base64": row["certificate_base64"],
+        "certificate_filename": row["certificate_filename"],
+    }
+
+
+def share_doctor_credential_evidence(
+    doctor_user_id: int,
+    credential_id: str,
+    *,
+    hr_trust: Optional[str] = None,
+) -> Optional[dict]:
+    """Evidence for a credential from any share session for this doctor."""
+    trust_filter = (hr_trust or "").strip().lower()
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_share_tables(conn)
+        conn.row_factory = sqlite3.Row
+        if trust_filter:
+            row = conn.execute(
+                """
+                SELECT i.credential_id, i.module_name, i.certificate_base64, i.certificate_filename
+                FROM share_items i
+                JOIN share_sessions s ON s.id = i.session_id
+                WHERE s.doctor_user_id = ?
+                  AND i.credential_id = ?
+                  AND LOWER(TRIM(COALESCE(s.target_trust, ''))) = ?
+                  AND i.certificate_base64 IS NOT NULL
+                  AND length(trim(i.certificate_base64)) > 0
+                ORDER BY s.id DESC
+                LIMIT 1
+                """,
+                (int(doctor_user_id), str(credential_id), trust_filter),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                """
+                SELECT i.credential_id, i.module_name, i.certificate_base64, i.certificate_filename
+                FROM share_items i
+                JOIN share_sessions s ON s.id = i.session_id
+                WHERE s.doctor_user_id = ?
+                  AND i.credential_id = ?
+                  AND i.certificate_base64 IS NOT NULL
+                  AND length(trim(i.certificate_base64)) > 0
+                ORDER BY s.id DESC
+                LIMIT 1
+                """,
+                (int(doctor_user_id), str(credential_id)),
+            ).fetchone()
+    if not row:
+        return None
+    return {
+        "credential_id": row["credential_id"],
+        "module_name": row["module_name"],
+        "certificate_base64": row["certificate_base64"],
+        "certificate_filename": row["certificate_filename"],
+    }
+
+
+def doctor_wallet_evidence_get(doctor_user_id: int, credential_id: str) -> Optional[dict]:
+    """Evidence from the doctor's wallet when not present on a share item."""
+    import json as _json
+
+    raw = user_wallet_get(int(doctor_user_id))
+    try:
+        wallet = _json.loads(raw or "[]")
+    except Exception:
+        return None
+    if not isinstance(wallet, list):
+        return None
+    for c in wallet:
+        if not isinstance(c, dict):
+            continue
+        if str(c.get("credential_id") or "") != str(credential_id):
+            continue
+        b64 = c.get("certificate_base64")
+        if not _share_item_has_certificate(b64):
+            return None
+        return {
+            "credential_id": str(credential_id),
+            "module_name": c.get("module_name"),
+            "certificate_base64": b64,
+            "certificate_filename": c.get("certificate_filename"),
+        }
+    return None
+
 
 def share_item_set_decision(
     session_id: int,
