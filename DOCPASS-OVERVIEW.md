@@ -529,6 +529,23 @@ Production env file `/var/lib/docpass/docpass.env` includes `BASE_URL`, `SESSION
 
 Caddy config lives on the VM at `/etc/caddy/Caddyfile` (not in git).
 
+**Daily HR jobs cron (digests + expiry reminders).** Runs `deploy/send-hr-jobs.sh`,
+which POSTs to `/api/internal/cron/hr-jobs`. Two gotchas that previously caused
+the job to silently never run:
+
+- **Log path must be writable by the cron user.** `/var/log` is root-owned, so
+  pre-create the file once:
+  ```bash
+  sudo touch /var/log/docpass-hr-jobs.log && sudo chown "$USER" /var/log/docpass-hr-jobs.log
+  ```
+- **`CRON_SECRET` must reach the script.** Keep it in `/var/lib/docpass/cron.env`;
+  the script auto-exports that file, so the `export` keyword is optional. Crontab:
+  ```bash
+  0 7 * * * /var/lib/docpass/send-hr-jobs.sh >> /var/log/docpass-hr-jobs.log 2>&1
+  ```
+  Verify manually: `/var/lib/docpass/send-hr-jobs.sh` should print a JSON result
+  with `"digest_emails_sent"`. Digests only send when a trust has pending work.
+
 ### What is NOT in Git (backup separately if needed)
 
 | Path | Contents |
