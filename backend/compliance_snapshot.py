@@ -446,6 +446,8 @@ def fit_review_wallet_items(
     existing_credential_ids: set[str],
 ) -> list[dict]:
     """Share-style rows for wallet credentials needing fit review but absent from the inbox queue."""
+    if not fit_map:
+        return []
     wallet = _parse_wallet(db.user_wallet_get(int(doctor_user_id)))
     verified_map = db.doctor_verified_map(int(doctor_user_id))
     out: list[dict] = []
@@ -511,7 +513,20 @@ def fit_review_pending_credential_ids(
 
 
 def mandatory_needs_review_by_credential(doctor_user_id: int, trust_name: str) -> dict[str, list[dict]]:
-    """Map credential_id → mandatory topics where requirement fit is uncertain (partial/semantic)."""
+    """Map credential_id → mandatory topics where requirement fit is uncertain (partial/semantic).
+
+    Cheap preconditions short-circuit before the expensive compliance snapshot
+    (decision engine + semantic embedding calls) when there is structurally
+    nothing to fit-review: no trust to check against, or the doctor has no
+    live (non-revoked) wallet credentials to match. This is what keeps the HR
+    inbox and per-doctor queue fast — fit review only runs when there is
+    actually something to review.
+    """
+    if not (trust_name or "").strip():
+        return {}
+    wallet = _parse_wallet(db.user_wallet_get(int(doctor_user_id)))
+    if not any(isinstance(c, dict) and not c.get("revoked") for c in wallet):
+        return {}
     snap = doctor_compliance_snapshot(
         int(doctor_user_id), trust_name, include_decision_envelope=True
     )

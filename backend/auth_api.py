@@ -1721,8 +1721,37 @@ def _assert_same_trust(hr_user: dict, session: dict) -> None:
         raise HTTPException(status_code=403, detail="This submission is not from your trust.")
 
 
-def _enrich_hr_share_payload(payload: dict, hr_trust: Optional[str]) -> dict:
-    """Attach mandatory requirement-fit flags for partial matches (Needs review)."""
+def _empty_fit_enrichment(payload: dict) -> dict:
+    """Return the share payload with empty requirement-fit fields attached.
+
+    Used for the fast first paint: the records table can render immediately
+    while the (expensive) fit computation is fetched separately.
+    """
+    out = dict(payload)
+    out["items"] = [
+        {**it, "mandatory_needs_review": []} for it in (payload.get("items") or [])
+    ]
+    out["mandatory_needs_review_summary"] = {
+        "credential_count": 0,
+        "topic_count": 0,
+        "topics": [],
+    }
+    out["mandatory_fit_decisions"] = []
+    out["fit_pending"] = True
+    return out
+
+
+def _enrich_hr_share_payload(
+    payload: dict, hr_trust: Optional[str], *, include_fit: bool = True
+) -> dict:
+    """Attach mandatory requirement-fit flags for partial matches (Needs review).
+
+    When ``include_fit`` is False, skip the expensive compliance snapshot and
+    return the payload with empty fit fields so the table can paint fast; the
+    client then fetches the fit data separately.
+    """
+    if not include_fit:
+        return _empty_fit_enrichment(payload)
     uid = payload.get("doctor_user_id")
     if not uid:
         return payload
@@ -1759,6 +1788,7 @@ def _enrich_hr_share_payload(payload: dict, hr_trust: Optional[str]) -> dict:
         "topics": topics,
     }
     out["mandatory_fit_decisions"] = _decided_fit_reviews_for_doctor(int(uid), trust, items)
+    out["fit_pending"] = False
     return out
 
 
@@ -2887,13 +2917,17 @@ async def hr_bulk_training(
 
 
 @router.get("/hr/doctors/{doctor_user_id}/queue")
-def hr_doctor_queue(request: Request, doctor_user_id: int):
-    """Merged inbox for one doctor (all share sessions combined)."""
+def hr_doctor_queue(request: Request, doctor_user_id: int, include_fit: bool = True):
+    """Merged inbox for one doctor (all share sessions combined).
+
+    Pass ``include_fit=false`` for a fast first paint (records only); the client
+    then re-fetches with fit enabled to fill in requirement-fit review.
+    """
     hr = require_premium_user(request)
     q = db.share_doctor_queue(int(doctor_user_id), hr_trust=_hr_trust(hr))
     if not q:
         raise HTTPException(status_code=404, detail="Doctor not found")
-    return _enrich_hr_share_payload(q, _hr_trust(hr))
+    return _enrich_hr_share_payload(q, _hr_trust(hr), include_fit=include_fit)
 
 
 @router.post("/hr/doctors/{doctor_user_id}/mandatory-fit-decisions")
@@ -2976,13 +3010,13 @@ async def hr_mandatory_fit_decision(request: Request, doctor_user_id: int):
 
 
 @router.get("/hr/shares/{session_id}")
-def hr_shares_get(request: Request, session_id: int):
+def hr_shares_get(request: Request, session_id: int, include_fit: bool = True):
     hr = require_premium_user(request)
     s = db.share_session_get(int(session_id))
     if not s:
         raise HTTPException(status_code=404, detail="Share not found")
     _assert_same_trust(hr, s)
-    return _enrich_hr_share_payload(s, _hr_trust(hr))
+    return _enrich_hr_share_payload(s, _hr_trust(hr), include_fit=include_fit)
 
 
 @router.post("/hr/shares/{session_id}/items/{credential_id}/verify")

@@ -924,6 +924,7 @@
       var lastInboxGroups = [];
       var lastSessionPayload = null;
       var lastItemsFixedSessionId = null;
+      var _sessionLoadSeq = 0;
       var HR_POLL_MS = 15000;
       var _hrSessionPollTimer = null;
       var _hrSessionPollInFlight = false;
@@ -1833,10 +1834,47 @@
         var titleEl = document.getElementById('sessionViewTitle');
         if (titleEl) titleEl.textContent = 'E-learning from this doctor';
         tbody.innerHTML = '<tr><td colspan="5" class="hr-muted">Loading…</td></tr>';
-        lastSessionPayload = await apiJson('/api/hr/doctors/' + encodeURIComponent(String(doctorUserId)) + '/queue');
+        var base = '/api/hr/doctors/' + encodeURIComponent(String(doctorUserId)) + '/queue';
+        var seq = ++_sessionLoadSeq;
+        // Phase 1 — fast paint: the records table without requirement-fit review.
+        lastSessionPayload = await apiJson(base + '?include_fit=false');
+        if (seq !== _sessionLoadSeq) return;
         renderItemsTable(lastSessionPayload, null);
         attachItemsRowHandler(null);
-        startSessionViewPoll(null);
+        markFitSectionsPending();
+        // Phase 2 — fill in requirement-fit review once it has been computed.
+        void loadFitReview(base, null, seq);
+      }
+
+      function markFitSectionsPending() {
+        if (itemsTab !== 'new') return;
+        var section = document.getElementById('mandatoryFitSection');
+        var body = document.getElementById('mandatoryFitSectionBody');
+        if (!section || !body) return;
+        section.hidden = false;
+        body.innerHTML =
+          '<p class="hr-muted" aria-live="polite">Checking which records satisfy trust requirements…</p>';
+      }
+
+      async function loadFitReview(baseUrl, fixedSessionId, seq) {
+        var sep = baseUrl.indexOf('?') >= 0 ? '&' : '?';
+        try {
+          var full = await apiJson(baseUrl + sep + 'include_fit=true');
+          // Drop stale responses (user opened another doctor/session since).
+          if (seq !== _sessionLoadSeq) return;
+          var sv = document.getElementById('sessionView');
+          if (!sv || sv.hidden) return;
+          lastSessionPayload = full;
+          renderItemsTable(full, fixedSessionId);
+        } catch (e) {
+          console.warn('Requirement-fit review load failed', e);
+          if (seq === _sessionLoadSeq) {
+            // Leave the table as-is; just clear the "checking…" placeholder.
+            renderMandatoryFitSection(lastSessionPayload);
+          }
+        } finally {
+          if (seq === _sessionLoadSeq) startSessionViewPoll(fixedSessionId);
+        }
       }
 
       function attachItemsRowHandler(fixedSessionId) {
@@ -2010,7 +2048,11 @@
         var titleEl = document.getElementById('sessionViewTitle');
         if (titleEl) titleEl.textContent = 'Evidence verification';
         tbody.innerHTML = '<tr><td colspan="5" class="hr-muted">Loading…</td></tr>';
-        lastSessionPayload = await apiJson('/api/hr/shares/' + encodeURIComponent(String(sessionId)));
+        var base = '/api/hr/shares/' + encodeURIComponent(String(sessionId));
+        var seq = ++_sessionLoadSeq;
+        // Phase 1 — fast paint: the records table without requirement-fit review.
+        lastSessionPayload = await apiJson(base + '?include_fit=false');
+        if (seq !== _sessionLoadSeq) return;
         if (titleEl) {
           titleEl.textContent =
             String(lastSessionPayload.share_kind || '').toLowerCase() === 'portfolio'
@@ -2019,7 +2061,9 @@
         }
         renderItemsTable(lastSessionPayload, sessionId);
         attachItemsRowHandler(sessionId);
-        startSessionViewPoll(sessionId);
+        markFitSectionsPending();
+        // Phase 2 — fill in requirement-fit review once it has been computed.
+        void loadFitReview(base, sessionId, seq);
       }
 
       (async function boot() {
