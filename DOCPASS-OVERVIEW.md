@@ -530,21 +530,27 @@ Production env file `/var/lib/docpass/docpass.env` includes `BASE_URL`, `SESSION
 Caddy config lives on the VM at `/etc/caddy/Caddyfile` (not in git).
 
 **Daily HR jobs cron (digests + expiry reminders).** Runs `deploy/send-hr-jobs.sh`,
-which POSTs to `/api/internal/cron/hr-jobs`. Two gotchas that previously caused
-the job to silently never run:
+which POSTs to `/api/internal/cron/hr-jobs`. The VM system clock is **UTC**; use
+`CRON_TZ=Europe/London` so 07:00 means 7am UK time (BST/GMT handled automatically).
 
-- **Log path must be writable by the cron user.** `/var/log` is root-owned, so
-  pre-create the file once:
+Gotchas that previously caused the job to silently never run:
+
+- **Log path must exist and be writable by the cron user before the first run.**
+  `/var/log` is root-owned; if the log file is missing, cron fails the redirect and
+  discards output (`No MTA installed, discarding output` in syslog). Pre-create once:
   ```bash
-  sudo touch /var/log/docpass-hr-jobs.log && sudo chown "$USER" /var/log/docpass-hr-jobs.log
+  sudo touch /var/log/docpass-hr-jobs.log && sudo chown ubuntu:ubuntu /var/log/docpass-hr-jobs.log
   ```
 - **`CRON_SECRET` must reach the script.** Keep it in `/var/lib/docpass/cron.env`;
-  the script auto-exports that file, so the `export` keyword is optional. Crontab:
+  `send-hr-jobs.sh` auto-exports that file (the `export` keyword is optional).
+- **Crontab** (do not source `cron.env` in crontab — the script handles it):
   ```bash
+  CRON_TZ=Europe/London
   0 7 * * * /var/lib/docpass/send-hr-jobs.sh >> /var/log/docpass-hr-jobs.log 2>&1
   ```
-  Verify manually: `/var/lib/docpass/send-hr-jobs.sh` should print a JSON result
-  with `"digest_emails_sent"`. Digests only send when a trust has pending work.
+  Verify manually: `/var/lib/docpass/send-hr-jobs.sh` should print JSON with
+  `"digest_emails_sent"`. Digests only send when a trust has pending work.
+  Check syslog/history: `sudo grep send-hr-jobs /var/log/syslog | tail`
 
 ### What is NOT in Git (backup separately if needed)
 

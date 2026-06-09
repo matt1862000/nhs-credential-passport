@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Daily HR jobs: email digests + automatic training expiry in-app reminders.
 #
-# Install on Oracle VM, e.g. cron at 07:00 (server TZ):
+# Install on Oracle VM (system clock is UTC — use CRON_TZ for UK local time):
+#   CRON_TZ=Europe/London
 #   0 7 * * * /var/lib/docpass/send-hr-jobs.sh >> /var/log/docpass-hr-jobs.log 2>&1
 #
 # CRON_SECRET resolution order:
