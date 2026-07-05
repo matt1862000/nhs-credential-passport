@@ -2,7 +2,7 @@
 
 > **Purpose of this document:** Single reference for Copilot, stakeholders, or new contributors.  
 > **Last updated:** May 2026 (decision engine v1.8.1 — strict separation of evidence verification from requirement-fit confirmation; HR fit-review now drives inbox classification, dashboard badge, doctor wallet chip, doctor alerts, and an HR-only "How this was assessed" audit panel; session detail always opens on Awaiting decision with a Decided fit-reviews history section under Decided)  
-> **Live demo:** https://docpass.co.uk (Oracle Cloud VM — Docker + Caddy)  
+> **Live demo:** https://docpass.co.uk (self-hosted Raspberry Pi — Docker + Caddy)  
 > **Source repo:** https://github.com/matt1862000/nhs-credential-passport.git
 
 ---
@@ -421,21 +421,29 @@ Each pack includes `mandatory_examples` with labels, categories, match hints, an
 | Auth | Session cookies (httponly, secure, SameSite=Lax), bcrypt passwords |
 | Credentials | RS256 JWT, did:web public key, ReportLab PDF + QR |
 | Frontend | Vanilla HTML/CSS/JS (no React) |
-| Production | **Oracle Cloud VM only** — Docker + **Caddy** reverse proxy (TLS, security headers). Render is **not** used. |
+| Production | **Self-hosted Raspberry Pi** — Docker + **Caddy** reverse proxy (TLS, security headers). Render is **not** used. |
 | Email | SMTP (Resend) — optional; HR notifications only |
 
-### Production infrastructure (Oracle — sole production host)
+### Production infrastructure (Raspberry Pi — sole production host)
 
 | Component | Detail |
 |-----------|--------|
-| **Host** | Oracle Always Free VM (Ubuntu 24.04, UK London) |
-| **Public IP** | `132.145.43.9` |
-| **Domain** | `docpass.co.uk` (123 Reg DNS A record) |
+| **Host** | Raspberry Pi (64-bit Raspberry Pi OS or Ubuntu Server, UK) |
+| **Domain** | `docpass.co.uk` (123 Reg DNS A record → home/public IP) |
 | **App container** | `docpass` — uvicorn on `127.0.0.1:8000` |
 | **Reverse proxy** | Caddy — `/etc/caddy/Caddyfile` |
 | **Persistent data** | `/var/lib/docpass/data/credentials.db` |
 | **Signing keys** | `/var/lib/docpass/keys/` (JWT signing + GCP service account for embeddings) |
-| **Daily HR digest cron** | `/var/lib/docpass/send-hr-digest.sh` (optional) |
+| **Daily HR digest cron** | `/var/lib/docpass/send-hr-jobs.sh` (via `deploy/send-hr-jobs.sh`) |
+
+**Raspberry Pi notes (migrated from Oracle Cloud, July 2026):**
+
+- **DNS** — point `docpass.co.uk` A record at the Pi’s public IP; use dynamic DNS if the home IP changes.
+- **Router** — forward TCP **80** and **443** to the Pi so Caddy can obtain and renew Let’s Encrypt certificates.
+- **Data migration** — copy `/var/lib/docpass/data`, `/var/lib/docpass/keys`, and env files (`docpass.env`, `cron.env`) from the old Oracle VM before decommissioning it.
+- **Docker** — `python:3.11-slim` publishes **arm64** images; `docker build` on the Pi produces a native image (no cross-compile needed).
+- **Resources** — SQLite + FastAPI are light, but enable **swap** on smaller Pi models if builds or embedding backfills run out of memory.
+- **Cron** — reinstall `send-hr-jobs.sh` and `backup.sh` crontab entries on the Pi; confirm `CRON_SECRET` and log-file ownership (see below).
 
 ### Security (pilot hardening)
 
@@ -497,7 +505,7 @@ Each pack includes `mandatory_examples` with labels, categories, match hints, an
 
 See `deploy/email.env.example` for a template.
 
-**GCP setup for semantic matching:** enable **Gemini API** (Generative Language API) on the GCP project; service account needs access with scope `generative-language.retriever`. Credentials file on VM: `/var/lib/docpass/keys/gcp-embeddings.json` (mode `600`, owned by container user `1000:1000`).
+**GCP setup for semantic matching:** enable **Gemini API** (Generative Language API) on the GCP project; service account needs access with scope `generative-language.retriever`. Credentials file on host: `/var/lib/docpass/keys/gcp-embeddings.json` (mode `600`, owned by container user `1000:1000`).
 
 ### Repository & deployment
 
@@ -512,7 +520,7 @@ See `deploy/email.env.example` for a template.
   ```
 - Open: http://localhost:8000/static/dashboard/
 
-**Production deploy (Oracle SSH):**
+**Production deploy (SSH to Pi):**
 ```bash
 cd ~/docpass/app && git pull origin main
 sudo docker build -t docpass .
@@ -527,10 +535,10 @@ sudo docker run -d --name docpass --restart unless-stopped \
 
 Production env file `/var/lib/docpass/docpass.env` includes `BASE_URL`, `SESSION_SECRET`, SMTP settings, `HR_EMAIL_OVERRIDE`, `CRON_SECRET`, `HR_EXPIRY_REMINDERS_ENABLED`, etc.
 
-Caddy config lives on the VM at `/etc/caddy/Caddyfile` (not in git).
+Caddy config lives on the Pi at `/etc/caddy/Caddyfile` (not in git).
 
 **Daily HR jobs cron (digests + expiry reminders).** Runs `deploy/send-hr-jobs.sh`,
-which POSTs to `/api/internal/cron/hr-jobs`. The VM system clock is **UTC**; use
+which POSTs to `/api/internal/cron/hr-jobs`. The host system clock is **UTC**; use
 `CRON_TZ=Europe/London` so 07:00 means 7am UK time (BST/GMT handled automatically).
 
 Gotchas that previously caused the job to silently never run:
@@ -539,7 +547,7 @@ Gotchas that previously caused the job to silently never run:
   `/var/log` is root-owned; if the log file is missing, cron fails the redirect and
   discards output (`No MTA installed, discarding output` in syslog). Pre-create once:
   ```bash
-  sudo touch /var/log/docpass-hr-jobs.log && sudo chown ubuntu:ubuntu /var/log/docpass-hr-jobs.log
+  sudo touch /var/log/docpass-hr-jobs.log && sudo chown "$USER" /var/log/docpass-hr-jobs.log
   ```
 - **`CRON_SECRET` must reach the script.** Keep it in `/var/lib/docpass/cron.env`;
   `send-hr-jobs.sh` auto-exports that file (the `export` keyword is optional).
@@ -718,7 +726,7 @@ DocPass demonstrates ideas aligned with StatMand direction:
 | HR inbox counts | Pending verification badge reconciled with actionable inbox items |
 | HR expiry reminders | Profile toggle; automatic in-app messages to doctors (30d / 7d / expired) |
 | Personalised getting started | Dashboard suggests unused features only (ESR vs add record, etc.) |
-| Oracle Cloud production | Production on Oracle VM only (Docker + Caddy); `docpass.co.uk` — **Render not used** |
+| Raspberry Pi self-hosting (Jul 2026) | Production moved from Oracle Cloud to self-hosted Raspberry Pi (Docker + Caddy); `docpass.co.uk` — **Render not used** |
 | Auth & CORS hardening | Rate limit on login/register; CORS whitelist; session cookie flags |
 | Server backup | `deploy/backup.sh` + daily cron |
 | HR email notifications | Daily digest + instant share alerts via Resend SMTP |

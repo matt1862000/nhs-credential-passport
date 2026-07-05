@@ -1,4 +1,4 @@
-# Production Caddy config (copy to /etc/caddy/Caddyfile on Oracle VM).
+# Production Caddy config (copy to /etc/caddy/Caddyfile on the Raspberry Pi host).
 #
 # Content-Security-Policy — mapped to DocPass features:
 #   connect-src  … /api/* fetches + NHS ODS trust autosuggest (directory.spineservices.nhs.uk)
