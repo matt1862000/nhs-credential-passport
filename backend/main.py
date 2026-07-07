@@ -88,6 +88,14 @@ PWA_HEAD_INJECTION = f"""
 """
 
 
+def _response_headers_without_entity_tags(headers) -> dict:
+    """Drop length/etag from upstream static files before rewriting the body."""
+    cleaned = dict(headers)
+    for key in ("content-length", "transfer-encoding", "etag"):
+        cleaned.pop(key, None)
+    return cleaned
+
+
 class NoCacheStaticHtmlMiddleware(BaseHTTPMiddleware):
     """Stop browsers/CDNs from holding stale copies of /static HTML and shared JS (auth, nav)."""
 
@@ -125,15 +133,13 @@ class PwaHtmlMiddleware(BaseHTTPMiddleware):
         async for chunk in response.body_iterator:
             body += chunk
         text = body.decode("utf-8", errors="replace")
+        headers = _response_headers_without_entity_tags(response.headers)
         if 'rel="manifest"' in text or "rel='manifest'" in text:
-            headers = dict(response.headers)
             return Response(content=text, media_type="text/html; charset=utf-8", headers=headers)
         idx = text.lower().find("</head>")
         if idx == -1:
-            headers = dict(response.headers)
             return Response(content=text, media_type="text/html; charset=utf-8", headers=headers)
         injected = text[:idx] + PWA_HEAD_INJECTION + text[idx:]
-        headers = dict(response.headers)
         headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         headers["Pragma"] = "no-cache"
         return Response(content=injected, media_type="text/html; charset=utf-8", headers=headers)
