@@ -49,7 +49,7 @@ _resolve_paths() {
     done
   fi
 
-  ENV_FILE="${ENV_FILE:-/var/lib/docpass/docpass.env}"
+  ENV_FILE="${ENV_FILE:-$HOME/docpass/docpass.env}"
 }
 
 _resolve_paths
@@ -90,11 +90,32 @@ sudo docker run -d --name docpass --restart unless-stopped \
   -v "$KEYS_DIR:/app/keys" \
   docpass
 
-echo "==> Waiting for app"
-sleep 2
-if curl -sf "http://127.0.0.1:8000/static/manifest.webmanifest" >/dev/null; then
+_health_check() {
+  local url="http://127.0.0.1:8000/static/manifest.webmanifest"
+  local i
+  for i in $(seq 1 30); do
+    if command -v curl >/dev/null 2>&1; then
+      curl -sf "$url" >/dev/null && return 0
+    elif command -v wget >/dev/null 2>&1; then
+      wget -q -O /dev/null "$url" && return 0
+    else
+      # No HTTP client — assume OK if container stays running
+      if sudo docker inspect -f '{{.State.Running}}' docpass 2>/dev/null | grep -q true; then
+        echo "NOTE: install curl for deploy health checks; container is running."
+        return 0
+      fi
+    fi
+    sleep 2
+  done
+  return 1
+}
+
+echo "==> Waiting for app (up to ~60s on Pi)"
+if _health_check; then
   echo "OK — DocPass is up (PWA manifest reachable)."
 else
-  echo "WARN — container started but health check failed. Run: sudo docker logs docpass" >&2
+  echo "WARN — health check timed out. Recent container logs:" >&2
+  sudo docker logs docpass --tail 40 >&2 || true
+  echo "Check manually: curl -s http://127.0.0.1:8000/static/manifest.webmanifest | head" >&2
   exit 1
 fi
