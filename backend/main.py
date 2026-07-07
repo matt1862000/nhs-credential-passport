@@ -76,6 +76,18 @@ def _cors_origins() -> list[str]:
     return sorted(origins)
 
 
+PWA_BUILD = "20260707-1"
+
+PWA_HEAD_INJECTION = f"""
+<link rel="manifest" href="/static/manifest.webmanifest?v={PWA_BUILD}">
+<link rel="apple-touch-icon" href="/static/shared/icons/icon-180.png?v={PWA_BUILD}">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="DocPass">
+<meta name="mobile-web-app-capable" content="yes">
+<script src="/static/shared/pwa.js?v={PWA_BUILD}" defer></script>
+"""
+
+
 class NoCacheStaticHtmlMiddleware(BaseHTTPMiddleware):
     """Stop browsers/CDNs from holding stale copies of /static HTML and shared JS (auth, nav)."""
 
@@ -88,7 +100,43 @@ class NoCacheStaticHtmlMiddleware(BaseHTTPMiddleware):
         if "text/html" in ct or path.startswith("/static/shared/") and path.endswith(".js"):
             response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
             response.headers["Pragma"] = "no-cache"
+        if path == "/static/sw.js":
+            response.headers["Cache-Control"] = "no-cache, max-age=0"
         return response
+
+
+class PwaHtmlMiddleware(BaseHTTPMiddleware):
+    """Inject manifest + service worker registration into DocPass HTML pages."""
+
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        if request.method != "GET":
+            return response
+        path = request.url.path
+        is_docpass_html = path == "/" or (
+            path.startswith("/static/") and (path.endswith(".html") or path.endswith("/"))
+        )
+        if not is_docpass_html:
+            return response
+        ct = response.headers.get("content-type", "")
+        if "text/html" not in ct:
+            return response
+        body = b""
+        async for chunk in response.body_iterator:
+            body += chunk
+        text = body.decode("utf-8", errors="replace")
+        if 'rel="manifest"' in text or "rel='manifest'" in text:
+            headers = dict(response.headers)
+            return Response(content=text, media_type="text/html; charset=utf-8", headers=headers)
+        idx = text.lower().find("</head>")
+        if idx == -1:
+            headers = dict(response.headers)
+            return Response(content=text, media_type="text/html; charset=utf-8", headers=headers)
+        injected = text[:idx] + PWA_HEAD_INJECTION + text[idx:]
+        headers = dict(response.headers)
+        headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        headers["Pragma"] = "no-cache"
+        return Response(content=injected, media_type="text/html; charset=utf-8", headers=headers)
 
 
 def _normalize_evidence_content_type(content_type: Optional[str], filename: Optional[str]) -> Optional[str]:
@@ -134,6 +182,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # Trust X-Forwarded-* from Render/nginx so request.url uses public https host (fixes share / verify links).
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 app.add_middleware(CORSMiddleware, allow_origins=_cors_origins(), allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(PwaHtmlMiddleware)
 app.add_middleware(NoCacheStaticHtmlMiddleware)
 app.add_middleware(SlowAPIMiddleware)
 app.include_router(auth_router)

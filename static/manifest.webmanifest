@@ -1,0 +1,62 @@
+{
+  "name": "DocPass",
+  "short_name": "DocPass",
+  "description": "Portable HR-verified mandatory training records for NHS doctors.",
+  "start_url": "/static/dashboard/",
+  "scope": "/static/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#005eb8",
+  "theme_color": "#005eb8",
+  "categories": ["medical", "productivity"],
+  "icons": [
+    {
+      "src": "/static/shared/icons/icon-72.png",
+      "sizes": "72x72",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/static/shared/icons/icon-96.png",
+      "sizes": "96x96",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/static/shared/icons/icon-128.png",
+      "sizes": "128x128",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/static/shared/icons/icon-180.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/static/shared/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/static/shared/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/static/shared/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/static/shared/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

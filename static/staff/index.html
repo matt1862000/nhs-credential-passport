@@ -724,7 +724,7 @@
           <div class="nhsuk-file-upload__stack">
             <p class="nhsuk-hint" id="certificate_hint" style="margin:0;">PDF or image (PNG, JPG) — e.g. your course completion certificate.</p>
             <label for="certificate_upload" class="nhsuk-file-upload__trigger">Choose file</label>
-            <input id="certificate_upload" type="file" name="certificate" accept=".pdf,.png,.jpg,.jpeg,image/png,image/jpeg,application/pdf" aria-describedby="certificate_hint">
+            <input id="certificate_upload" type="file" name="certificate" accept=".pdf,.png,.jpg,.jpeg,image/png,image/jpeg,application/pdf" capture="environment" aria-describedby="certificate_hint">
             <span class="nhsuk-file-upload__name" id="certificate_filename" aria-live="polite"></span>
           </div>
         </div>
@@ -800,7 +800,7 @@
             <div class="nhsuk-file-upload__stack">
               <p class="nhsuk-hint" id="csv_evidence_hint" style="margin:0;">Required: a screenshot (PNG or JPEG) or PDF showing your training on ESR (e.g. Compliance tab). Uploaded to DocPass securely — not stored in your browser.</p>
               <label for="csv_evidence" class="nhsuk-file-upload__trigger">Choose evidence file</label>
-              <input id="csv_evidence" type="file" name="csv_evidence" accept=".pdf,.png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp,application/pdf" aria-describedby="csv_evidence_hint">
+              <input id="csv_evidence" type="file" name="csv_evidence" accept=".pdf,.png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp,application/pdf" capture="environment" aria-describedby="csv_evidence_hint">
               <span class="nhsuk-file-upload__name" id="csv_evidence_filename" aria-live="polite"></span>
             </div>
           </div>
@@ -888,7 +888,7 @@
       <div class="nhsuk-form-group" style="margin:0 0 1rem 0;">
         <label class="nhsuk-label" for="fixReshareFile">Replacement certificate or evidence</label>
         <span class="nhsuk-hint" style="display:block; margin:0.25rem 0 0.5rem 0;">PDF, PNG, JPG, or WEBP. Required if HR&rsquo;s reason was about the evidence file. Otherwise optional.</span>
-        <input type="file" id="fixReshareFile" accept="application/pdf,image/png,image/jpeg,image/webp" class="nhsuk-file-upload">
+        <input type="file" id="fixReshareFile" accept="application/pdf,image/png,image/jpeg,image/webp" capture="environment" class="nhsuk-file-upload">
       </div>
       <div id="fixReshareError" class="nhsuk-error-message" hidden></div>
       <div style="display:flex; gap:0.5rem; flex-wrap:wrap; justify-content:flex-end;">
