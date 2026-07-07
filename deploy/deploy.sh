@@ -119,3 +119,15 @@ else
   echo "Check manually: curl -s http://127.0.0.1:8000/static/manifest.webmanifest | head" >&2
   exit 1
 fi
+
+if systemctl list-unit-files cloudflared.service >/dev/null 2>&1; then
+  echo "==> Restarting Cloudflare Tunnel (picks up new origin after deploy)"
+  sudo systemctl restart cloudflared
+  sleep 2
+  if systemctl is-active --quiet cloudflared; then
+    echo "OK — cloudflared is running."
+  else
+    echo "WARN — cloudflared failed to restart. Run: sudo systemctl status cloudflared" >&2
+    exit 1
+  fi
+fi
