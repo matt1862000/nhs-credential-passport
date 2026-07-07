@@ -522,6 +522,13 @@ See `deploy/email.env.example` for a template.
 
 **Production deploy (SSH to Pi):**
 ```bash
+~/docpass/app/deploy/deploy.sh
+```
+
+The script pulls `main`, rebuilds the Docker image, replaces the container (data/keys unchanged), and checks the PWA manifest responds.
+
+Manual equivalent:
+```bash
 cd ~/docpass/app && git pull origin main
 sudo docker build -t docpass .
 sudo docker rm -f docpass
