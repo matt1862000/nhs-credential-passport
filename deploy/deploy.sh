@@ -6,13 +6,53 @@
 #
 # Optional overrides:
 #   APP_DIR=~/docpass/app  BRANCH=main
+#   ENV_FILE=...  DATA_DIR=...  KEYS_DIR=...
 set -euo pipefail
 
 APP_DIR="${APP_DIR:-$HOME/docpass/app}"
 BRANCH="${BRANCH:-main}"
-ENV_FILE="${ENV_FILE:-/var/lib/docpass/docpass.env}"
-DATA_DIR="${DATA_DIR:-/var/lib/docpass/data}"
-KEYS_DIR="${KEYS_DIR:-/var/lib/docpass/keys}"
+
+_resolve_paths() {
+  # Reuse mounts from an existing docpass container when paths were not set explicitly.
+  if [[ -z "${ENV_FILE:-}" || -z "${DATA_DIR:-}" || -z "${KEYS_DIR:-}" ]]; then
+    if sudo docker inspect docpass >/dev/null 2>&1; then
+      while IFS= read -r line; do
+        src="${line%%:*}"
+        dst="${line#*:}"
+        if [[ "$dst" == "/app/data" && -z "${DATA_DIR:-}" ]]; then
+          DATA_DIR="$src"
+        elif [[ "$dst" == "/app/keys" && -z "${KEYS_DIR:-}" ]]; then
+          KEYS_DIR="$src"
+        fi
+      done < <(sudo docker inspect docpass --format '{{range .Mounts}}{{.Source}}:{{.Destination}}{{"\n"}}{{end}}')
+    fi
+  fi
+
+  DATA_DIR="${DATA_DIR:-/var/lib/docpass/data}"
+  KEYS_DIR="${KEYS_DIR:-/var/lib/docpass/keys}"
+
+  if [[ -z "${ENV_FILE:-}" ]]; then
+    local candidates=(
+      "/var/lib/docpass/docpass.env"
+      "$HOME/docpass/docpass.env"
+      "$HOME/docpass/app/docpass.env"
+      "$APP_DIR/docpass.env"
+      "$APP_DIR/.env"
+      "$(dirname "$DATA_DIR")/docpass.env"
+      "$(dirname "$DATA_DIR")/cron.env"
+    )
+    for f in "${candidates[@]}"; do
+      if [[ -f "$f" ]]; then
+        ENV_FILE="$f"
+        break
+      fi
+    done
+  fi
+
+  ENV_FILE="${ENV_FILE:-/var/lib/docpass/docpass.env}"
+}
+
+_resolve_paths
 
 if [[ ! -d "$APP_DIR/.git" ]]; then
   echo "APP_DIR is not a git repo: $APP_DIR" >&2
@@ -20,12 +60,19 @@ if [[ ! -d "$APP_DIR/.git" ]]; then
 fi
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "Missing env file: $ENV_FILE" >&2
+  echo "Hint: locate it with: find ~/docpass /var/lib/docpass -name '*.env' 2>/dev/null" >&2
+  echo "Then run: ENV_FILE=/path/to/docpass.env ~/docpass/app/deploy/deploy.sh" >&2
   exit 1
 fi
 if [[ ! -d "$DATA_DIR" || ! -d "$KEYS_DIR" ]]; then
   echo "Missing data or keys dir (expected $DATA_DIR and $KEYS_DIR)" >&2
+  echo "Hint: sudo docker inspect docpass --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{println}}{{end}}'" >&2
   exit 1
 fi
+
+echo "Using ENV_FILE=$ENV_FILE"
+echo "Using DATA_DIR=$DATA_DIR"
+echo "Using KEYS_DIR=$KEYS_DIR"
 
 cd "$APP_DIR"
 echo "==> Pulling origin/$BRANCH"
