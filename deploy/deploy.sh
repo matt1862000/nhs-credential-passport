@@ -28,13 +28,13 @@ _resolve_paths() {
     fi
   fi
 
-  DATA_DIR="${DATA_DIR:-/var/lib/docpass/data}"
-  KEYS_DIR="${KEYS_DIR:-/var/lib/docpass/keys}"
+  DATA_DIR="${DATA_DIR:-$HOME/docpass/data}"
+  KEYS_DIR="${KEYS_DIR:-$HOME/docpass/keys}"
 
   if [[ -z "${ENV_FILE:-}" ]]; then
     local candidates=(
-      "/var/lib/docpass/docpass.env"
       "$HOME/docpass/docpass.env"
+      "/var/lib/docpass/docpass.env"
       "$HOME/docpass/app/docpass.env"
       "$APP_DIR/docpass.env"
       "$APP_DIR/.env"
