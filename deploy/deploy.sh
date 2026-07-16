@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# DocPass production deploy — self-hosted Raspberry Pi (Docker + Caddy).
+# DocPass production deploy — self-hosted Raspberry Pi (Docker + Cloudflare Tunnel).
 #
 # Usage (on the Pi):
 #   ~/docpass/app/deploy/deploy.sh
@@ -7,6 +7,7 @@
 # Optional overrides:
 #   APP_DIR=~/docpass/app  BRANCH=main
 #   ENV_FILE=...  DATA_DIR=...  KEYS_DIR=...
+#   SKIP_CLOUDFLARED_RESTART=1   # skip tunnel restart (may leave 520 until manual restart)
 set -euo pipefail
 
 APP_DIR="${APP_DIR:-$HOME/docpass/app}"
@@ -52,6 +53,69 @@ _resolve_paths() {
   ENV_FILE="${ENV_FILE:-$HOME/docpass/docpass.env}"
 }
 
+_curl_origin() {
+  local url="http://127.0.0.1:8000/static/manifest.webmanifest"
+  if command -v curl >/dev/null 2>&1; then
+    curl -sf "$url" >/dev/null
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q -O /dev/null "$url"
+  else
+    sudo docker inspect -f '{{.State.Running}}' docpass 2>/dev/null | grep -q true
+  fi
+}
+
+_health_check() {
+  local i
+  for i in $(seq 1 30); do
+    if _curl_origin; then
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
+_wait_for_stable_origin() {
+  # Two consecutive OK checks — avoids restarting cloudflared while uvicorn is still starting.
+  local i
+  for i in 1 2; do
+    if ! _curl_origin; then
+      return 1
+    fi
+    sleep 2
+  done
+  return 0
+}
+
+_restart_cloudflared() {
+  if [[ "${SKIP_CLOUDFLARED_RESTART:-}" == "1" ]]; then
+    echo "==> Skipping cloudflared restart (SKIP_CLOUDFLARED_RESTART=1)"
+    return 0
+  fi
+  if ! systemctl list-unit-files cloudflared.service >/dev/null 2>&1; then
+    return 0
+  fi
+
+  echo "==> Restarting Cloudflare Tunnel (~10s public blip, clears stale connections)"
+  sudo systemctl restart cloudflared
+
+  local i
+  for i in $(seq 1 15); do
+    if systemctl is-active --quiet cloudflared && _curl_origin; then
+      echo "OK — cloudflared is running and origin responds locally."
+      return 0
+    fi
+    sleep 1
+  done
+
+  echo "WARN — cloudflared or origin not ready after restart." >&2
+  echo "Run on the Pi:" >&2
+  echo "  curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/static/manifest.webmanifest" >&2
+  echo "  sudo systemctl status cloudflared --no-pager" >&2
+  echo "  sudo systemctl restart cloudflared" >&2
+  return 1
+}
+
 _resolve_paths
 
 if [[ ! -d "$APP_DIR/.git" ]]; then
@@ -78,10 +142,10 @@ cd "$APP_DIR"
 echo "==> Pulling origin/$BRANCH"
 git pull origin "$BRANCH"
 
-echo "==> Building Docker image (native arm64 on Pi)"
+echo "==> Building Docker image (old container keeps serving until swap)"
 sudo docker build -t docpass .
 
-echo "==> Replacing container (data/keys unchanged — mounted from host)"
+echo "==> Swapping container (brief downtime — usually a few seconds)"
 sudo docker rm -f docpass 2>/dev/null || true
 sudo docker run -d --name docpass --restart unless-stopped \
   -p 127.0.0.1:8000:8000 \
@@ -89,26 +153,6 @@ sudo docker run -d --name docpass --restart unless-stopped \
   -v "$DATA_DIR:/app/data" \
   -v "$KEYS_DIR:/app/keys" \
   docpass
-
-_health_check() {
-  local url="http://127.0.0.1:8000/static/manifest.webmanifest"
-  local i
-  for i in $(seq 1 30); do
-    if command -v curl >/dev/null 2>&1; then
-      curl -sf "$url" >/dev/null && return 0
-    elif command -v wget >/dev/null 2>&1; then
-      wget -q -O /dev/null "$url" && return 0
-    else
-      # No HTTP client — assume OK if container stays running
-      if sudo docker inspect -f '{{.State.Running}}' docpass 2>/dev/null | grep -q true; then
-        echo "NOTE: install curl for deploy health checks; container is running."
-        return 0
-      fi
-    fi
-    sleep 2
-  done
-  return 1
-}
 
 echo "==> Waiting for app (up to ~60s on Pi)"
 if _health_check; then
@@ -120,14 +164,12 @@ else
   exit 1
 fi
 
-if systemctl list-unit-files cloudflared.service >/dev/null 2>&1; then
-  echo "==> Restarting Cloudflare Tunnel (picks up new origin after deploy)"
-  sudo systemctl restart cloudflared
-  sleep 2
-  if systemctl is-active --quiet cloudflared; then
-    echo "OK — cloudflared is running."
-  else
-    echo "WARN — cloudflared failed to restart. Run: sudo systemctl status cloudflared" >&2
-    exit 1
-  fi
+if ! _wait_for_stable_origin; then
+  echo "WARN — origin not stable yet; skipping cloudflared restart." >&2
+  exit 1
 fi
+
+_restart_cloudflared || true
+
+echo "Deploy complete. If https://docpass.co.uk still shows Error 520, wait 30s and hard-refresh;"
+echo "or run: sudo systemctl restart cloudflared"
