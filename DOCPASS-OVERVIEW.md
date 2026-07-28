@@ -2,7 +2,7 @@
 
 > **Purpose of this document:** Single reference for Copilot, stakeholders, or new contributors.  
 > **Last updated:** May 2026 (decision engine v1.8.1 — strict separation of evidence verification from requirement-fit confirmation; HR fit-review now drives inbox classification, dashboard badge, doctor wallet chip, doctor alerts, and an HR-only "How this was assessed" audit panel; session detail always opens on Awaiting decision with a Decided fit-reviews history section under Decided)  
-> **Live demo:** https://docpass.co.uk (self-hosted Raspberry Pi — Docker + Caddy)  
+> **Live demo:** https://docpass.co.uk (self-hosted Raspberry Pi — Docker + Cloudflare Tunnel)  
 > **Source repo:** https://github.com/matt1862000/nhs-credential-passport.git
 
 ---
@@ -421,26 +421,30 @@ Each pack includes `mandatory_examples` with labels, categories, match hints, an
 | Auth | Session cookies (httponly, secure, SameSite=Lax), bcrypt passwords |
 | Credentials | RS256 JWT, did:web public key, ReportLab PDF + QR |
 | Frontend | Vanilla HTML/CSS/JS (no React) |
-| Production | **Self-hosted Raspberry Pi** — Docker + **Caddy** reverse proxy (TLS, security headers). Render is **not** used. |
+| Production | **Self-hosted Raspberry Pi** — Docker + **Cloudflare Tunnel** (`cloudflared`). Render is **not** used. |
 | Email | SMTP (Resend) — optional; HR notifications only |
 
 ### Production infrastructure (Raspberry Pi — sole production host)
 
 | Component | Detail |
 |-----------|--------|
-| **Host** | Raspberry Pi (64-bit Raspberry Pi OS or Ubuntu Server, UK) |
-| **Domain** | `docpass.co.uk` (123 Reg DNS A record → home/public IP) |
+| **Host** | Raspberry Pi (64-bit Raspberry Pi OS, UK) — `docpasspi` |
+| **Domain** | `docpass.co.uk` — Cloudflare DNS CNAME → Cloudflare Tunnel (no home port forwarding) |
 | **App container** | `docpass` — uvicorn on `127.0.0.1:8000` |
-| **Reverse proxy** | Caddy — `/etc/caddy/Caddyfile` |
-| **Persistent data** | `/var/lib/docpass/data/credentials.db` |
-| **Signing keys** | `/var/lib/docpass/keys/` (JWT signing + GCP service account for embeddings) |
-| **Daily HR digest cron** | `/var/lib/docpass/send-hr-jobs.sh` (via `deploy/send-hr-jobs.sh`) |
+| **Ingress** | `cloudflared` — `/etc/cloudflared/config.yml` → `http://127.0.0.1:8000` |
+| **Git / deploy** | `~/docpass/app` — `deploy/deploy.sh` |
+| **Persistent data** | `/home/raihant/docpass/data/credentials.db` |
+| **Signing keys** | `/home/raihant/docpass/keys/` (JWT signing + GCP service account for embeddings) |
+| **Env** | `/home/raihant/docpass/docpass.env`, `cron.env` |
+| **Daily HR digest cron** | `~/docpass/send-hr-jobs.sh` (via `deploy/send-hr-jobs.sh`) |
+
+**Tunnel setup & troubleshooting:** see [`deploy/CLOUDFLARE-TUNNEL.md`](deploy/CLOUDFLARE-TUNNEL.md).
 
 **Raspberry Pi notes (migrated from Oracle Cloud, July 2026):**
 
-- **DNS** — point `docpass.co.uk` A record at the Pi’s public IP; use dynamic DNS if the home IP changes.
-- **Router** — forward TCP **80** and **443** to the Pi so Caddy can obtain and renew Let’s Encrypt certificates.
-- **Data migration** — copy `/var/lib/docpass/data`, `/var/lib/docpass/keys`, and env files (`docpass.env`, `cron.env`) from the old Oracle VM before decommissioning it.
+- **DNS** — Cloudflare manages `docpass.co.uk`; tunnel public hostnames create CNAME records automatically. No router port forwarding required.
+- **Homelab** — optional `ha.docpass.co.uk` in the same tunnel → Home Assistant on LAN (`192.168.1.214:8123`); requires a **Public Hostname** in Cloudflare Zero Trust (local `config.yml` alone does not create DNS).
+- **Data migration** — copy data, keys, and env files from the old Oracle VM before decommissioning it.
 - **Docker** — `python:3.11-slim` publishes **arm64** images; `docker build` on the Pi produces a native image (no cross-compile needed).
 - **Resources** — SQLite + FastAPI are light, but enable **swap** on smaller Pi models if builds or embedding backfills run out of memory.
 - **Cron** — reinstall `send-hr-jobs.sh` and `backup.sh` crontab entries on the Pi; confirm `CRON_SECRET` and log-file ownership (see below).
@@ -449,8 +453,8 @@ Each pack includes `mandatory_examples` with labels, categories, match hints, an
 
 | Control | Implementation |
 |---------|----------------|
-| **HTTPS** | Caddy automatic TLS (Let’s Encrypt) |
-| **Security headers** | Caddy on `docpass.co.uk` and `www.docpass.co.uk`: HSTS, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, CSP, `Referrer-Policy` |
+| **HTTPS** | Cloudflare edge TLS → tunnel → origin HTTP on localhost |
+| **Security headers** | Previously via Caddy (`deploy/Caddyfile`); with tunnel-only setup, add via Cloudflare transform rules or app middleware if needed |
 | **CORS** | Whitelist (`docpass.co.uk`, `BASE_URL`, localhost) — no `*` |
 | **Rate limiting** | `slowapi` — 10/min on login/register/mfa-verify; 5/min on forgot/reset-password; 3/min on mfa-resend |
 | **Session cookies** | httponly, secure, SameSite=Lax |
@@ -475,7 +479,7 @@ Each pack includes `mandatory_examples` with labels, categories, match hints, an
 | `backend/email_service.py` | SMTP send (graceful skip if `SMTP_HOST` unset) |
 | `backend/hr_email.py` | HR daily digest + instant share alerts |
 | `backend/hr_email_cli.py` | CLI: `python -m backend.hr_email_cli daily` |
-| `backend/rate_limit.py` | slowapi limiter (client IP behind Caddy) |
+| `backend/rate_limit.py` | slowapi limiter (client IP from Cloudflare / tunnel) |
 | `backend/test_mandatory_matching.py` | Unit tests for matcher |
 
 ### Key frontend modules
@@ -733,7 +737,7 @@ DocPass demonstrates ideas aligned with StatMand direction:
 | HR inbox counts | Pending verification badge reconciled with actionable inbox items |
 | HR expiry reminders | Profile toggle; automatic in-app messages to doctors (30d / 7d / expired) |
 | Personalised getting started | Dashboard suggests unused features only (ESR vs add record, etc.) |
-| Raspberry Pi self-hosting (Jul 2026) | Production moved from Oracle Cloud to self-hosted Raspberry Pi (Docker + Caddy); `docpass.co.uk` — **Render not used** |
+| Raspberry Pi self-hosting (Jul 2026) | Production on Raspberry Pi (Docker + Cloudflare Tunnel); `docpass.co.uk` — **Render not used** |
 | Auth & CORS hardening | Rate limit on login/register; CORS whitelist; session cookie flags |
 | Server backup | `deploy/backup.sh` + daily cron |
 | HR email notifications | Daily digest + instant share alerts via Resend SMTP |
